@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% set title = "Register" %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h1 class="h4 fw-bold mb-3">Create Account</h1>
+        <p class="small-muted mb-3">Each user only sees their own invoices.</p>
+
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label req">Username</label>
+            <input class="form-control" name="username" required />
+            <div class="small-muted mt-1">At least 3 characters.</div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label req">Password</label>
+            <input class="form-control" type="password" name="password" required />
+            <div class="small-muted mt-1">At least 6 characters.</div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label req">Confirm Password</label>
+            <input class="form-control" type="password" name="confirm" required />
+          </div>
+
+          <button class="btn btn-primary w-100" type="submit">Create account</button>
+        </form>
+
+        <hr class="my-3" />
+        <div class="small-muted">
+          Already have an account? <a href="{{ url_for('login') }}">Sign in</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

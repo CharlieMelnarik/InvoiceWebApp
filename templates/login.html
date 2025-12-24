@@ -7,20 +7,32 @@
     <div class="card shadow-sm">
       <div class="card-body">
         <h1 class="h4 fw-bold mb-3">Login</h1>
-        <p class="small-muted mb-3">Enter your admin password.</p>
+        <p class="small-muted mb-3">Sign in to access your invoices.</p>
 
         <form method="post">
           <div class="mb-3">
+            <label class="form-label req">Username</label>
+            <input class="form-control" name="username" autofocus required />
+          </div>
+
+          <div class="mb-3">
             <label class="form-label req">Password</label>
-            <input class="form-control" type="password" name="password" autofocus required />
+            <input class="form-control" type="password" name="password" required />
           </div>
 
           <button class="btn btn-primary w-100" type="submit">Sign in</button>
         </form>
 
         <hr class="my-3" />
+        <div class="small-muted">
+          New here? <a href="{{ url_for('register') }}">Create an account</a>
+        </div>
+
+        <hr class="my-3" />
         <p class="small-muted mb-0">
-          Set <span class="mono">ADMIN_PASSWORD</span> in your <span class="mono">.env</span> file.
+          First run auto-creates <span class="mono">admin</span> using
+          <span class="mono">INITIAL_ADMIN_USERNAME</span> /
+          <span class="mono">INITIAL_ADMIN_PASSWORD</span> (or falls back to <span class="mono">ADMIN_PASSWORD</span>).
         </p>
       </div>
     </div>

@@ -1,5 +1,4 @@
 
-
 # app.py
 import os
 import re
@@ -16,36 +15,35 @@ from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
     login_required, current_user
 )
+from sqlalchemy import text
 from sqlalchemy.orm import selectinload
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import Config
 from models import (
     Base, make_engine, make_session_factory,
-    Invoice, InvoicePart, InvoiceLabor, next_invoice_number
+    User, Invoice, InvoicePart, InvoiceLabor, next_invoice_number
 )
 from pdf_service import generate_and_store_pdf
 
-# -----------------------------
-# Auth: single-admin (v1)
-# -----------------------------
 login_manager = LoginManager()
 login_manager.login_view = "login"
 
 
-class AdminUser(UserMixin):
-    def __init__(self, user_id: str):
-        self.id = user_id
+# -----------------------------
+# Flask-Login user wrapper
+# -----------------------------
+class AppUser(UserMixin):
+    def __init__(self, user_id: int, username: str):
+        self.id = str(user_id)
+        self.username = username
 
 
 @login_manager.user_loader
 def load_user(user_id: str):
-    if user_id == "admin":
-        return AdminUser("admin")
+    # NOTE: we load from DB inside create_app via SessionLocal closure
+    # Flask-Login calls this after app is initialized, so we bind a function later.
     return None
-
-
-def _admin_password() -> str:
-    return os.getenv("ADMIN_PASSWORD", "changeme")
 
 
 # -----------------------------
@@ -76,6 +74,47 @@ def _ensure_dirs():
     Path(Config.EXPORTS_DIR).mkdir(parents=True, exist_ok=True)
 
 
+def _current_user_id_int() -> int:
+    try:
+        return int(current_user.get_id())
+    except Exception:
+        return -1
+
+
+def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
+    inv = (
+        session.query(Invoice)
+        .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+        .filter(Invoice.id == invoice_id, Invoice.user_id == _current_user_id_int())
+        .first()
+    )
+    if not inv:
+        abort(404)
+    return inv
+
+
+# -----------------------------
+# DB migration (lightweight)
+# -----------------------------
+def _column_exists(engine, table_name: str, column_name: str) -> bool:
+    # Works for SQLite/Postgres generally via INFORMATION_SCHEMA-ish fallbacks.
+    # For SQLite: PRAGMA table_info(table)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+        return any(r[1] == column_name for r in rows)
+    except Exception:
+        return False
+
+
+def _migrate_add_user_id(engine):
+    # Add invoices.user_id if missing (legacy DB)
+    if not _column_exists(engine, "invoices", "user_id"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN user_id INTEGER"))
+    # Create users table if missing is handled by metadata.create_all()
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -88,24 +127,104 @@ def create_app():
     login_manager.init_app(app)
 
     engine = make_engine(Config.SQLALCHEMY_DATABASE_URI, echo=Config.SQLALCHEMY_ECHO)
+
+    # Lightweight migration BEFORE create_all is still okay; create_all will create missing tables.
+    _migrate_add_user_id(engine)
     Base.metadata.create_all(engine)
+
     SessionLocal = make_session_factory(engine)
 
     def db_session():
         return SessionLocal()
-    
+
+    # Now that SessionLocal exists, bind the user_loader properly.
+    @login_manager.user_loader
+    def load_user(user_id: str):
+        try:
+            uid = int(user_id)
+        except Exception:
+            return None
+        with db_session() as s:
+            u = s.get(User, uid)
+            if not u:
+                return None
+            return AppUser(u.id, u.username)
+
+    # Ensure at least one user exists (so legacy installs can log in immediately)
+    # If there are no users, create an initial admin user from env vars.
+    def _bootstrap_first_user():
+        username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
+        password = os.getenv("INITIAL_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "changeme"))
+        with db_session() as s:
+            exists = s.query(User).first()
+            if exists:
+                return
+            u = User(username=username, password_hash=generate_password_hash(password))
+            s.add(u)
+            s.commit()
+
+            # Backfill legacy invoices to this first user (so you don't "lose" old invoices)
+            s.query(Invoice).filter(Invoice.user_id.is_(None)).update({"user_id": u.id})
+            s.commit()
+
+    _bootstrap_first_user()
 
     # -----------------------------
     # Auth routes
     # -----------------------------
     @app.route("/login", methods=["GET", "POST"])
     def login():
+        if current_user.is_authenticated:
+            return redirect(url_for("invoices"))
+
         if request.method == "POST":
-            if request.form.get("password") == _admin_password():
-                login_user(AdminUser("admin"))
-                return redirect(url_for("invoices"))
-            flash("Wrong password.", "error")
+            username = (request.form.get("username") or "").strip()
+            password = request.form.get("password") or ""
+            with db_session() as s:
+                u = s.query(User).filter(User.username == username).first()
+                if u and check_password_hash(u.password_hash, password):
+                    login_user(AppUser(u.id, u.username))
+                    return redirect(url_for("invoices"))
+
+            flash("Invalid username or password.", "error")
         return render_template("login.html")
+
+    @app.route("/register", methods=["GET", "POST"])
+    def register():
+        if current_user.is_authenticated:
+            return redirect(url_for("invoices"))
+
+        if request.method == "POST":
+            username = (request.form.get("username") or "").strip()
+            password = request.form.get("password") or ""
+            confirm = request.form.get("confirm") or ""
+
+            if not username or len(username) < 3:
+                flash("Username must be at least 3 characters.", "error")
+                return render_template("register.html")
+
+            if not password or len(password) < 6:
+                flash("Password must be at least 6 characters.", "error")
+                return render_template("register.html")
+
+            if password != confirm:
+                flash("Passwords do not match.", "error")
+                return render_template("register.html")
+
+            with db_session() as s:
+                taken = s.query(User).filter(User.username == username).first()
+                if taken:
+                    flash("That username is already taken.", "error")
+                    return render_template("register.html")
+
+                u = User(username=username, password_hash=generate_password_hash(password))
+                s.add(u)
+                s.commit()
+
+                login_user(AppUser(u.id, u.username))
+                return redirect(url_for("invoices"))
+
+        return render_template("register.html")
 
     @app.route("/logout")
     @login_required
@@ -121,7 +240,7 @@ def create_app():
         return redirect(url_for("invoices" if current_user.is_authenticated else "login"))
 
     # -----------------------------
-    # Invoice list
+    # Invoice list (scoped to user)
     # -----------------------------
     @app.route("/invoices")
     @login_required
@@ -130,6 +249,8 @@ def create_app():
         year = (request.args.get("year") or "").strip()
         status = (request.args.get("status") or "").strip()
 
+        uid = _current_user_id_int()
+
         with db_session() as s:
             invoices_q = (
                 s.query(Invoice)
@@ -137,6 +258,7 @@ def create_app():
                     selectinload(Invoice.parts),
                     selectinload(Invoice.labor_items),
                 )
+                .filter(Invoice.user_id == uid)
                 .order_by(Invoice.created_at.desc())
             )
 
@@ -171,7 +293,7 @@ def create_app():
         )
 
     # -----------------------------
-    # Create invoice
+    # Create invoice (owned by user)
     # -----------------------------
     @app.route("/invoices/new", methods=["GET", "POST"])
     @login_required
@@ -189,6 +311,7 @@ def create_app():
                 inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
 
                 inv = Invoice(
+                    user_id=_current_user_id_int(),
                     invoice_number=inv_no,
                     name=name,
                     vehicle=vehicle,
@@ -224,44 +347,23 @@ def create_app():
         )
 
     # -----------------------------
-    # View invoice
+    # View invoice (scoped)
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>")
     @login_required
     def invoice_view(invoice_id):
         with db_session() as s:
-            inv = (
-                s.query(Invoice)
-                .options(
-                    selectinload(Invoice.parts),
-                    selectinload(Invoice.labor_items),
-                )
-                .filter(Invoice.id == invoice_id)
-                .first()
-            )
-            if not inv:
-                abort(404)
-
+            inv = _invoice_owned_or_404(s, invoice_id)
         return render_template("invoice_view.html", inv=inv)
 
     # -----------------------------
-    # Edit invoice
+    # Edit invoice (scoped)
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
     @login_required
     def invoice_edit(invoice_id):
         with db_session() as s:
-            inv = (
-                s.query(Invoice)
-                .options(
-                    selectinload(Invoice.parts),
-                    selectinload(Invoice.labor_items),
-                )
-                .filter(Invoice.id == invoice_id)
-                .first()
-            )
-            if not inv:
-                abort(404)
+            inv = _invoice_owned_or_404(s, invoice_id)
 
             if request.method == "POST":
                 inv.name = request.form.get("name", "").strip()
@@ -294,7 +396,7 @@ def create_app():
         return render_template("invoice_form.html", mode="edit", inv=inv)
 
     # -----------------------------
-    # Year Summary
+    # Year Summary (scoped)
     # -----------------------------
     def _parse_year_from_datein(date_in: str):
         s = (date_in or "").strip()
@@ -327,6 +429,7 @@ def create_app():
         target_year = int(year_text)
 
         EPS = 0.01
+        uid = _current_user_id_int()
 
         count = 0
         total_invoice_amount = 0.0
@@ -338,18 +441,18 @@ def create_app():
         total_outstanding_unpaid = 0.0
         labor_unpaid = 0.0
 
-        unpaid = []  # list of dicts for display
+        unpaid = []
 
         with db_session() as s:
             invs = (
                 s.query(Invoice)
                 .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                .filter(Invoice.user_id == uid)
                 .order_by(Invoice.created_at.desc())
                 .all()
             )
 
             for inv in invs:
-                # Determine year from Date In (to match your old behavior)
                 yr = _parse_year_from_datein(inv.date_in)
                 if yr != target_year:
                     continue
@@ -403,7 +506,7 @@ def create_app():
         return render_template("year_summary.html", **context)
 
     # -----------------------------
-    # Delete invoice
+    # Delete invoice (scoped)
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>/delete", methods=["POST"])
     @login_required
@@ -411,17 +514,11 @@ def create_app():
         delete_pdf = (request.form.get("delete_pdf") or "").strip() == "1"
 
         with db_session() as s:
-            inv = s.get(Invoice, invoice_id)
-            if not inv:
-                abort(404)
-
+            inv = _invoice_owned_or_404(s, invoice_id)
             pdf_path = inv.pdf_path
-
-            # Delete from DB (relationships are configured with cascade in models.py)
             s.delete(inv)
             s.commit()
 
-        # Optionally remove the PDF file from disk after DB delete
         if delete_pdf and pdf_path and os.path.exists(pdf_path):
             try:
                 os.remove(pdf_path)
@@ -431,40 +528,28 @@ def create_app():
         flash("Invoice deleted.", "success")
         return redirect(url_for("invoices"))
 
-    
-
     # -----------------------------
-    # Mark invoice as paid
+    # Mark invoice as paid (scoped)
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>/mark_paid", methods=["POST"])
     @login_required
     def invoice_mark_paid(invoice_id: int):
         with db_session() as s:
-            inv = s.get(Invoice, invoice_id)
-            if not inv:
-                abort(404)
-
-            # Set Paid = Total
+            inv = _invoice_owned_or_404(s, invoice_id)
             inv.paid = inv.invoice_total()
             s.commit()
 
         flash("Invoice marked as paid.", "success")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
-
-
-
-
-
     # -----------------------------
-    # PDF routes
+    # PDF routes (scoped)
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>/pdf/generate", methods=["POST"])
     @login_required
     def invoice_pdf_generate(invoice_id):
         with db_session() as s:
-            if not s.get(Invoice, invoice_id):
-                abort(404)
+            _invoice_owned_or_404(s, invoice_id)
             generate_and_store_pdf(s, invoice_id)
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
@@ -472,8 +557,8 @@ def create_app():
     @login_required
     def invoice_pdf_download(invoice_id):
         with db_session() as s:
-            inv = s.get(Invoice, invoice_id)
-            if not inv or not inv.pdf_path or not os.path.exists(inv.pdf_path):
+            inv = _invoice_owned_or_404(s, invoice_id)
+            if not inv.pdf_path or not os.path.exists(inv.pdf_path):
                 flash("PDF not found. Generate it first.", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
@@ -488,9 +573,14 @@ def create_app():
     @login_required
     def pdfs_download_all():
         year = (request.args.get("year") or "").strip()
+        uid = _current_user_id_int()
 
         with db_session() as s:
-            q = s.query(Invoice).filter(Invoice.pdf_path.isnot(None))
+            q = (
+                s.query(Invoice)
+                .filter(Invoice.user_id == uid)
+                .filter(Invoice.pdf_path.isnot(None))
+            )
             if year.isdigit() and len(year) == 4:
                 q = q.filter(Invoice.invoice_number.startswith(year))
             invoices = q.all()
@@ -510,3 +600,5 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True)
+
+
