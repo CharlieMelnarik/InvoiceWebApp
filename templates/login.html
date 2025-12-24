@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% set title = "Login" %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h1 class="h4 fw-bold mb-3">Login</h1>
+        <p class="small-muted mb-3">Enter your admin password.</p>
+
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label req">Password</label>
+            <input class="form-control" type="password" name="password" autofocus required />
+          </div>
+
+          <button class="btn btn-primary w-100" type="submit">Sign in</button>
+        </form>
+
+        <hr class="my-3" />
+        <p class="small-muted mb-0">
+          Set <span class="mono">ADMIN_PASSWORD</span> in your <span class="mono">.env</span> file.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

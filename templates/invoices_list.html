@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% set title = "Invoices" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Invoices</h1>
+    <div class="small-muted">Search, filter, open, generate PDFs, and download ZIPs.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-primary" href="{{ url_for('invoice_new') }}">New Invoice</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('pdfs_download_all', year=year) if year else url_for('pdfs_download_all') }}">
+      Download PDFs (ZIP){% if year %} for {{ year }}{% endif %}
+    </a>
+  </div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="{{ url_for('invoices') }}">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-5">
+        <label class="form-label">Search (Name or Vehicle)</label>
+        <input class="form-control" name="q" value="{{ q }}" placeholder="e.g. Charlie, Ram 2500, etc." />
+      </div>
+
+      <div class="col-6 col-md-2">
+        <label class="form-label">Year</label>
+        <input class="form-control" name="year" value="{{ year }}" placeholder="2025" />
+      </div>
+
+      <div class="col-6 col-md-3">
+        <label class="form-label">Status</label>
+        <select class="form-select" name="status">
+          <option value="all" {% if status == "all" %}selected{% endif %}>All</option>
+          <option value="paid" {% if status == "paid" %}selected{% endif %}>Paid</option>
+          <option value="unpaid" {% if status == "unpaid" %}selected{% endif %}>Unpaid</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-md-2 d-grid">
+        <button class="btn btn-dark" type="submit">Apply</button>
+      </div>
+    </div>
+
+    {% if q or year or (status and status != "all") %}
+      <div class="mt-2">
+        <a class="small-muted" href="{{ url_for('invoices') }}">Clear filters</a>
+      </div>
+    {% endif %}
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    {% if invoices %}
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Invoice #</th>
+              <th>Name</th>
+              <th>Vehicle</th>
+              <th class="text-end">Total</th>
+              <th class="text-end">Paid</th>
+              <th class="text-end">Due</th>
+              <th>Date In</th>
+              <th>PDF</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in invoices %}
+              {% set total = inv.invoice_total() %}
+              {% set due = inv.amount_due() %}
+              <tr>
+                <td class="mono fw-semibold">{{ inv.invoice_number }}</td>
+                <td>{{ inv.name }}</td>
+                <td>{{ inv.vehicle }}</td>
+                <td class="text-end">{{ "${:,.2f}".format(total) }}</td>
+                <td class="text-end">{{ "${:,.2f}".format(inv.paid or 0) }}</td>
+                <td class="text-end">
+                  {% if due <= 0 %}
+                    <span class="badge text-bg-success">Paid</span>
+                  {% else %}
+                    <span class="badge text-bg-warning">Due {{ "${:,.2f}".format(due) }}</span>
+                  {% endif %}
+                </td>
+                <td>{{ inv.date_in }}</td>
+                <td>
+                  {% if inv.pdf_path %}
+                    <span class="badge text-bg-secondary">Saved</span>
+                  {% else %}
+                    <span class="badge text-bg-light text-dark border">—</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=inv.id) }}">Open</a>
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('invoice_edit', invoice_id=inv.id) }}">Edit</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="p-4">
+        <div class="fw-semibold mb-1">No invoices yet.</div>
+        <div class="small-muted mb-3">Create your first invoice to get started.</div>
+        <a class="btn btn-primary" href="{{ url_for('invoice_new') }}">New Invoice</a>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
