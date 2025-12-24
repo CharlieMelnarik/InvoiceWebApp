@@ -1,7 +1,6 @@
 # models.py
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -31,6 +30,26 @@ class Base(DeclarativeBase):
 
 
 # -----------------------------
+# Users
+# -----------------------------
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    invoices: Mapped[list["Invoice"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="Invoice.created_at.desc()",
+    )
+
+
+# -----------------------------
 # Tables
 # -----------------------------
 class InvoiceSequence(Base):
@@ -52,10 +71,19 @@ class InvoiceSequence(Base):
 class Invoice(Base):
     """
     Mirrors your CSV fields (plus invoice_number and pdf storage metadata).
+    Now includes user_id to isolate each user's invoices.
     """
     __tablename__ = "invoices"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # NEW: ownership (nullable for legacy rows; app migrator will backfill)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True
+    )   
+
 
     # Human-friendly invoice number: YYYY###### (no dash)
     invoice_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
@@ -66,7 +94,7 @@ class Invoice(Base):
     hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)              # Hours
     price_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)     # Price Per Hour
     shop_supplies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)      # Shop Supplies
-    notes: Mapped[str] = mapped_column(String, nullable=False, default="")                # Notes (we'll store as plain text; UI can show multi-line)
+    notes: Mapped[str] = mapped_column(String, nullable=False, default="")                # Notes
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)               # Paid
     date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")          # Date In (text)
 
@@ -78,6 +106,11 @@ class Invoice(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
+    user: Mapped[Optional["User"]] = relationship(
+        back_populates="invoices"
+    )
+
+
     parts: Mapped[list["InvoicePart"]] = relationship(
         back_populates="invoice",
         cascade="all, delete-orphan",
@@ -89,7 +122,7 @@ class Invoice(Base):
         order_by="InvoiceLabor.id",
     )
 
-    # Convenience totals (computed, not stored)
+    # Convenience totals
     def parts_total(self) -> float:
         return round(sum((p.part_price or 0.0) for p in self.parts), 2)
 
@@ -131,10 +164,6 @@ class InvoiceLabor(Base):
 # Engine / Session factory
 # -----------------------------
 def make_engine(db_url: str, echo: bool = False):
-    """
-    Create SQLAlchemy engine.
-    Note: SQLite path must exist (instance/ folder). We'll create it in setup steps.
-    """
     return create_engine(db_url, echo=echo, future=True)
 
 
@@ -149,11 +178,7 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     """
     Returns next invoice number like YYYY###### (no dash).
     Uses a per-year counter in invoice_sequences.
-
-    In Postgres this is safe under concurrency when run inside a transaction.
-    In SQLite, writes are serialized, so it's also effectively safe.
     """
-    # Try fetch existing counter
     seq_row = session.execute(
         select(InvoiceSequence).where(InvoiceSequence.year == year)
     ).scalar_one_or_none()
@@ -161,10 +186,11 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     if seq_row is None:
         seq_row = InvoiceSequence(year=year, last_seq=0)
         session.add(seq_row)
-        session.flush()  # ensure it has an id
+        session.flush()
 
     seq_row.last_seq += 1
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
+
 
