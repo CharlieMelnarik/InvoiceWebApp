@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% set title = "New Invoice" if mode == "new" else "Edit Invoice" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">
+      {% if mode == "new" %}New Invoice{% else %}Edit Invoice{% endif %}
+    </h1>
+    <div class="small-muted">
+      {% if mode == "new" %}
+        Creates a new invoice number automatically.
+      {% else %}
+        Editing invoice <span class="mono">{{ inv.invoice_number }}</span>
+      {% endif %}
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('invoices') }}">Back</a>
+  </div>
+</div>
+
+{% if mode == "new" %}
+  <form method="post" class="card shadow-sm">
+{% else %}
+  <form method="post" class="card shadow-sm">
+{% endif %}
+  <div class="card-body">
+
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <label class="form-label req">Name</label>
+        <input class="form-control" name="name" required
+               value="{% if mode=='edit' %}{{ inv.name }}{% else %}{{ (form.name if form else '') }}{% endif %}">
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label req">Vehicle</label>
+        <input class="form-control" name="vehicle" required
+               value="{% if mode=='edit' %}{{ inv.vehicle }}{% else %}{{ (form.vehicle if form else '') }}{% endif %}">
+      </div>
+
+      <div class="col-6 col-md-3">
+        <label class="form-label">Hours (Total)</label>
+        <input class="form-control" name="hours" inputmode="decimal"
+               value="{% if mode=='edit' %}{{ inv.hours }}{% else %}{{ (form.hours if form else '') }}{% endif %}">
+      </div>
+
+      <div class="col-6 col-md-3">
+        <label class="form-label">Rate / Hour</label>
+        <input class="form-control" name="price_per_hour" inputmode="decimal"
+               value="{% if mode=='edit' %}{{ inv.price_per_hour }}{% else %}{{ (form.price_per_hour if form else '') }}{% endif %}">
+      </div>
+
+      <div class="col-6 col-md-3">
+        <label class="form-label">Shop Supplies</label>
+        <input class="form-control" name="shop_supplies" inputmode="decimal"
+               value="{% if mode=='edit' %}{{ inv.shop_supplies }}{% else %}{{ (form.shop_supplies if form else '0') }}{% endif %}">
+      </div>
+
+      <div class="col-6 col-md-3">
+        <label class="form-label">Paid</label>
+        <input class="form-control" name="paid" inputmode="decimal"
+               value="{% if mode=='edit' %}{{ inv.paid }}{% else %}{{ (form.paid if form else '0') }}{% endif %}">
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label">Date In (text)</label>
+        <input class="form-control" name="date_in"
+               value="{% if mode=='edit' %}{{ inv.date_in }}{% else %}{{ (form.date_in if form else default_date) }}{% endif %}">
+      </div>
+    </div>
+
+    <hr class="my-4">
+
+    <!-- Parts -->
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h2 class="h5 fw-bold mb-0">Parts</h2>
+      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addPartRow()">Add Part</button>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle" id="partsTable">
+        <thead class="table-light">
+          <tr>
+            <th style="min-width: 280px;">Part Name</th>
+            <th style="width: 160px;">Part Price</th>
+            <th style="width: 80px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if mode == "edit" %}
+            {% for p in inv.parts %}
+              <tr>
+                <td><input class="form-control" name="part_name" value="{{ p.part_name }}"></td>
+                <td><input class="form-control" name="part_price" inputmode="decimal" value="{{ p.part_price }}"></td>
+                <td class="text-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+                </td>
+              </tr>
+            {% endfor %}
+          {% endif %}
+
+          <!-- Always keep one blank row available -->
+          <tr>
+            <td><input class="form-control" name="part_name" placeholder="e.g. Oil filter"></td>
+            <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="0.00"></td>
+            <td class="text-end">
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <hr class="my-4">
+
+    <!-- Labor -->
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h2 class="h5 fw-bold mb-0">Labor Items</h2>
+      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLaborRow()">Add Labor</button>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle" id="laborTable">
+        <thead class="table-light">
+          <tr>
+            <th style="min-width: 280px;">Labor Description</th>
+            <th style="width: 180px;">Labor Time (hrs)</th>
+            <th style="width: 80px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if mode == "edit" %}
+            {% for li in inv.labor_items %}
+              <tr>
+                <td><input class="form-control" name="labor_desc" value="{{ li.labor_desc }}"></td>
+                <td><input class="form-control" name="labor_time_hours" inputmode="decimal" value="{{ li.labor_time_hours }}"></td>
+                <td class="text-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+                </td>
+              </tr>
+            {% endfor %}
+          {% endif %}
+
+          <!-- Always keep one blank row available -->
+          <tr>
+            <td><input class="form-control" name="labor_desc" placeholder="e.g. Replace brake pads"></td>
+            <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
+            <td class="text-end">
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <hr class="my-4">
+
+    <!-- Notes -->
+    <div class="mb-3">
+      <label class="form-label">Notes</label>
+      <textarea class="form-control" name="notes" rows="6"
+        placeholder="One note per line (recommended).">{% if mode=='edit' %}{{ inv.notes }}{% else %}{{ (form.notes if form else '') }}{% endif %}</textarea>
+      <div class="small-muted mt-1">These notes will wrap nicely in the PDF.</div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary" type="submit">
+        {% if mode == "new" %}Create Invoice{% else %}Save Changes{% endif %}
+      </button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('invoices') }}">Cancel</a>
+    </div>
+
+  </div>
+</form>
+
+<script>
+  function removeRow(btn) {
+    const tr = btn.closest("tr");
+    if (!tr) return;
+    const tbody = tr.parentElement;
+    tr.remove();
+
+    // keep at least one row present in each table
+    if (tbody && tbody.children.length === 0) {
+      // do nothing; caller functions always add a blank row on page load
+    }
+  }
+
+  function addPartRow() {
+    const tbody = document.querySelector("#partsTable tbody");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input class="form-control" name="part_name" placeholder="Part name"></td>
+      <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="0.00"></td>
+      <td class="text-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  function addLaborRow() {
+    const tbody = document.querySelector("#laborTable tbody");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input class="form-control" name="labor_desc" placeholder="Labor description"></td>
+      <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
+      <td class="text-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+</script>
+{% endblock %}
+

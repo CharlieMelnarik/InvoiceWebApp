@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% set title = "Year Summary" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Year Summary</h1>
+    <div class="small-muted">Totals for invoices where “Date In” falls within the selected year.</div>
+  </div>
+</div>
+
+<form class="card shadow-sm mb-3" method="get" action="{{ url_for('year_summary') }}">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-6 col-md-3">
+        <label class="form-label">Year (e.g. 2025)</label>
+        <input class="form-control" name="year" value="{{ year }}" />
+      </div>
+      <div class="col-6 col-md-3 d-grid">
+        <button class="btn btn-dark" type="submit">Calculate</button>
+      </div>
+      <div class="col-12 col-md-6 text-md-end">
+        <a class="btn btn-outline-secondary" href="{{ url_for('pdfs_download_all', year=year) }}">Download PDFs (ZIP) for {{ year }}</a>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-2">
+      <div class="col-12 col-md-6">
+        <div class="small-muted">Invoices included</div>
+        <div class="h5 fw-bold mb-0">{{ count }}</div>
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="small-muted">Total Invoice Amount (parts + supplies + labor)</div>
+        <div class="h5 fw-bold mb-0">{{ money(total_invoice_amount) }}</div>
+      </div>
+
+      <div class="col-12"><hr class="my-2"></div>
+
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Total Parts</div>
+        <div class="fw-semibold">{{ money(total_parts) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Total Labor (hours × rate)</div>
+        <div class="fw-semibold">{{ money(total_labor) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Total Shop Supplies</div>
+        <div class="fw-semibold">{{ money(total_supplies) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Total Paid Invoices</div>
+        <div class="fw-semibold">{{ money(total_paid_invoices_amount) }}</div>
+      </div>
+
+      <div class="col-12"><hr class="my-2"></div>
+
+      <div class="col-6 col-md-4">
+        <div class="small-muted">Total Outstanding (Unpaid)</div>
+        <div class="fw-semibold text-warning">{{ money(total_outstanding_unpaid) }}</div>
+      </div>
+      <div class="col-6 col-md-4">
+        <div class="small-muted">Unpaid invoices</div>
+        <div class="fw-semibold">{{ unpaid_count }}</div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="small-muted">Total Profit (paid labor only)</div>
+        <div class="fw-bold">{{ money(profit_paid_labor_only) }}</div>
+      </div>
+
+      <div class="col-12 mt-2 small-muted">
+        Profit here = total labor dollars minus labor dollars tied to unpaid invoices (i.e., paid labor only).
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h2 class="h5 fw-bold mb-2">Unpaid invoices</h2>
+    {% if unpaid %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Invoice #</th>
+              <th>Name</th>
+              <th>Vehicle</th>
+              <th>Date In</th>
+              <th class="text-end">Outstanding</th>
+              <th class="text-end">Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in unpaid %}
+              <tr>
+                <td class="mono fw-semibold">{{ u.invoice_number }}</td>
+                <td>{{ u.name }}</td>
+                <td>{{ u.vehicle }}</td>
+                <td>{{ u.date_in }}</td>
+                <td class="text-end">{{ money(u.outstanding) }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=u.id) }}">Open</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="small-muted">No unpaid invoices found for {{ year }}.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
