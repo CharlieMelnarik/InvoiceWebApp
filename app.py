@@ -96,9 +96,68 @@ def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
 # -----------------------------
 # DB migration (lightweight)
 # -----------------------------
+def _table_exists(engine, table_name: str) -> bool:
+    """
+    Works for Postgres + SQLite:
+    - Postgres: information_schema.tables
+    - SQLite: sqlite_master
+    """
+    try:
+        with engine.connect() as conn:
+            # Postgres (and most SQL DBs)
+            res = conn.execute(
+                text("""
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                      AND table_name = :t
+                    LIMIT 1
+                """),
+                {"t": table_name}
+            ).scalar()
+            if res:
+                return True
+    except Exception:
+        pass
+
+    # SQLite fallback
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(
+                text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:t LIMIT 1"),
+                {"t": table_name}
+            ).scalar()
+            return bool(res)
+    except Exception:
+        return False
+
+
 def _column_exists(engine, table_name: str, column_name: str) -> bool:
-    # Works for SQLite/Postgres generally via INFORMATION_SCHEMA-ish fallbacks.
-    # For SQLite: PRAGMA table_info(table)
+    """
+    Works for Postgres + SQLite:
+    - Postgres: information_schema.columns
+    - SQLite: PRAGMA table_info(table)
+    """
+    # Postgres / general SQL
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(
+                text("""
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = :t
+                      AND column_name = :c
+                    LIMIT 1
+                """),
+                {"t": table_name, "c": column_name}
+            ).scalar()
+            if res:
+                return True
+    except Exception:
+        pass
+
+    # SQLite fallback
     try:
         with engine.connect() as conn:
             rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
@@ -108,11 +167,24 @@ def _column_exists(engine, table_name: str, column_name: str) -> bool:
 
 
 def _migrate_add_user_id(engine):
-    # Add invoices.user_id if missing (legacy DB)
+    """
+    Legacy helper:
+    If an old DB already has invoices but not invoices.user_id, add it.
+    This MUST NOT crash on fresh DBs.
+    """
+    # If invoices table doesn't exist yet, do nothing.
+    if not _table_exists(engine, "invoices"):
+        return
+
+    # Add invoices.user_id if missing.
     if not _column_exists(engine, "invoices", "user_id"):
         with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE invoices ADD COLUMN user_id INTEGER"))
-    # Create users table if missing is handled by metadata.create_all()
+            # Postgres supports IF NOT EXISTS; SQLite may not. We already checked, so both are fine.
+            try:
+                conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS user_id INTEGER"))
+            except Exception:
+                # SQLite fallback (no IF NOT EXISTS on older versions)
+                conn.execute(text("ALTER TABLE invoices ADD COLUMN user_id INTEGER"))
 
 
 # -----------------------------
@@ -128,10 +200,11 @@ def create_app():
 
     engine = make_engine(Config.SQLALCHEMY_DATABASE_URI, echo=Config.SQLALCHEMY_ECHO)
 
+    # ✅ Always create tables first (fresh Postgres after DROP SCHEMA works)
+    Base.metadata.create_all(bind=engine)
 
-    # Lightweight migration BEFORE create_all is still okay; create_all will create missing tables.
+    # ✅ Then run any legacy “add column” migration safely
     _migrate_add_user_id(engine)
-    Base.metadata.create_all(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -601,5 +674,6 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True)
+
 
 
