@@ -1,15 +1,20 @@
-venv/
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
+# Virtualenvs
+venv/
+.venv/
+
+# Env files / secrets
 .env
+
+# Local data (DO NOT commit)
 instance/
-*.sqlite
-*.db
-
 exports/
-*.pdf
 
-invoices.csv
-*.backup_*
+# macOS
+.DS_Store
 

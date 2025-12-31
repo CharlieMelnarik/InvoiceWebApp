@@ -127,6 +127,8 @@ def create_app():
     login_manager.init_app(app)
 
     engine = make_engine(Config.SQLALCHEMY_DATABASE_URI, echo=Config.SQLALCHEMY_ECHO)
+    Base.metadata.create_all(bind=engine)
+
 
     # Lightweight migration BEFORE create_all is still okay; create_all will create missing tables.
     _migrate_add_user_id(engine)
