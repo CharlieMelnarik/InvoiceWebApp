@@ -163,8 +163,30 @@ class InvoiceLabor(Base):
 # -----------------------------
 # Engine / Session factory
 # -----------------------------
+# models.py (replace make_engine)
+from sqlalchemy import create_engine
+
 def make_engine(db_url: str, echo: bool = False):
-    return create_engine(db_url, echo=echo, future=True)
+    """
+    Create SQLAlchemy engine.
+    - pool_pre_ping: detects dead connections (common on Render)
+    - pool_recycle: periodically refreshes connections to avoid SSL hiccups
+    """
+    connect_args = {}
+
+    # psycopg v3 supports SSL via URL params; Render typically requires SSL.
+    # If your DATABASE_URL already includes sslmode=require, this is fine.
+    # We keep connect_args empty and rely on the URL, but harden pooling.
+    return create_engine(
+        db_url,
+        echo=echo,
+        future=True,
+        pool_pre_ping=True,
+        pool_recycle=300,   # 5 minutes
+        pool_size=5,
+        max_overflow=10,
+    )
+
 
 
 def make_session_factory(engine):
