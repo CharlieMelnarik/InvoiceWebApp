@@ -354,46 +354,46 @@ def create_app():
     # Ensure at least one user exists (so legacy installs can log in immediately)
     # If there are no users, create an initial admin user from env vars.
     def _bootstrap_first_user():
-    username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
-    password = os.getenv("INITIAL_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "changeme"))
+        username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
+        password = os.getenv("INITIAL_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "changeme"))
 
-    # IMPORTANT: do NOT default to admin@example.com anymore.
-    # Only use INITIAL_ADMIN_EMAIL if you explicitly set it.
-    email = _normalize_email(os.getenv("INITIAL_ADMIN_EMAIL", ""))
+        # IMPORTANT: do NOT default to admin@example.com anymore.
+        # Only use INITIAL_ADMIN_EMAIL if you explicitly set it.
+        email = _normalize_email(os.getenv("INITIAL_ADMIN_EMAIL", ""))
 
-    with db_session() as s:
-        # Deterministic "first" user
-        first = s.query(User).order_by(User.id.asc()).first()
+        with db_session() as s:
+            # Deterministic "first" user
+            first = s.query(User).order_by(User.id.asc()).first()
 
-        if first:
-            # Only backfill email if:
-            # 1) first user has no email
-            # 2) INITIAL_ADMIN_EMAIL is set + valid
-            # 3) that email is NOT already used by anyone else
-            if not (getattr(first, "email", None) or "").strip() and _looks_like_email(email):
-                already = (
-                    s.query(User)
-                    .filter(text("lower(email) = :e"))
-                    .params(e=email)
-                    .first()
-                )
-                if not already:
-                    first.email = email
-                    s.commit()
-            return
+            if first:
+                # Only backfill email if:
+                # 1) first user has no email
+                # 2) INITIAL_ADMIN_EMAIL is set + valid
+                # 3) that email is NOT already used by anyone else
+                if not (getattr(first, "email", None) or "").strip() and _looks_like_email(email):
+                    already = (
+                        s.query(User)
+                        .filter(text("lower(email) = :e"))
+                        .params(e=email)
+                        .first()
+                    )
+                    if not already:
+                        first.email = email
+                        s.commit()
+                return
 
-        # No users exist -> create initial admin ONLY if email is valid
-        if not _looks_like_email(email):
-            # Fallback: create admin WITHOUT auto-email (or pick a real one in env)
-            email = "no-reply@placeholder.local"
+            # No users exist -> create initial admin ONLY if email is valid
+            if not _looks_like_email(email):
+                # Fallback: create admin WITHOUT auto-email (or pick a real one in env)
+                email = "no-reply@placeholder.local"
 
-        u = User(username=username, email=email, password_hash=generate_password_hash(password))
-        s.add(u)
-        s.commit()
+            u = User(username=username, email=email, password_hash=generate_password_hash(password))
+            s.add(u)
+            s.commit()
 
-        # Backfill legacy invoices
-        s.query(Invoice).filter(Invoice.user_id.is_(None)).update({"user_id": u.id})
-        s.commit()
+            # Backfill legacy invoices
+            s.query(Invoice).filter(Invoice.user_id.is_(None)).update({"user_id": u.id})
+            s.commit()
 
 
     # -----------------------------
