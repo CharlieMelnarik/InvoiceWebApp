@@ -354,28 +354,47 @@ def create_app():
     # Ensure at least one user exists (so legacy installs can log in immediately)
     # If there are no users, create an initial admin user from env vars.
     def _bootstrap_first_user():
-        username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
-        password = os.getenv("INITIAL_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "changeme"))
-        email = _normalize_email(os.getenv("INITIAL_ADMIN_EMAIL", "admin@example.com"))
+    username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
+    password = os.getenv("INITIAL_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "changeme"))
 
-        with db_session() as s:
-            first = s.query(User).first()
-            if first:
-                # Backfill email if missing (use env email if provided)
-                if not (getattr(first, "email", None) or "").strip() and _looks_like_email(email):
+    # IMPORTANT: do NOT default to admin@example.com anymore.
+    # Only use INITIAL_ADMIN_EMAIL if you explicitly set it.
+    email = _normalize_email(os.getenv("INITIAL_ADMIN_EMAIL", ""))
+
+    with db_session() as s:
+        # Deterministic "first" user
+        first = s.query(User).order_by(User.id.asc()).first()
+
+        if first:
+            # Only backfill email if:
+            # 1) first user has no email
+            # 2) INITIAL_ADMIN_EMAIL is set + valid
+            # 3) that email is NOT already used by anyone else
+            if not (getattr(first, "email", None) or "").strip() and _looks_like_email(email):
+                already = (
+                    s.query(User)
+                    .filter(text("lower(email) = :e"))
+                    .params(e=email)
+                    .first()
+                )
+                if not already:
                     first.email = email
                     s.commit()
-                return
+            return
 
-            u = User(username=username, email=email, password_hash=generate_password_hash(password))
-            s.add(u)
-            s.commit()
+        # No users exist -> create initial admin ONLY if email is valid
+        if not _looks_like_email(email):
+            # Fallback: create admin WITHOUT auto-email (or pick a real one in env)
+            email = "no-reply@placeholder.local"
 
-            # Backfill legacy invoices to this first user (so you don't "lose" old invoices)
-            s.query(Invoice).filter(Invoice.user_id.is_(None)).update({"user_id": u.id})
-            s.commit()
+        u = User(username=username, email=email, password_hash=generate_password_hash(password))
+        s.add(u)
+        s.commit()
 
-    _bootstrap_first_user()
+        # Backfill legacy invoices
+        s.query(Invoice).filter(Invoice.user_id.is_(None)).update({"user_id": u.id})
+        s.commit()
+
 
     # -----------------------------
     # Auth routes
@@ -480,9 +499,10 @@ def create_app():
 
                         try:
                             _send_reset_email(email, reset_url)
+                            print(f"[RESET] Sent reset email to {email}")
                         except Exception:
                             # Keep UX identical even if mail fails; log in production if desired.
-                            pass
+                            print(f"[RESET] SMTP ERROR for {email}: {repr(e)}")
 
             return redirect(url_for("login"))
 
