@@ -9,13 +9,32 @@
     <div class="card shadow-sm">
       <div class="card-body">
 
-        <h4 class="card-title mb-3">Business / Invoice Settings</h4>
+        <h4 class="card-title mb-3">Account & Invoice Settings</h4>
 
         <p class="text-muted small">
-          This information appears at the top of your PDF invoices.
+          Your email is used for login recovery. Business information appears at the top of your PDF invoices.
         </p>
 
         <form method="post">
+
+          <!-- Email (required) -->
+          <div class="mb-3">
+            <label class="form-label req">
+              Email Address
+            </label>
+            <input
+              type="email"
+              class="form-control"
+              name="email"
+              value="{{ u.email or '' }}"
+              required
+            >
+            <div class="small-muted mt-1">
+              Used for password resets.
+            </div>
+          </div>
+
+          <hr class="my-4" />
 
           <!-- Business Name -->
           <div class="mb-3">
@@ -77,4 +96,5 @@
 </div>
 
 {% endblock %}
+
 

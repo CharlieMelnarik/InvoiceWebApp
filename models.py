@@ -13,6 +13,8 @@ from sqlalchemy import (
     ForeignKey,
     UniqueConstraint,
     select,
+    Index,
+    func,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -35,8 +37,16 @@ class Base(DeclarativeBase):
 class User(Base):
     __tablename__ = "users"
 
+    # Case-insensitive unique email (Postgres): UNIQUE INDEX on lower(email)
+    __table_args__ = (
+        Index("ix_users_email_lower_unique", func.lower("email"), unique=True),
+    )
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
     username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Profile / business info (for PDF header)
@@ -208,3 +218,4 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
+

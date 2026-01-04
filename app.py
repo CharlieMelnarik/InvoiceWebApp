@@ -4,12 +4,14 @@ import os
 import re
 import io
 import zipfile
+import smtplib
+from email.message import EmailMessage
 from datetime import datetime
 from pathlib import Path
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, send_file, abort
+    flash, send_file, abort, current_app
 )
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -18,6 +20,7 @@ from flask_login import (
 from sqlalchemy import text
 from sqlalchemy.orm import selectinload
 from werkzeug.security import generate_password_hash, check_password_hash
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 from config import Config
 from models import (
@@ -91,6 +94,75 @@ def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
     if not inv:
         abort(404)
     return inv
+
+
+def _normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _looks_like_email(email: str) -> bool:
+    e = _normalize_email(email)
+    # simple sanity check (you can tighten later)
+    return bool(e) and ("@" in e) and ("." in e.split("@")[-1])
+
+
+# -----------------------------
+# Password reset token helpers
+# -----------------------------
+def _reset_serializer():
+    secret = current_app.config.get("SECRET_KEY")
+    salt = current_app.config.get("PASSWORD_RESET_SALT", "password-reset")
+    return URLSafeTimedSerializer(secret, salt=salt)
+
+
+def make_password_reset_token(user_id: int) -> str:
+    return _reset_serializer().dumps({"uid": int(user_id)})
+
+
+def read_password_reset_token(token: str, max_age_seconds: int) -> int | None:
+    try:
+        data = _reset_serializer().loads(token, max_age=max_age_seconds)
+        uid = data.get("uid")
+        return int(uid)
+    except (SignatureExpired, BadSignature, TypeError, ValueError):
+        return None
+
+
+def _send_reset_email(to_email: str, reset_url: str) -> None:
+    """
+    SMTP email sender. Configure via env vars (Render):
+      SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM
+    """
+    host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
+    user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
+    password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
+    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+
+    if not all([host, port, user, password, mail_from]):
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+
+    minutes = int((current_app.config.get("PASSWORD_RESET_MAX_AGE_SECONDS", 3600)) / 60)
+
+    subject = "Reset your password"
+    html = f"""
+    <p>You requested a password reset.</p>
+    <p><a href="{reset_url}">Click here to reset your password</a></p>
+    <p>This link expires in {minutes} minutes.</p>
+    <p>If you didn’t request this, you can ignore this email.</p>
+    """
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = mail_from
+    msg["To"] = to_email
+    msg.set_content("This email requires HTML support.")
+    msg.add_alternative(html, subtype="html")
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, password)
+        smtp.send_message(msg)
 
 
 # -----------------------------
@@ -210,6 +282,25 @@ def _migrate_user_profile_fields(engine):
                 conn.execute(text(st))
 
 
+def _migrate_user_email(engine):
+    """
+    Adds users.email for password reset and uniqueness.
+    """
+    if not _table_exists(engine, "users"):
+        return
+
+    if not _column_exists(engine, "users", "email"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+
+    # Unique index on lower(email) (Postgres supports this; SQLite best-effort)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email))"))
+    except Exception:
+        pass
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -218,6 +309,17 @@ def create_app():
 
     app = Flask(__name__)
     app.config.from_object(Config)
+
+    # Defaults for password reset + SMTP (can be overridden in Config or Render env vars)
+    app.config.setdefault("APP_BASE_URL", os.getenv("APP_BASE_URL", "").rstrip("/"))
+    app.config.setdefault("PASSWORD_RESET_MAX_AGE_SECONDS", int(os.getenv("PASSWORD_RESET_MAX_AGE_SECONDS", "3600")))
+    app.config.setdefault("PASSWORD_RESET_SALT", os.getenv("PASSWORD_RESET_SALT", "password-reset"))
+
+    app.config.setdefault("SMTP_HOST", os.getenv("SMTP_HOST"))
+    app.config.setdefault("SMTP_PORT", int(os.getenv("SMTP_PORT", "587")))
+    app.config.setdefault("SMTP_USER", os.getenv("SMTP_USER"))
+    app.config.setdefault("SMTP_PASS", os.getenv("SMTP_PASS"))
+    app.config.setdefault("MAIL_FROM", os.getenv("MAIL_FROM", os.getenv("SMTP_USER", "no-reply@example.com")))
 
     login_manager.init_app(app)
 
@@ -229,6 +331,7 @@ def create_app():
     # ✅ Then run any legacy “add column” migrations safely
     _migrate_add_user_id(engine)
     _migrate_user_profile_fields(engine)
+    _migrate_user_email(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -253,11 +356,18 @@ def create_app():
     def _bootstrap_first_user():
         username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
         password = os.getenv("INITIAL_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "changeme"))
+        email = _normalize_email(os.getenv("INITIAL_ADMIN_EMAIL", "admin@example.com"))
+
         with db_session() as s:
-            exists = s.query(User).first()
-            if exists:
+            first = s.query(User).first()
+            if first:
+                # Backfill email if missing (use env email if provided)
+                if not (getattr(first, "email", None) or "").strip() and _looks_like_email(email):
+                    first.email = email
+                    s.commit()
                 return
-            u = User(username=username, password_hash=generate_password_hash(password))
+
+            u = User(username=username, email=email, password_hash=generate_password_hash(password))
             s.add(u)
             s.commit()
 
@@ -294,11 +404,16 @@ def create_app():
 
         if request.method == "POST":
             username = (request.form.get("username") or "").strip()
+            email = _normalize_email(request.form.get("email") or "")
             password = request.form.get("password") or ""
             confirm = request.form.get("confirm") or ""
 
             if not username or len(username) < 3:
                 flash("Username must be at least 3 characters.", "error")
+                return render_template("register.html")
+
+            if not _looks_like_email(email):
+                flash("A valid email address is required.", "error")
                 return render_template("register.html")
 
             if not password or len(password) < 6:
@@ -310,12 +425,23 @@ def create_app():
                 return render_template("register.html")
 
             with db_session() as s:
-                taken = s.query(User).filter(User.username == username).first()
-                if taken:
+                taken_user = s.query(User).filter(User.username == username).first()
+                if taken_user:
                     flash("That username is already taken.", "error")
                     return render_template("register.html")
 
-                u = User(username=username, password_hash=generate_password_hash(password))
+                # case-insensitive email uniqueness
+                taken_email = (
+                    s.query(User)
+                    .filter(text("lower(email) = :e"))
+                    .params(e=email)
+                    .first()
+                )
+                if taken_email:
+                    flash("That email is already registered.", "error")
+                    return render_template("register.html")
+
+                u = User(username=username, email=email, password_hash=generate_password_hash(password))
                 s.add(u)
                 s.commit()
 
@@ -324,6 +450,81 @@ def create_app():
 
         return render_template("register.html")
 
+    @app.route("/forgot-password", methods=["GET", "POST"])
+    def forgot_password():
+        if current_user.is_authenticated:
+            return redirect(url_for("invoices"))
+
+        if request.method == "POST":
+            email = _normalize_email(request.form.get("email") or "")
+
+            # Always same response to prevent account enumeration
+            flash("If that email exists, we sent a password reset link.", "info")
+
+            if _looks_like_email(email):
+                with db_session() as s:
+                    u = (
+                        s.query(User)
+                        .filter(text("lower(email) = :e"))
+                        .params(e=email)
+                        .first()
+                    )
+                    if u:
+                        token = make_password_reset_token(u.id)
+
+                        base = (current_app.config.get("APP_BASE_URL") or "").rstrip("/")
+                        if not base:
+                            base = request.host_url.rstrip("/")
+
+                        reset_url = f"{base}{url_for('reset_password', token=token)}"
+
+                        try:
+                            _send_reset_email(email, reset_url)
+                        except Exception:
+                            # Keep UX identical even if mail fails; log in production if desired.
+                            pass
+
+            return redirect(url_for("login"))
+
+        return render_template("forgot_password.html")
+
+    @app.route("/reset-password/<token>", methods=["GET", "POST"])
+    def reset_password(token: str):
+        if current_user.is_authenticated:
+            return redirect(url_for("invoices"))
+
+        max_age = int(current_app.config.get("PASSWORD_RESET_MAX_AGE_SECONDS", 3600))
+        user_id = read_password_reset_token(token, max_age_seconds=max_age)
+        if not user_id:
+            flash("Reset link is invalid or expired. Please request a new one.", "error")
+            return redirect(url_for("forgot_password"))
+
+        if request.method == "POST":
+            pw1 = request.form.get("password") or ""
+            pw2 = request.form.get("confirm_password") or ""
+
+            if not pw1 or len(pw1) < 6:
+                flash("Password must be at least 6 characters.", "error")
+                return render_template("reset_password.html", token=token)
+
+            if pw1 != pw2:
+                flash("Passwords do not match.", "error")
+                return render_template("reset_password.html", token=token)
+
+            with db_session() as s:
+                u = s.get(User, int(user_id))
+                if not u:
+                    flash("Reset link is invalid or expired. Please request a new one.", "error")
+                    return redirect(url_for("forgot_password"))
+
+                u.password_hash = generate_password_hash(pw1)
+                s.commit()
+
+            flash("Password updated. Please log in.", "success")
+            return redirect(url_for("login"))
+
+        return render_template("reset_password.html", token=token)
+
     @app.route("/logout")
     @login_required
     def logout():
@@ -331,7 +532,7 @@ def create_app():
         return redirect(url_for("login"))
 
     # -----------------------------
-    # User Settings (business header for PDFs)
+    # User Settings (business header for PDFs + email)
     # -----------------------------
     @app.route("/settings", methods=["GET", "POST"])
     @login_required
@@ -342,9 +543,31 @@ def create_app():
                 abort(404)
 
             if request.method == "POST":
+                # Email (required)
+                new_email = _normalize_email(request.form.get("email") or "")
+                if not _looks_like_email(new_email):
+                    flash("Please enter a valid email address.", "error")
+                    return render_template("settings.html", u=u)
+
+                # If email changed, enforce case-insensitive uniqueness
+                if (u.email or "").strip().lower() != new_email:
+                    taken_email = (
+                        s.query(User)
+                        .filter(text("lower(email) = :e AND id != :id"))
+                        .params(e=new_email, id=u.id)
+                        .first()
+                    )
+                    if taken_email:
+                        flash("That email is already in use.", "error")
+                        return render_template("settings.html", u=u)
+
+                    u.email = new_email
+
+                # Existing fields
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
                 u.address = (request.form.get("address") or "").strip() or None
+
                 s.commit()
                 flash("Settings saved.", "success")
                 return redirect(url_for("settings"))
@@ -719,6 +942,7 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True)
+
 
 
 
