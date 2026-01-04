@@ -39,12 +39,19 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
+    # Profile / business info (for PDF header)
+    business_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # IMPORTANT:
+    # - invoices.user_id is nullable and uses ON DELETE SET NULL
+    # - therefore we should NOT use delete-orphan cascade here
     invoices: Mapped[list["Invoice"]] = relationship(
         back_populates="user",
-        cascade="all, delete-orphan",
         order_by="Invoice.created_at.desc()",
     )
 
@@ -77,13 +84,12 @@ class Invoice(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # NEW: ownership (nullable for legacy rows; app migrator will backfill)
+    # Ownership (nullable for legacy rows; you backfill in bootstrap)
     user_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True
-    )   
-
+    )
 
     # Human-friendly invoice number: YYYY###### (no dash)
     invoice_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
@@ -106,10 +112,7 @@ class Invoice(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    user: Mapped[Optional["User"]] = relationship(
-        back_populates="invoices"
-    )
-
+    user: Mapped[Optional["User"]] = relationship(back_populates="invoices")
 
     parts: Mapped[list["InvoicePart"]] = relationship(
         back_populates="invoice",
@@ -163,20 +166,12 @@ class InvoiceLabor(Base):
 # -----------------------------
 # Engine / Session factory
 # -----------------------------
-# models.py (replace make_engine)
-from sqlalchemy import create_engine
-
 def make_engine(db_url: str, echo: bool = False):
     """
     Create SQLAlchemy engine.
     - pool_pre_ping: detects dead connections (common on Render)
     - pool_recycle: periodically refreshes connections to avoid SSL hiccups
     """
-    connect_args = {}
-
-    # psycopg v3 supports SSL via URL params; Render typically requires SSL.
-    # If your DATABASE_URL already includes sslmode=require, this is fine.
-    # We keep connect_args empty and rely on the URL, but harden pooling.
     return create_engine(
         db_url,
         echo=echo,
@@ -186,7 +181,6 @@ def make_engine(db_url: str, echo: bool = False):
         pool_size=5,
         max_overflow=10,
     )
-
 
 
 def make_session_factory(engine):
@@ -214,5 +208,3 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
-
-

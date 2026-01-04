@@ -98,24 +98,21 @@ def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
 # -----------------------------
 def _table_exists(engine, table_name: str) -> bool:
     """
-    Works for Postgres + SQLite:
-    - Postgres: information_schema.tables
-    - SQLite: sqlite_master
+    Works for Postgres + SQLite.
+    NOTE: Your previous version always returned True on Postgres even if table didn't exist.
     """
+    # Postgres
     try:
         with engine.connect() as conn:
-            # Postgres (and most SQL DBs)
-            res = conn.execute(
-                text("""
-                    SELECT 1
-                    FROM information_schema.tables
-                    WHERE table_schema = 'public'
-                      AND table_name = :t
-                    LIMIT 1
-                """),
-                {"t": table_name}
-            ).scalar()
-            if res:
+            row = conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema='public' AND table_name=:t "
+                    "LIMIT 1"
+                ),
+                {"t": table_name},
+            ).fetchone()
+            if row is not None:
                 return True
     except Exception:
         pass
@@ -123,11 +120,15 @@ def _table_exists(engine, table_name: str) -> bool:
     # SQLite fallback
     try:
         with engine.connect() as conn:
-            res = conn.execute(
-                text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:t LIMIT 1"),
-                {"t": table_name}
-            ).scalar()
-            return bool(res)
+            row = conn.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name=:t "
+                    "LIMIT 1"
+                ),
+                {"t": table_name},
+            ).fetchone()
+            return row is not None
     except Exception:
         return False
 
@@ -187,6 +188,28 @@ def _migrate_add_user_id(engine):
                 conn.execute(text("ALTER TABLE invoices ADD COLUMN user_id INTEGER"))
 
 
+def _migrate_user_profile_fields(engine):
+    """
+    Adds per-user business header fields used in PDFs:
+      users.business_name, users.phone, users.address
+    """
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "business_name"):
+        stmts.append("ALTER TABLE users ADD COLUMN business_name VARCHAR(200)")
+    if not _column_exists(engine, "users", "phone"):
+        stmts.append("ALTER TABLE users ADD COLUMN phone VARCHAR(50)")
+    if not _column_exists(engine, "users", "address"):
+        stmts.append("ALTER TABLE users ADD COLUMN address VARCHAR(300)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -203,8 +226,9 @@ def create_app():
     # ✅ Always create tables first (fresh Postgres after DROP SCHEMA works)
     Base.metadata.create_all(bind=engine)
 
-    # ✅ Then run any legacy “add column” migration safely
+    # ✅ Then run any legacy “add column” migrations safely
     _migrate_add_user_id(engine)
+    _migrate_user_profile_fields(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -305,6 +329,27 @@ def create_app():
     def logout():
         logout_user()
         return redirect(url_for("login"))
+
+    # -----------------------------
+    # User Settings (business header for PDFs)
+    # -----------------------------
+    @app.route("/settings", methods=["GET", "POST"])
+    @login_required
+    def settings():
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            if not u:
+                abort(404)
+
+            if request.method == "POST":
+                u.business_name = (request.form.get("business_name") or "").strip() or None
+                u.phone = (request.form.get("phone") or "").strip() or None
+                u.address = (request.form.get("address") or "").strip() or None
+                s.commit()
+                flash("Settings saved.", "success")
+                return redirect(url_for("settings"))
+
+            return render_template("settings.html", u=u)
 
     # -----------------------------
     # Index

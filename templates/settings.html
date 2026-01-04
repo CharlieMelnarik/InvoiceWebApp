@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% set title = "Settings" %}
+
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-md-8 col-lg-6">
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+
+        <h4 class="card-title mb-3">Business / Invoice Settings</h4>
+
+        <p class="text-muted small">
+          This information appears at the top of your PDF invoices.
+        </p>
+
+        <form method="post">
+
+          <!-- Business Name -->
+          <div class="mb-3">
+            <label class="form-label">
+              Business Name / Your Name
+            </label>
+            <input
+              type="text"
+              class="form-control"
+              name="business_name"
+              value="{{ u.business_name or '' }}"
+              placeholder="e.g. Charlie Melnarik Automotive"
+            >
+          </div>
+
+          <!-- Phone -->
+          <div class="mb-3">
+            <label class="form-label">
+              Phone Number
+            </label>
+            <input
+              type="text"
+              class="form-control"
+              name="phone"
+              value="{{ u.phone or '' }}"
+              placeholder="(406) 555-1234"
+            >
+          </div>
+
+          <!-- Address -->
+          <div class="mb-3">
+            <label class="form-label">
+              Address
+            </label>
+            <textarea
+              class="form-control"
+              name="address"
+              rows="3"
+              placeholder="Street, City, State ZIP"
+            >{{ u.address or '' }}</textarea>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center mt-4">
+            <button type="submit" class="btn btn-primary">
+              Save Settings
+            </button>
+
+            <a href="{{ url_for('invoices') }}" class="btn btn-outline-secondary">
+              Back to Invoices
+            </a>
+          </div>
+
+        </form>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}
+

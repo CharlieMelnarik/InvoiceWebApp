@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% set title = "Profile" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Profile</h1>
+    <div class="small-muted">
+      This information appears at the top of your invoice PDFs.
+    </div>
+  </div>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="row g-3">
+      <div class="col-12">
+        <label class="form-label">Business / Name</label>
+        <input
+          class="form-control"
+          name="business_name"
+          value="{{ current_user_db.business_name or '' }}"
+          placeholder="e.g. Charlie Melnarik Auto Repair"
+        >
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label">Phone</label>
+        <input
+          class="form-control"
+          name="phone"
+          value="{{ current_user_db.phone or '' }}"
+          placeholder="(555) 555-5555"
+        >
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label">Address</label>
+        <input
+          class="form-control"
+          name="address"
+          value="{{ current_user_db.address or '' }}"
+          placeholder="Street, City, State ZIP"
+        >
+      </div>
+    </div>
+
+    <hr class="my-4">
+
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary" type="submit">
+        Save Profile
+      </button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('invoices') }}">
+        Back
+      </a>
+    </div>
+
+  </div>
+</form>
+{% endblock %}
+

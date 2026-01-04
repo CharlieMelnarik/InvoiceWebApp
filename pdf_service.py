@@ -10,7 +10,7 @@ from reportlab.lib import colors
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
 from config import Config
-from models import Invoice
+from models import Invoice, User
 
 
 def _money(x) -> str:
@@ -76,6 +76,23 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     if not inv:
         raise ValueError(f"Invoice not found: id={invoice_id}")
 
+    # Pull the invoice owner's profile (business header fields)
+    owner = None
+    try:
+        if getattr(inv, "user_id", None):
+            owner = session.get(User, inv.user_id)
+    except Exception:
+        owner = None
+
+    # Determine header identity lines (left side)
+    # business_name -> fallback to username -> fallback to blank
+    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
+    username = (getattr(owner, "username", None) or "").strip() if owner else ""
+    header_name = business_name or username or ""
+
+    header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
+    header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+
     # Ensure parts + labor loaded (relationship order is defined in models)
     parts = inv.parts
     labor_items = inv.labor_items
@@ -137,11 +154,31 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf.setFont("Helvetica-Bold", 20)
     pdf.drawString(M, PAGE_H - 0.75 * inch, "INVOICE")
 
-    # Business info (left)
+    # Business info (left) - now from user profile fields
     pdf.setFont("Helvetica", 10)
-    pdf.drawString(M, PAGE_H - 0.98 * inch, "Charlie Melnarik")
-    pdf.drawString(M, PAGE_H - 1.12 * inch, "159 Kendra Way, Hamilton, MT 59840")
-    pdf.drawString(M, PAGE_H - 1.26 * inch, "(406) 360-6324")
+
+    # We’ll fit up to 3 lines here like before (name, address, phone).
+    # Address can be wrapped to 2 lines if needed, but we still keep it tidy.
+    left_lines = []
+
+    if header_name:
+        left_lines.append(header_name)
+
+    if header_address:
+        # Wrap address if long (within a reasonable width on left side)
+        max_w = (PAGE_W / 2) - M  # left half-ish
+        addr_lines = _wrap_text(header_address, "Helvetica", 10, max_w)
+        left_lines.extend(addr_lines[:2])  # keep it max 2 lines to avoid header crowding
+
+    if header_phone:
+        left_lines.append(header_phone)
+
+    # Draw up to 3 lines starting where your original text was
+    # Original y positions: -0.98, -1.12, -1.26 inches
+    y_positions = [PAGE_H - 0.98 * inch, PAGE_H - 1.12 * inch, PAGE_H - 1.26 * inch]
+    for i, y in enumerate(y_positions):
+        if i < len(left_lines):
+            pdf.drawString(M, y, left_lines[i])
 
     # Meta (right)
     meta_x = PAGE_W - M
@@ -428,4 +465,5 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     session.commit()
 
     return pdf_path
+
 
