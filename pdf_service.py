@@ -85,13 +85,16 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         owner = None
 
     # Determine header identity lines (left side)
-    # business_name -> fallback to username -> fallback to blank
     business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
     header_name = business_name or username or ""
 
     header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
     header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+
+    # Customer contact info (bill-to box)
+    customer_phone = (getattr(inv, "customer_phone", None) or "").strip()
+    customer_email = (getattr(inv, "customer_email", None) or "").strip()
 
     # Ensure parts + labor loaded (relationship order is defined in models)
     parts = inv.parts
@@ -154,27 +157,22 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf.setFont("Helvetica-Bold", 20)
     pdf.drawString(M, PAGE_H - 0.75 * inch, "INVOICE")
 
-    # Business info (left) - now from user profile fields
+    # Business info (left)
     pdf.setFont("Helvetica", 10)
 
-    # We’ll fit up to 3 lines here like before (name, address, phone).
-    # Address can be wrapped to 2 lines if needed, but we still keep it tidy.
     left_lines = []
 
     if header_name:
         left_lines.append(header_name)
 
     if header_address:
-        # Wrap address if long (within a reasonable width on left side)
-        max_w = (PAGE_W / 2) - M  # left half-ish
+        max_w = (PAGE_W / 2) - M
         addr_lines = _wrap_text(header_address, "Helvetica", 10, max_w)
-        left_lines.extend(addr_lines[:2])  # keep it max 2 lines to avoid header crowding
+        left_lines.extend(addr_lines[:2])
 
     if header_phone:
         left_lines.append(header_phone)
 
-    # Draw up to 3 lines starting where your original text was
-    # Original y positions: -0.98, -1.12, -1.26 inches
     y_positions = [PAGE_H - 0.98 * inch, PAGE_H - 1.12 * inch, PAGE_H - 1.26 * inch]
     for i, y in enumerate(y_positions):
         if i < len(left_lines):
@@ -201,10 +199,39 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf.roundRect(M, top_y - box_h, box_w, box_h, 8, stroke=1, fill=0)
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawString(M + 10, top_y - 18, "BILL TO")
-    pdf.setFont("Helvetica", 11)
-    # keep your old ":" behavior if ever used
+
+    # Customer name (keep your old ":" behavior if ever used)
     nameFirst, _, _tail = (inv.name or "").partition(":")
-    pdf.drawString(M + 10, top_y - 38, nameFirst or inv.name or "")
+    customer_name = (nameFirst or inv.name or "").strip()
+
+    # Draw customer name slightly larger
+    pdf.setFont("Helvetica", 11)
+    pdf.drawString(M + 10, top_y - 38, customer_name)
+
+    # Draw phone/email below (wrapped to fit the box)
+    contact_font = "Helvetica"
+    contact_size = 10
+    max_contact_w = box_w - 20  # padding left+right
+
+    contact_lines = []
+    if customer_phone:
+        contact_lines.extend(_wrap_text(f"Phone: {customer_phone}", contact_font, contact_size, max_contact_w))
+    if customer_email:
+        contact_lines.extend(_wrap_text(f"Email: {customer_email}", contact_font, contact_size, max_contact_w))
+
+    pdf.setFont(contact_font, contact_size)
+
+    # Start a bit below the name
+    y_contact = top_y - 54
+    line_step = 14
+
+    # Only draw as many lines as fit in the box
+    bottom_limit = (top_y - box_h) + 12
+    for ln in contact_lines:
+        if y_contact < bottom_limit:
+            break
+        pdf.drawString(M + 10, y_contact, ln)
+        y_contact -= line_step
 
     # Job Details
     x2 = M + box_w + 0.35 * inch
@@ -282,7 +309,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     body_y = top_y - box_h - 0.5 * inch
 
     # -----------------------------
-    # Labor table (line totals from labor_time_hours * rate)
+    # Labor table
     # -----------------------------
     labor_rows = []
     rate = float(inv.price_per_hour or 0.0)
@@ -465,5 +492,6 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     session.commit()
 
     return pdf_path
+
 
 

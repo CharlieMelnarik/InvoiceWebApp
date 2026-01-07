@@ -45,6 +45,25 @@
             <div class="fw-semibold">{{ inv.vehicle }}</div>
           </div>
 
+          <!-- Customer contact -->
+          <div class="col-6">
+            <div class="small-muted">Customer Email</div>
+            {% if inv.customer_email %}
+              <div class="fw-semibold">{{ inv.customer_email }}</div>
+            {% else %}
+              <div class="small-muted">—</div>
+            {% endif %}
+          </div>
+
+          <div class="col-6">
+            <div class="small-muted">Customer Phone</div>
+            {% if inv.customer_phone %}
+              <div class="fw-semibold">{{ inv.customer_phone }}</div>
+            {% else %}
+              <div class="small-muted">—</div>
+            {% endif %}
+          </div>
+
           <div class="col-4">
             <div class="small-muted">Hours</div>
             <div class="fw-semibold">{{ inv.hours }}</div>
@@ -204,6 +223,24 @@
              href="{{ url_for('invoice_pdf_download', invoice_id=inv.id) }}">
             Download PDF
           </a>
+
+          <!-- NEW: Email PDF to customer -->
+          <form method="post"
+                action="{{ url_for('invoice_send', invoice_id=inv.id) }}"
+                onsubmit="return confirmSendInvoiceEmail();">
+            {% if inv.customer_email %}
+              <button class="btn btn-outline-primary w-100" type="submit">
+                Email PDF to Customer
+              </button>
+            {% else %}
+              <button class="btn btn-outline-primary w-100" type="button" disabled>
+                Email PDF to Customer
+              </button>
+              <div class="small-muted mt-1">
+                Add a customer email on the <a href="{{ url_for('invoice_edit', invoice_id=inv.id) }}">edit</a> page first.
+              </div>
+            {% endif %}
+          </form>
         </div>
 
         <hr class="my-3">
@@ -235,6 +272,10 @@
     return confirm(
       "Are you sure you want to delete this invoice?\n\nThis cannot be undone."
     );
+  }
+
+  function confirmSendInvoiceEmail() {
+    return confirm("Send this invoice PDF to the customer email on file?");
   }
 </script>
 {% endblock %}

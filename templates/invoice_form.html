@@ -40,6 +40,22 @@
                value="{% if mode=='edit' %}{{ inv.vehicle }}{% else %}{{ (form.vehicle if form else '') }}{% endif %}">
       </div>
 
+      <!-- Customer contact -->
+      <div class="col-12 col-md-6">
+        <label class="form-label">Customer Email</label>
+        <input class="form-control" type="email" name="customer_email"
+               value="{% if mode=='edit' %}{{ inv.customer_email or '' }}{% else %}{{ (form.customer_email if form else '') }}{% endif %}"
+               placeholder="customer@example.com">
+        <div class="small-muted mt-1">Used for sending the PDF invoice.</div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label">Customer Phone</label>
+        <input class="form-control" name="customer_phone"
+               value="{% if mode=='edit' %}{{ inv.customer_phone or '' }}{% else %}{{ (form.customer_phone if form else '') }}{% endif %}"
+               placeholder="(406) 555-1234">
+      </div>
+
       <div class="col-6 col-md-3">
         <label class="form-label">Hours (Total)</label>
         <input class="form-control" name="hours" inputmode="decimal"
@@ -215,4 +231,5 @@
   }
 </script>
 {% endblock %}
+
 

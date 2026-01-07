@@ -165,13 +165,40 @@ def _send_reset_email(to_email: str, reset_url: str) -> None:
         smtp.send_message(msg)
 
 
+def _send_invoice_pdf_email(to_email: str, subject: str, body_text: str, pdf_path: str) -> None:
+    host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
+    user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
+    password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
+    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+
+    if not all([host, port, user, password, mail_from]):
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = mail_from
+    msg["To"] = to_email
+    msg.set_content(body_text)
+
+    with open(pdf_path, "rb") as f:
+        data = f.read()
+
+    filename = os.path.basename(pdf_path) or "invoice.pdf"
+    msg.add_attachment(data, maintype="application", subtype="pdf", filename=filename)
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, password)
+        smtp.send_message(msg)
+
+
 # -----------------------------
 # DB migration (lightweight)
 # -----------------------------
 def _table_exists(engine, table_name: str) -> bool:
     """
     Works for Postgres + SQLite.
-    NOTE: Your previous version always returned True on Postgres even if table didn't exist.
     """
     # Postgres
     try:
@@ -243,20 +270,15 @@ def _migrate_add_user_id(engine):
     """
     Legacy helper:
     If an old DB already has invoices but not invoices.user_id, add it.
-    This MUST NOT crash on fresh DBs.
     """
-    # If invoices table doesn't exist yet, do nothing.
     if not _table_exists(engine, "invoices"):
         return
 
-    # Add invoices.user_id if missing.
     if not _column_exists(engine, "invoices", "user_id"):
         with engine.begin() as conn:
-            # Postgres supports IF NOT EXISTS; SQLite may not. We already checked, so both are fine.
             try:
                 conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS user_id INTEGER"))
             except Exception:
-                # SQLite fallback (no IF NOT EXISTS on older versions)
                 conn.execute(text("ALTER TABLE invoices ADD COLUMN user_id INTEGER"))
 
 
@@ -293,12 +315,31 @@ def _migrate_user_email(engine):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
 
-    # Unique index on lower(email) (Postgres supports this; SQLite best-effort)
+    # Unique index on lower(email)
     try:
         with engine.begin() as conn:
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email))"))
     except Exception:
         pass
+
+
+def _migrate_invoice_contact_fields(engine):
+    """
+    Adds invoices.customer_email and invoices.customer_phone.
+    """
+    if not _table_exists(engine, "invoices"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "invoices", "customer_email"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN customer_email VARCHAR(255)")
+    if not _column_exists(engine, "invoices", "customer_phone"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN customer_phone VARCHAR(50)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
 
 
 # -----------------------------
@@ -325,13 +366,14 @@ def create_app():
 
     engine = make_engine(Config.SQLALCHEMY_DATABASE_URI, echo=Config.SQLALCHEMY_ECHO)
 
-    # ✅ Always create tables first (fresh Postgres after DROP SCHEMA works)
+    # ✅ Always create tables first
     Base.metadata.create_all(bind=engine)
 
     # ✅ Then run any legacy “add column” migrations safely
     _migrate_add_user_id(engine)
     _migrate_user_profile_fields(engine)
     _migrate_user_email(engine)
+    _migrate_invoice_contact_fields(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -352,24 +394,17 @@ def create_app():
             return AppUser(u.id, u.username)
 
     # Ensure at least one user exists (so legacy installs can log in immediately)
-    # If there are no users, create an initial admin user from env vars.
     def _bootstrap_first_user():
         username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
         password = os.getenv("INITIAL_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "changeme"))
 
-        # IMPORTANT: do NOT default to admin@example.com anymore.
-        # Only use INITIAL_ADMIN_EMAIL if you explicitly set it.
+        # Only use INITIAL_ADMIN_EMAIL if explicitly set.
         email = _normalize_email(os.getenv("INITIAL_ADMIN_EMAIL", ""))
 
         with db_session() as s:
-            # Deterministic "first" user
             first = s.query(User).order_by(User.id.asc()).first()
 
             if first:
-                # Only backfill email if:
-                # 1) first user has no email
-                # 2) INITIAL_ADMIN_EMAIL is set + valid
-                # 3) that email is NOT already used by anyone else
                 if not (getattr(first, "email", None) or "").strip() and _looks_like_email(email):
                     already = (
                         s.query(User)
@@ -382,9 +417,8 @@ def create_app():
                         s.commit()
                 return
 
-            # No users exist -> create initial admin ONLY if email is valid
+            # No users exist -> create initial admin
             if not _looks_like_email(email):
-                # Fallback: create admin WITHOUT auto-email (or pick a real one in env)
                 email = "no-reply@placeholder.local"
 
             u = User(username=username, email=email, password_hash=generate_password_hash(password))
@@ -395,6 +429,7 @@ def create_app():
             s.query(Invoice).filter(Invoice.user_id.is_(None)).update({"user_id": u.id})
             s.commit()
 
+    _bootstrap_first_user()
 
     # -----------------------------
     # Auth routes
@@ -449,7 +484,6 @@ def create_app():
                     flash("That username is already taken.", "error")
                     return render_template("register.html")
 
-                # case-insensitive email uniqueness
                 taken_email = (
                     s.query(User)
                     .filter(text("lower(email) = :e"))
@@ -500,7 +534,7 @@ def create_app():
                         try:
                             _send_reset_email(email, reset_url)
                             print(f"[RESET] Sent reset email to {email}")
-                        except Exception:
+                        except Exception as e:
                             # Keep UX identical even if mail fails; log in production if desired.
                             print(f"[RESET] SMTP ERROR for {email}: {repr(e)}")
 
@@ -675,6 +709,8 @@ def create_app():
                 inv = Invoice(
                     user_id=_current_user_id_int(),
                     invoice_number=inv_no,
+                    customer_email=(request.form.get("customer_email") or "").strip() or None,
+                    customer_phone=(request.form.get("customer_phone") or "").strip() or None,
                     name=name,
                     vehicle=vehicle,
                     hours=_to_float(request.form.get("hours")),
@@ -736,6 +772,8 @@ def create_app():
                 inv.paid = _to_float(request.form.get("paid"))
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = request.form.get("notes", "").rstrip()
+                inv.customer_email = (request.form.get("customer_email") or "").strip() or None
+                inv.customer_phone = (request.form.get("customer_phone") or "").strip() or None
 
                 inv.parts.clear()
                 inv.labor_items.clear()
@@ -930,6 +968,46 @@ def create_app():
                 download_name=os.path.basename(inv.pdf_path),
                 mimetype="application/pdf"
             )
+
+    @app.route("/invoices/<int:invoice_id>/send", methods=["POST"])
+    @login_required
+    def invoice_send(invoice_id: int):
+        with db_session() as s:
+            inv = _invoice_owned_or_404(s, invoice_id)
+
+            to_email = (inv.customer_email or "").strip().lower()
+            if not to_email or "@" not in to_email:
+                flash("Customer email is missing. Add it on the invoice edit page first.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+            # Ensure PDF exists; generate if missing
+            if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
+                generate_and_store_pdf(s, invoice_id)
+                inv = _invoice_owned_or_404(s, invoice_id)
+
+            subject = f"Invoice {inv.invoice_number}"
+            body = (
+                f"Hello {inv.name},\n\n"
+                f"Attached is your invoice {inv.invoice_number}.\n"
+                f"Vehicle: {inv.vehicle}\n"
+                f"Total: ${inv.invoice_total():,.2f}\n\n"
+                "Thank you."
+            )
+
+            try:
+                _send_invoice_pdf_email(
+                    to_email=to_email,
+                    subject=subject,
+                    body_text=body,
+                    pdf_path=inv.pdf_path,
+                )
+            except Exception as e:
+                print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={inv.invoice_number}: {repr(e)}")
+                flash("Could not send email (SMTP / sender config issue). Check Render logs.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+        flash("Invoice email sent.", "success")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
     @app.route("/pdfs/download_all")
     @login_required

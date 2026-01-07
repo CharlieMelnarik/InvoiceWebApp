@@ -43,7 +43,6 @@ class User(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-
     username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
 
@@ -57,9 +56,6 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # IMPORTANT:
-    # - invoices.user_id is nullable and uses ON DELETE SET NULL
-    # - therefore we should NOT use delete-orphan cascade here
     invoices: Mapped[list["Invoice"]] = relationship(
         back_populates="user",
         order_by="Invoice.created_at.desc()",
@@ -88,13 +84,13 @@ class InvoiceSequence(Base):
 class Invoice(Base):
     """
     Mirrors your CSV fields (plus invoice_number and pdf storage metadata).
-    Now includes user_id to isolate each user's invoices.
+    Includes user_id to isolate each user's invoices.
     """
     __tablename__ = "invoices"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # Ownership (nullable for legacy rows; you backfill in bootstrap)
+    # Ownership
     user_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
@@ -103,6 +99,10 @@ class Invoice(Base):
 
     # Human-friendly invoice number: YYYY###### (no dash)
     invoice_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
+
+    # Customer / bill-to info
+    customer_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    customer_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # CSV-equivalent fields
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)            # Name
@@ -114,7 +114,7 @@ class Invoice(Base):
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)               # Paid
     date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")          # Date In (text)
 
-    # Stored PDF (Option A: file path on disk)
+    # Stored PDF
     pdf_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     pdf_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -177,17 +177,12 @@ class InvoiceLabor(Base):
 # Engine / Session factory
 # -----------------------------
 def make_engine(db_url: str, echo: bool = False):
-    """
-    Create SQLAlchemy engine.
-    - pool_pre_ping: detects dead connections (common on Render)
-    - pool_recycle: periodically refreshes connections to avoid SSL hiccups
-    """
     return create_engine(
         db_url,
         echo=echo,
         future=True,
         pool_pre_ping=True,
-        pool_recycle=300,   # 5 minutes
+        pool_recycle=300,
         pool_size=5,
         max_overflow=10,
     )
@@ -201,10 +196,6 @@ def make_session_factory(engine):
 # Invoice number generator
 # -----------------------------
 def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
-    """
-    Returns next invoice number like YYYY###### (no dash).
-    Uses a per-year counter in invoice_sequences.
-    """
     seq_row = session.execute(
         select(InvoiceSequence).where(InvoiceSequence.year == year)
     ).scalar_one_or_none()
