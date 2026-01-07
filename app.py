@@ -107,6 +107,49 @@ def _looks_like_email(email: str) -> bool:
 
 
 # -----------------------------
+# Invoice template / profession config
+# -----------------------------
+INVOICE_TEMPLATES = {
+    "auto_repair": {
+        "label": "Auto Repair",
+        "job_label": "Vehicle",
+        "labor_title": "Labor",
+        "labor_desc_label": "Labor Description",
+        "parts_title": "Parts",
+        "parts_name_label": "Part Name",
+        "shop_supplies_label": "Shop Supplies",
+    },
+    "general_service": {
+        "label": "General Service",
+        "job_label": "Job / Project",
+        "labor_title": "Services",
+        "labor_desc_label": "Service Description",
+        "parts_title": "Materials",
+        "parts_name_label": "Material",
+        "shop_supplies_label": "Supplies / Fees",
+    },
+    "accountant": {
+        "label": "Accountant",
+        "job_label": "Client / Engagement",
+        "labor_title": "Services",
+        "labor_desc_label": "Service Description",
+        "parts_title": "Expenses",
+        "parts_name_label": "Expense",
+        "shop_supplies_label": "Admin / Filing Fees",
+    },
+}
+
+
+def _template_key_fallback(key: str | None) -> str:
+    key = (key or "").strip()
+    return key if key in INVOICE_TEMPLATES else "auto_repair"
+
+
+def _template_config_for(key: str | None) -> dict:
+    return INVOICE_TEMPLATES[_template_key_fallback(key)]
+
+
+# -----------------------------
 # Password reset token helpers
 # -----------------------------
 def _reset_serializer():
@@ -342,6 +385,25 @@ def _migrate_invoice_contact_fields(engine):
                 conn.execute(text(st))
 
 
+def _migrate_user_invoice_template(engine):
+    if not _table_exists(engine, "users"):
+        return
+    if not _column_exists(engine, "users", "invoice_template"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN invoice_template VARCHAR(50)"))
+        # Backfill existing users
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET invoice_template='auto_repair' WHERE invoice_template IS NULL"))
+
+
+def _migrate_invoice_template(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "invoice_template"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN invoice_template VARCHAR(50)"))
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -374,6 +436,8 @@ def create_app():
     _migrate_user_profile_fields(engine)
     _migrate_user_email(engine)
     _migrate_invoice_contact_fields(engine)
+    _migrate_user_invoice_template(engine)
+    _migrate_invoice_template(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -586,7 +650,7 @@ def create_app():
         return redirect(url_for("login"))
 
     # -----------------------------
-    # User Settings (business header for PDFs + email)
+    # User Settings (business header for PDFs + email + profession)
     # -----------------------------
     @app.route("/settings", methods=["GET", "POST"])
     @login_required
@@ -601,7 +665,7 @@ def create_app():
                 new_email = _normalize_email(request.form.get("email") or "")
                 if not _looks_like_email(new_email):
                     flash("Please enter a valid email address.", "error")
-                    return render_template("settings.html", u=u)
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
                 # If email changed, enforce case-insensitive uniqueness
                 if (u.email or "").strip().lower() != new_email:
@@ -613,11 +677,16 @@ def create_app():
                     )
                     if taken_email:
                         flash("That email is already in use.", "error")
-                        return render_template("settings.html", u=u)
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
                     u.email = new_email
 
-                # Existing fields
+                # Invoice template / profession
+                tmpl = (request.form.get("invoice_template") or "").strip()
+                tmpl = _template_key_fallback(tmpl)
+                u.invoice_template = tmpl
+
+                # Business info
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
                 u.address = (request.form.get("address") or "").strip() or None
@@ -626,7 +695,7 @@ def create_app():
                 flash("Settings saved.", "success")
                 return redirect(url_for("settings"))
 
-            return render_template("settings.html", u=u)
+            return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
     # -----------------------------
     # Index
@@ -698,9 +767,22 @@ def create_app():
             name = request.form.get("name", "").strip()
             vehicle = request.form.get("vehicle", "").strip()
 
-            if not name or not vehicle:
-                flash("Name and Vehicle are required.", "error")
-                return render_template("invoice_form.html", mode="new", form=request.form)
+            # Decide which template is currently active for THIS user (for validation + labels)
+            with db_session() as s:
+                u = s.get(User, _current_user_id_int())
+                user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
+                tmpl = _template_config_for(user_template_key)
+
+            # Required fields:
+            # - Name always required
+            # - "vehicle" field is still used under the hood, but for accountant/general it can be a blank engagement/job
+            if not name:
+                flash("Name is required.", "error")
+                return render_template("invoice_form.html", mode="new", form=request.form, tmpl=tmpl)
+
+            if user_template_key == "auto_repair" and not vehicle:
+                flash("Vehicle is required for Auto Repair invoices.", "error")
+                return render_template("invoice_form.html", mode="new", form=request.form, tmpl=tmpl)
 
             with db_session() as s:
                 year = int(datetime.now().strftime("%Y"))
@@ -709,10 +791,11 @@ def create_app():
                 inv = Invoice(
                     user_id=_current_user_id_int(),
                     invoice_number=inv_no,
+                    invoice_template=user_template_key,  # ✅ lock profession at creation time
                     customer_email=(request.form.get("customer_email") or "").strip() or None,
                     customer_phone=(request.form.get("customer_phone") or "").strip() or None,
                     name=name,
-                    vehicle=vehicle,
+                    vehicle=vehicle,  # (labeled by tmpl["job_label"] in templates)
                     hours=_to_float(request.form.get("hours")),
                     price_per_hour=_to_float(request.form.get("price_per_hour")),
                     shop_supplies=_to_float(request.form.get("shop_supplies")),
@@ -738,10 +821,16 @@ def create_app():
 
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
 
+        # GET request: show form using user's current template for labels
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            tmpl = _template_config_for(getattr(u, "invoice_template", None) if u else None)
+
         return render_template(
             "invoice_form.html",
             mode="new",
-            default_date=datetime.now().strftime("%m/%d/%Y")
+            default_date=datetime.now().strftime("%m/%d/%Y"),
+            tmpl=tmpl
         )
 
     # -----------------------------
@@ -752,7 +841,8 @@ def create_app():
     def invoice_view(invoice_id):
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
-        return render_template("invoice_view.html", inv=inv)
+            tmpl = _template_config_for(inv.invoice_template)
+        return render_template("invoice_view.html", inv=inv, tmpl=tmpl)
 
     # -----------------------------
     # Edit invoice (scoped)
@@ -793,7 +883,8 @@ def create_app():
                 s.commit()
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
 
-        return render_template("invoice_form.html", mode="edit", inv=inv)
+        tmpl = _template_config_for(inv.invoice_template)
+        return render_template("invoice_form.html", mode="edit", inv=inv, tmpl=tmpl)
 
     # -----------------------------
     # Year Summary (scoped)
@@ -989,7 +1080,7 @@ def create_app():
             body = (
                 f"Hello {inv.name},\n\n"
                 f"Attached is your invoice {inv.invoice_number}.\n"
-                f"Vehicle: {inv.vehicle}\n"
+                f"Details: {inv.vehicle}\n"
                 f"Total: ${inv.invoice_total():,.2f}\n\n"
                 "Thank you."
             )
@@ -1040,6 +1131,7 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True)
+
 
 
 

@@ -13,8 +13,6 @@ from sqlalchemy import (
     ForeignKey,
     UniqueConstraint,
     select,
-    Index,
-    func,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -37,16 +35,19 @@ class Base(DeclarativeBase):
 class User(Base):
     __tablename__ = "users"
 
-    # Case-insensitive unique email (Postgres): UNIQUE INDEX on lower(email)
-    __table_args__ = (
-        Index("ix_users_email_lower_unique", func.lower("email"), unique=True),
-    )
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
-    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # ✅ Email for password reset
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # ✅ Invoice template / profession (user default for NEW invoices)
+    # Allowed examples:
+    #   - "auto_repair"
+    #   - "general_service"
+    #   - "accountant"
+    invoice_template: Mapped[str] = mapped_column(String(50), nullable=False, default="auto_repair")
 
     # Profile / business info (for PDF header)
     business_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
@@ -66,10 +67,6 @@ class User(Base):
 # Tables
 # -----------------------------
 class InvoiceSequence(Base):
-    """
-    Stores the last used sequence number per year.
-    Used to generate invoice_number like: YYYY###### (no dash).
-    """
     __tablename__ = "invoice_sequences"
     __table_args__ = (UniqueConstraint("year", name="uq_invoice_sequences_year"),)
 
@@ -82,46 +79,42 @@ class InvoiceSequence(Base):
 
 
 class Invoice(Base):
-    """
-    Mirrors your CSV fields (plus invoice_number and pdf storage metadata).
-    Includes user_id to isolate each user's invoices.
-    """
     __tablename__ = "invoices"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # Ownership
     user_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
         nullable=True
     )
 
-    # Human-friendly invoice number: YYYY###### (no dash)
     invoice_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
 
-    # Customer / bill-to info
+    # ✅ Locks in the profession/template at the time the invoice was created
+    # Same allowed examples as User.invoice_template.
+    invoice_template: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    # Customer contact
     customer_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     customer_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
-    # CSV-equivalent fields
-    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)            # Name
-    vehicle: Mapped[str] = mapped_column(String(200), nullable=False, index=True)         # Vehicle
-    hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)              # Hours
-    price_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)     # Price Per Hour
-    shop_supplies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)      # Shop Supplies
-    notes: Mapped[str] = mapped_column(String, nullable=False, default="")                # Notes
-    paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)               # Paid
-    date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")          # Date In (text)
+    # Core fields (labels change by template in UI/PDF)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    vehicle: Mapped[str] = mapped_column(String(200), nullable=False, index=True)  # label changes by template
+    hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    price_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    shop_supplies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    notes: Mapped[str] = mapped_column(String, nullable=False, default="")
+    paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")
 
-    # Stored PDF
     pdf_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     pdf_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships
     user: Mapped[Optional["User"]] = relationship(back_populates="invoices")
 
     parts: Mapped[list["InvoicePart"]] = relationship(
@@ -135,7 +128,6 @@ class Invoice(Base):
         order_by="InvoiceLabor.id",
     )
 
-    # Convenience totals
     def parts_total(self) -> float:
         return round(sum((p.part_price or 0.0) for p in self.parts), 2)
 
@@ -209,4 +201,6 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
+
+
 

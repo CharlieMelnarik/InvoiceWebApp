@@ -34,6 +34,22 @@
             </div>
           </div>
 
+          <!-- Profession / Template -->
+          <div class="mb-3">
+            <label class="form-label req">Business Type / Profession</label>
+            <select class="form-select" name="invoice_template" required>
+              {% for key, cfg in templates.items() %}
+                <option value="{{ key }}"
+                  {% if (u.invoice_template or 'auto_repair') == key %}selected{% endif %}>
+                  {{ cfg.label }}
+                </option>
+              {% endfor %}
+            </select>
+            <div class="small-muted mt-1">
+              New invoices will use this style. Existing invoices keep the style they were created with.
+            </div>
+          </div>
+
           <hr class="my-4" />
 
           <!-- Business Name -->

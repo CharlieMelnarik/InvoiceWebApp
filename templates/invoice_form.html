@@ -2,6 +2,26 @@
 {% set title = "New Invoice" if mode == "new" else "Edit Invoice" %}
 
 {% block content %}
+
+{# --------------------------------------------------------------------
+  Profession-aware labels.
+  app.py should pass tmpl into this template:
+    - new invoice: tmpl from user.invoice_template
+    - edit invoice: tmpl from inv.invoice_template
+--------------------------------------------------------------------- #}
+{% set _tmpl = tmpl if tmpl is defined and tmpl else {} %}
+{% set job_label = _tmpl.get('job_label', 'Vehicle') %}
+{% set labor_title = _tmpl.get('labor_title', 'Labor') %}
+{% set labor_desc_label = _tmpl.get('labor_desc_label', 'Labor Description') %}
+{% set parts_title = _tmpl.get('parts_title', 'Parts') %}
+{% set parts_name_label = _tmpl.get('parts_name_label', 'Part Name') %}
+{% set shop_supplies_label = _tmpl.get('shop_supplies_label', 'Shop Supplies') %}
+
+{# Optional placeholders (nice for accountant/general service). If not present, fall back. #}
+{% set job_placeholder = _tmpl.get('job_placeholder', '') %}
+{% set part_placeholder = _tmpl.get('parts_placeholder', 'e.g. Item') %}
+{% set labor_placeholder = _tmpl.get('labor_placeholder', 'e.g. Service performed') %}
+
 <div class="d-flex justify-content-between align-items-end mb-3">
   <div>
     <h1 class="h3 fw-bold mb-1">
@@ -20,11 +40,7 @@
   </div>
 </div>
 
-{% if mode == "new" %}
-  <form method="post" class="card shadow-sm">
-{% else %}
-  <form method="post" class="card shadow-sm">
-{% endif %}
+<form method="post" class="card shadow-sm">
   <div class="card-body">
 
     <div class="row g-3">
@@ -35,8 +51,9 @@
       </div>
 
       <div class="col-12 col-md-6">
-        <label class="form-label req">Vehicle</label>
+        <label class="form-label req">{{ job_label }}</label>
         <input class="form-control" name="vehicle" required
+               placeholder="{{ job_placeholder }}"
                value="{% if mode=='edit' %}{{ inv.vehicle }}{% else %}{{ (form.vehicle if form else '') }}{% endif %}">
       </div>
 
@@ -69,7 +86,7 @@
       </div>
 
       <div class="col-6 col-md-3">
-        <label class="form-label">Shop Supplies</label>
+        <label class="form-label">{{ shop_supplies_label }}</label>
         <input class="form-control" name="shop_supplies" inputmode="decimal"
                value="{% if mode=='edit' %}{{ inv.shop_supplies }}{% else %}{{ (form.shop_supplies if form else '0') }}{% endif %}">
       </div>
@@ -89,18 +106,20 @@
 
     <hr class="my-4">
 
-    <!-- Parts -->
+    <!-- Parts / Materials -->
     <div class="d-flex justify-content-between align-items-center mb-2">
-      <h2 class="h5 fw-bold mb-0">Parts</h2>
-      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addPartRow()">Add Part</button>
+      <h2 class="h5 fw-bold mb-0">{{ parts_title }}</h2>
+      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addPartRow()">
+        Add Item
+      </button>
     </div>
 
     <div class="table-responsive">
       <table class="table table-sm align-middle" id="partsTable">
         <thead class="table-light">
           <tr>
-            <th style="min-width: 280px;">Part Name</th>
-            <th style="width: 160px;">Part Price</th>
+            <th style="min-width: 280px;">{{ parts_name_label }}</th>
+            <th style="width: 160px;">Price</th>
             <th style="width: 80px;"></th>
           </tr>
         </thead>
@@ -119,7 +138,7 @@
 
           <!-- Always keep one blank row available -->
           <tr>
-            <td><input class="form-control" name="part_name" placeholder="e.g. Oil filter"></td>
+            <td><input class="form-control" name="part_name" placeholder="{{ part_placeholder }}"></td>
             <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="0.00"></td>
             <td class="text-end">
               <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
@@ -131,18 +150,20 @@
 
     <hr class="my-4">
 
-    <!-- Labor -->
+    <!-- Labor / Services -->
     <div class="d-flex justify-content-between align-items-center mb-2">
-      <h2 class="h5 fw-bold mb-0">Labor Items</h2>
-      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLaborRow()">Add Labor</button>
+      <h2 class="h5 fw-bold mb-0">{{ labor_title }}</h2>
+      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLaborRow()">
+        Add Item
+      </button>
     </div>
 
     <div class="table-responsive">
       <table class="table table-sm align-middle" id="laborTable">
         <thead class="table-light">
           <tr>
-            <th style="min-width: 280px;">Labor Description</th>
-            <th style="width: 180px;">Labor Time (hrs)</th>
+            <th style="min-width: 280px;">{{ labor_desc_label }}</th>
+            <th style="width: 180px;">Time (hrs)</th>
             <th style="width: 80px;"></th>
           </tr>
         </thead>
@@ -161,7 +182,7 @@
 
           <!-- Always keep one blank row available -->
           <tr>
-            <td><input class="form-control" name="labor_desc" placeholder="e.g. Replace brake pads"></td>
+            <td><input class="form-control" name="labor_desc" placeholder="{{ labor_placeholder }}"></td>
             <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
             <td class="text-end">
               <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
@@ -208,7 +229,7 @@
     const tbody = document.querySelector("#partsTable tbody");
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><input class="form-control" name="part_name" placeholder="Part name"></td>
+      <td><input class="form-control" name="part_name" placeholder="{{ parts_name_label|e }}"></td>
       <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="0.00"></td>
       <td class="text-end">
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
@@ -221,7 +242,7 @@
     const tbody = document.querySelector("#laborTable tbody");
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><input class="form-control" name="labor_desc" placeholder="Labor description"></td>
+      <td><input class="form-control" name="labor_desc" placeholder="{{ labor_desc_label|e }}"></td>
       <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
       <td class="text-end">
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
@@ -231,5 +252,7 @@
   }
 </script>
 {% endblock %}
+
+
 
 

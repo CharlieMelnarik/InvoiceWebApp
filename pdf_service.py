@@ -84,17 +84,86 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     except Exception:
         owner = None
 
+    # Customer contact (for BILL TO box)
+    customer_email = (getattr(inv, "customer_email", None) or "").strip()
+    customer_phone = (getattr(inv, "customer_phone", None) or "").strip()
+
+    # -----------------------------
+    # Invoice template / profession config (locked per invoice)
+    # -----------------------------
+    TEMPLATE_CFG = {
+        "auto_repair": {
+            "job_label": "Vehicle",
+            "job_box_title": "JOB DETAILS",
+            "job_rate_label": "Rate/Hour",
+            "job_hours_label": "Total Hours",
+            "hours_suffix": "hrs",
+
+            "labor_title": "Labor",
+            "labor_desc_label": "Labor Description",
+            "labor_time_label": "Time",
+            "labor_total_label": "Line Total",
+
+            "parts_title": "Parts",
+            "parts_name_label": "Part Name",
+            "parts_price_label": "Price",
+
+            "shop_supplies_label": "Shop Supplies",
+        },
+        "general_service": {
+            "job_label": "Job / Project",
+            "job_box_title": "JOB DETAILS",
+            "job_rate_label": "Rate/Hour",
+            "job_hours_label": "Total Hours",
+            "hours_suffix": "hrs",
+
+            "labor_title": "Services",
+            "labor_desc_label": "Service Description",
+            "labor_time_label": "Time",
+            "labor_total_label": "Line Total",
+
+            "parts_title": "Materials",
+            "parts_name_label": "Material",
+            "parts_price_label": "Price",
+
+            "shop_supplies_label": "Supplies / Fees",
+        },
+        # ✅ NEW: Accountant
+        "accountant": {
+            "job_label": "Client / Engagement",
+            "job_box_title": "ENGAGEMENT DETAILS",
+            "job_rate_label": "Hourly Rate",
+            "job_hours_label": "Hours Billed",
+            "hours_suffix": "hrs",
+
+            "labor_title": "Services",
+            "labor_desc_label": "Service / Task",
+            "labor_time_label": "Hours",
+            "labor_total_label": "Line Total",
+
+            "parts_title": "Expenses",
+            "parts_name_label": "Expense",
+            "parts_price_label": "Amount",
+
+            "shop_supplies_label": "Admin Fees",
+        },
+    }
+
+    template_key = (getattr(inv, "invoice_template", None) or "").strip() or (
+        (getattr(owner, "invoice_template", None) or "").strip() if owner else ""
+    )
+    if template_key not in TEMPLATE_CFG:
+        template_key = "auto_repair"
+    cfg = TEMPLATE_CFG[template_key]
+
     # Determine header identity lines (left side)
+    # business_name -> fallback to username -> fallback to blank
     business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
     header_name = business_name or username or ""
 
     header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
     header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
-
-    # Customer contact info (bill-to box)
-    customer_phone = (getattr(inv, "customer_phone", None) or "").strip()
-    customer_email = (getattr(inv, "customer_email", None) or "").strip()
 
     # Ensure parts + labor loaded (relationship order is defined in models)
     parts = inv.parts
@@ -237,11 +306,15 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     x2 = M + box_w + 0.35 * inch
     pdf.roundRect(x2, top_y - box_h, box_w, box_h, 8, stroke=1, fill=0)
     pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawString(x2 + 10, top_y - 18, "JOB DETAILS")
+    pdf.drawString(x2 + 10, top_y - 18, cfg.get("job_box_title", "JOB DETAILS"))
     pdf.setFont("Helvetica", 10)
-    pdf.drawString(x2 + 10, top_y - 38, f"Vehicle: {inv.vehicle}")
-    pdf.drawString(x2 + 10, top_y - 56, f"Rate/Hour: {_money(inv.price_per_hour)}")
-    pdf.drawString(x2 + 10, top_y - 74, f"Total Hours: {inv.hours} hrs")
+    pdf.drawString(x2 + 10, top_y - 38, f"{cfg['job_label']}: {inv.vehicle}")
+    pdf.drawString(x2 + 10, top_y - 56, f"{cfg['job_rate_label']}: {_money(inv.price_per_hour)}")
+    pdf.drawString(
+        x2 + 10,
+        top_y - 74,
+        f"{cfg['job_hours_label']}: {inv.hours} {cfg.get('hours_suffix', 'hrs')}"
+    )
 
     # -----------------------------
     # Table drawer (wrap + dynamic row heights)
@@ -321,32 +394,32 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         line_total = t * rate
         labor_rows.append([
             li.labor_desc or "",
-            f"{t:g} hrs" if t else "",
+            f"{t:g} {cfg.get('hours_suffix', 'hrs')}" if t else "",
             _money(line_total) if line_total else ""
         ])
 
     body_y = draw_table(
-        "Labor",
+        cfg["labor_title"],
         M,
         body_y,
-        ["Description", "Time", "Line Total"],
+        [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
         labor_rows,
         col_widths=[PAGE_W - 2 * M - 190, 90, 100],
         money_cols={2}
     )
 
     # -----------------------------
-    # Parts table
+    # Parts / Materials table
     # -----------------------------
     parts_rows = []
     for p in parts:
         parts_rows.append([p.part_name or "", _money(p.part_price or 0.0) if (p.part_price or 0.0) else ""])
 
     body_y = draw_table(
-        "Parts",
+        cfg["parts_title"],
         M,
         body_y - 10,
-        ["Part", "Price"],
+        [cfg["parts_name_label"], cfg.get("parts_price_label", "Price")],
         parts_rows,
         col_widths=[PAGE_W - 2 * M - 120, 120],
         money_cols={1}
@@ -418,9 +491,9 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
     y = notes_y_top - 42
     pdf.setFont("Helvetica", 10)
-    label_value(sum_x + 10, y, "Parts:", _money(total_parts)); y -= 16
-    label_value(sum_x + 10, y, "Labor:", _money(total_labor)); y -= 16
-    label_value(sum_x + 10, y, "Supplies:", _money(inv.shop_supplies)); y -= 16
+    label_value(sum_x + 10, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
+    label_value(sum_x + 10, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
+    label_value(sum_x + 10, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
 
     pdf.setStrokeColor(colors.HexColor("#DDDDDD"))
     pdf.line(sum_x + 10, y + 4, sum_x + sum_w - 10, y + 4)
@@ -492,6 +565,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     session.commit()
 
     return pdf_path
+
+
 
 
 

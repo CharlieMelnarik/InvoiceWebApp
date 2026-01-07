@@ -2,6 +2,27 @@
 {% set title = "Invoice " ~ inv.invoice_number %}
 
 {% block content %}
+
+{# --------------------------------------------------------------------
+  Profession-aware labels.
+  app.py should pass tmpl into this template:
+    - invoice_view: tmpl based on inv.invoice_template
+--------------------------------------------------------------------- #}
+{% set _tmpl = tmpl if tmpl is defined and tmpl else {} %}
+{% set job_label = _tmpl.get('job_label', 'Vehicle') %}
+{% set labor_title = _tmpl.get('labor_title', 'Labor') %}
+{% set labor_desc_label = _tmpl.get('labor_desc_label', 'Description') %}
+{% set labor_time_label = _tmpl.get('labor_time_label', 'Hours') %}
+{% set labor_total_label = _tmpl.get('labor_total_label', 'Line Total') %}
+
+{% set parts_title = _tmpl.get('parts_title', 'Parts') %}
+{% set parts_name_label = _tmpl.get('parts_name_label', 'Item') %}
+{% set parts_price_label = _tmpl.get('parts_price_label', 'Price') %}
+
+{% set shop_supplies_label = _tmpl.get('shop_supplies_label', 'Shop Supplies') %}
+{% set hours_label = _tmpl.get('hours_label', 'Hours') %}
+{% set rate_label = _tmpl.get('rate_label', 'Rate / Hour') %}
+
 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
   <div>
     <h1 class="h3 fw-bold mb-1">
@@ -41,7 +62,7 @@
           </div>
 
           <div class="col-6">
-            <div class="small-muted">Vehicle</div>
+            <div class="small-muted">{{ job_label }}</div>
             <div class="fw-semibold">{{ inv.vehicle }}</div>
           </div>
 
@@ -65,17 +86,17 @@
           </div>
 
           <div class="col-4">
-            <div class="small-muted">Hours</div>
+            <div class="small-muted">{{ hours_label }}</div>
             <div class="fw-semibold">{{ inv.hours }}</div>
           </div>
 
           <div class="col-4">
-            <div class="small-muted">Rate / Hour</div>
+            <div class="small-muted">{{ rate_label }}</div>
             <div class="fw-semibold">{{ "${:,.2f}".format(inv.price_per_hour or 0) }}</div>
           </div>
 
           <div class="col-4">
-            <div class="small-muted">Shop Supplies</div>
+            <div class="small-muted">{{ shop_supplies_label }}</div>
             <div class="fw-semibold">{{ "${:,.2f}".format(inv.shop_supplies or 0) }}</div>
           </div>
 
@@ -98,15 +119,15 @@
         <hr class="my-3">
 
         <!-- LABOR -->
-        <h3 class="h6 fw-bold mb-2">Labor Items</h3>
+        <h3 class="h6 fw-bold mb-2">{{ labor_title }}</h3>
         {% if inv.labor_items %}
           <div class="table-responsive">
             <table class="table table-sm">
               <thead class="table-light">
                 <tr>
-                  <th>Description</th>
-                  <th class="text-end">Hours</th>
-                  <th class="text-end">Line Total</th>
+                  <th>{{ labor_desc_label }}</th>
+                  <th class="text-end">{{ labor_time_label }}</th>
+                  <th class="text-end">{{ labor_total_label }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -123,20 +144,20 @@
             </table>
           </div>
         {% else %}
-          <div class="small-muted">No labor items.</div>
+          <div class="small-muted">No {{ labor_title|lower }} items.</div>
         {% endif %}
 
         <hr class="my-3">
 
         <!-- PARTS -->
-        <h3 class="h6 fw-bold mb-2">Parts</h3>
+        <h3 class="h6 fw-bold mb-2">{{ parts_title }}</h3>
         {% if inv.parts %}
           <div class="table-responsive">
             <table class="table table-sm">
               <thead class="table-light">
                 <tr>
-                  <th>Part</th>
-                  <th class="text-end">Price</th>
+                  <th>{{ parts_name_label }}</th>
+                  <th class="text-end">{{ parts_price_label }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -150,7 +171,7 @@
             </table>
           </div>
         {% else %}
-          <div class="small-muted">No parts.</div>
+          <div class="small-muted">No {{ parts_title|lower }}.</div>
         {% endif %}
 
         <hr class="my-3">
@@ -179,17 +200,17 @@
         {% set due = inv.amount_due() %}
 
         <div class="d-flex justify-content-between">
-          <div class="small-muted">Parts</div>
+          <div class="small-muted">{{ parts_title }}</div>
           <div class="fw-semibold">{{ "${:,.2f}".format(parts_total) }}</div>
         </div>
 
         <div class="d-flex justify-content-between">
-          <div class="small-muted">Labor</div>
+          <div class="small-muted">{{ labor_title }}</div>
           <div class="fw-semibold">{{ "${:,.2f}".format(labor_total) }}</div>
         </div>
 
         <div class="d-flex justify-content-between">
-          <div class="small-muted">Supplies</div>
+          <div class="small-muted">{{ shop_supplies_label }}</div>
           <div class="fw-semibold">{{ "${:,.2f}".format(inv.shop_supplies or 0) }}</div>
         </div>
 
@@ -224,7 +245,7 @@
             Download PDF
           </a>
 
-          <!-- NEW: Email PDF to customer -->
+          <!-- Email PDF to customer -->
           <form method="post"
                 action="{{ url_for('invoice_send', invoice_id=inv.id) }}"
                 onsubmit="return confirmSendInvoiceEmail();">
@@ -279,4 +300,6 @@
   }
 </script>
 {% endblock %}
+
+
 
