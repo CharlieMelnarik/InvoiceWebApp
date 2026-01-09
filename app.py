@@ -1,4 +1,3 @@
-
 # app.py
 import os
 import re
@@ -8,7 +7,9 @@ import smtplib
 from email.message import EmailMessage
 from datetime import datetime
 from pathlib import Path
+from functools import wraps
 
+import stripe
 from flask import (
     Flask, render_template, request, redirect, url_for,
     flash, send_file, abort, current_app
@@ -102,7 +103,6 @@ def _normalize_email(email: str) -> str:
 
 def _looks_like_email(email: str) -> bool:
     e = _normalize_email(email)
-    # simple sanity check (you can tighten later)
     return bool(e) and ("@" in e) and ("." in e.split("@")[-1])
 
 
@@ -172,10 +172,6 @@ def read_password_reset_token(token: str, max_age_seconds: int) -> int | None:
 
 
 def _send_reset_email(to_email: str, reset_url: str) -> None:
-    """
-    SMTP email sender. Configure via env vars (Render):
-      SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM
-    """
     host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
@@ -240,9 +236,6 @@ def _send_invoice_pdf_email(to_email: str, subject: str, body_text: str, pdf_pat
 # DB migration (lightweight)
 # -----------------------------
 def _table_exists(engine, table_name: str) -> bool:
-    """
-    Works for Postgres + SQLite.
-    """
     # Postgres
     try:
         with engine.connect() as conn:
@@ -276,11 +269,6 @@ def _table_exists(engine, table_name: str) -> bool:
 
 
 def _column_exists(engine, table_name: str, column_name: str) -> bool:
-    """
-    Works for Postgres + SQLite:
-    - Postgres: information_schema.columns
-    - SQLite: PRAGMA table_info(table)
-    """
     # Postgres / general SQL
     try:
         with engine.connect() as conn:
@@ -310,10 +298,6 @@ def _column_exists(engine, table_name: str, column_name: str) -> bool:
 
 
 def _migrate_add_user_id(engine):
-    """
-    Legacy helper:
-    If an old DB already has invoices but not invoices.user_id, add it.
-    """
     if not _table_exists(engine, "invoices"):
         return
 
@@ -326,10 +310,6 @@ def _migrate_add_user_id(engine):
 
 
 def _migrate_user_profile_fields(engine):
-    """
-    Adds per-user business header fields used in PDFs:
-      users.business_name, users.phone, users.address
-    """
     if not _table_exists(engine, "users"):
         return
 
@@ -348,9 +328,6 @@ def _migrate_user_profile_fields(engine):
 
 
 def _migrate_user_email(engine):
-    """
-    Adds users.email for password reset and uniqueness.
-    """
     if not _table_exists(engine, "users"):
         return
 
@@ -358,7 +335,6 @@ def _migrate_user_email(engine):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
 
-    # Unique index on lower(email)
     try:
         with engine.begin() as conn:
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email))"))
@@ -367,9 +343,6 @@ def _migrate_user_email(engine):
 
 
 def _migrate_invoice_contact_fields(engine):
-    """
-    Adds invoices.customer_email and invoices.customer_phone.
-    """
     if not _table_exists(engine, "invoices"):
         return
 
@@ -391,7 +364,6 @@ def _migrate_user_invoice_template(engine):
     if not _column_exists(engine, "users", "invoice_template"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE users ADD COLUMN invoice_template VARCHAR(50)"))
-        # Backfill existing users
         with engine.begin() as conn:
             conn.execute(text("UPDATE users SET invoice_template='auto_repair' WHERE invoice_template IS NULL"))
 
@@ -404,6 +376,43 @@ def _migrate_invoice_template(engine):
             conn.execute(text("ALTER TABLE invoices ADD COLUMN invoice_template VARCHAR(50)"))
 
 
+def _migrate_user_billing_fields(engine):
+    """
+    Adds Stripe billing fields:
+      users.stripe_customer_id, users.stripe_subscription_id,
+      users.subscription_status, users.trial_ends_at, users.current_period_end,
+      users.trial_used_at
+    """
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "stripe_customer_id"):
+        stmts.append("ALTER TABLE users ADD COLUMN stripe_customer_id VARCHAR(255)")
+    if not _column_exists(engine, "users", "stripe_subscription_id"):
+        stmts.append("ALTER TABLE users ADD COLUMN stripe_subscription_id VARCHAR(255)")
+    if not _column_exists(engine, "users", "subscription_status"):
+        stmts.append("ALTER TABLE users ADD COLUMN subscription_status VARCHAR(50)")
+    if not _column_exists(engine, "users", "trial_ends_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN trial_ends_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "current_period_end"):
+        stmts.append("ALTER TABLE users ADD COLUMN current_period_end TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "trial_used_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN trial_used_at TIMESTAMP NULL")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_customer_idx ON users (stripe_customer_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_sub_idx ON users (stripe_subscription_id)"))
+    except Exception:
+        pass
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -413,7 +422,6 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # Defaults for password reset + SMTP (can be overridden in Config or Render env vars)
     app.config.setdefault("APP_BASE_URL", os.getenv("APP_BASE_URL", "").rstrip("/"))
     app.config.setdefault("PASSWORD_RESET_MAX_AGE_SECONDS", int(os.getenv("PASSWORD_RESET_MAX_AGE_SECONDS", "3600")))
     app.config.setdefault("PASSWORD_RESET_SALT", os.getenv("PASSWORD_RESET_SALT", "password-reset"))
@@ -428,23 +436,37 @@ def create_app():
 
     engine = make_engine(Config.SQLALCHEMY_DATABASE_URI, echo=Config.SQLALCHEMY_ECHO)
 
-    # ✅ Always create tables first
     Base.metadata.create_all(bind=engine)
 
-    # ✅ Then run any legacy “add column” migrations safely
     _migrate_add_user_id(engine)
     _migrate_user_profile_fields(engine)
     _migrate_user_email(engine)
     _migrate_invoice_contact_fields(engine)
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
+    _migrate_user_billing_fields(engine)
 
     SessionLocal = make_session_factory(engine)
 
     def db_session():
         return SessionLocal()
 
-    # Now that SessionLocal exists, bind the user_loader properly.
+    @app.context_processor
+    def inject_billing():
+        if not current_user.is_authenticated:
+            return {}
+
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            status = (getattr(u, "subscription_status", None) or "").strip().lower()
+            is_sub = status in ("trialing", "active")
+
+        return {
+            "billing_status": status or None,
+            "is_subscribed": is_sub,
+            "trial_used": bool(getattr(u, "trial_used_at", None)),
+        }
+
     @login_manager.user_loader
     def load_user(user_id: str):
         try:
@@ -457,12 +479,9 @@ def create_app():
                 return None
             return AppUser(u.id, u.username)
 
-    # Ensure at least one user exists (so legacy installs can log in immediately)
     def _bootstrap_first_user():
         username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
         password = os.getenv("INITIAL_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "changeme"))
-
-        # Only use INITIAL_ADMIN_EMAIL if explicitly set.
         email = _normalize_email(os.getenv("INITIAL_ADMIN_EMAIL", ""))
 
         with db_session() as s:
@@ -481,7 +500,6 @@ def create_app():
                         s.commit()
                 return
 
-            # No users exist -> create initial admin
             if not _looks_like_email(email):
                 email = "no-reply@placeholder.local"
 
@@ -489,11 +507,41 @@ def create_app():
             s.add(u)
             s.commit()
 
-            # Backfill legacy invoices
             s.query(Invoice).filter(Invoice.user_id.is_(None)).update({"user_id": u.id})
             s.commit()
 
     _bootstrap_first_user()
+
+    # -----------------------------
+    # Subscription gating
+    # -----------------------------
+    def _is_subscribed(u: User) -> bool:
+        status = (getattr(u, "subscription_status", None) or "").strip().lower()
+        return status in ("trialing", "active")
+
+    def subscription_required(view_fn):
+        @wraps(view_fn)
+        def wrapper(*args, **kwargs):
+            with db_session() as s:
+                u = s.get(User, _current_user_id_int())
+                if not u:
+                    abort(403)
+                if not _is_subscribed(u):
+                    return redirect(url_for("billing"))
+            return view_fn(*args, **kwargs)
+        return wrapper
+
+    # -----------------------------
+    # Stripe Billing
+    # -----------------------------
+    stripe.api_key = app.config.get("STRIPE_SECRET_KEY") or os.getenv("STRIPE_SECRET_KEY")
+    STRIPE_PRICE_ID = app.config.get("STRIPE_PRICE_ID") or os.getenv("STRIPE_PRICE_ID")
+    STRIPE_PUBLISHABLE_KEY = app.config.get("STRIPE_PUBLISHABLE_KEY") or os.getenv("STRIPE_PUBLISHABLE_KEY")
+    STRIPE_WEBHOOK_SECRET = app.config.get("STRIPE_WEBHOOK_SECRET") or os.getenv("STRIPE_WEBHOOK_SECRET")
+
+    def _base_url():
+        base = (current_app.config.get("APP_BASE_URL") or "").rstrip("/")
+        return base or request.host_url.rstrip("/")
 
     # -----------------------------
     # Auth routes
@@ -574,8 +622,6 @@ def create_app():
 
         if request.method == "POST":
             email = _normalize_email(request.form.get("email") or "")
-
-            # Always same response to prevent account enumeration
             flash("If that email exists, we sent a password reset link.", "info")
 
             if _looks_like_email(email):
@@ -599,7 +645,6 @@ def create_app():
                             _send_reset_email(email, reset_url)
                             print(f"[RESET] Sent reset email to {email}")
                         except Exception as e:
-                            # Keep UX identical even if mail fails; log in production if desired.
                             print(f"[RESET] SMTP ERROR for {email}: {repr(e)}")
 
             return redirect(url_for("login"))
@@ -650,7 +695,7 @@ def create_app():
         return redirect(url_for("login"))
 
     # -----------------------------
-    # User Settings (business header for PDFs + email + profession)
+    # User Settings
     # -----------------------------
     @app.route("/settings", methods=["GET", "POST"])
     @login_required
@@ -661,13 +706,11 @@ def create_app():
                 abort(404)
 
             if request.method == "POST":
-                # Email (required)
                 new_email = _normalize_email(request.form.get("email") or "")
                 if not _looks_like_email(new_email):
                     flash("Please enter a valid email address.", "error")
                     return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
-                # If email changed, enforce case-insensitive uniqueness
                 if (u.email or "").strip().lower() != new_email:
                     taken_email = (
                         s.query(User)
@@ -681,12 +724,10 @@ def create_app():
 
                     u.email = new_email
 
-                # Invoice template / profession
                 tmpl = (request.form.get("invoice_template") or "").strip()
                 tmpl = _template_key_fallback(tmpl)
                 u.invoice_template = tmpl
 
-                # Business info
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
                 u.address = (request.form.get("address") or "").strip() or None
@@ -698,6 +739,191 @@ def create_app():
             return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
     # -----------------------------
+    # Billing pages
+    # -----------------------------
+    @app.route("/billing")
+    @login_required
+    def billing():
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            status = (getattr(u, "subscription_status", None) or "none")
+        return render_template("billing.html", status=status, publishable_key=STRIPE_PUBLISHABLE_KEY)
+
+    @app.route("/billing/checkout", methods=["POST"])
+    @login_required
+    def billing_checkout():
+        if not stripe.api_key or not STRIPE_PRICE_ID:
+            abort(500)
+
+        base = _base_url()
+        uid = _current_user_id_int()
+
+        with db_session() as s:
+            u = s.get(User, uid)
+            if not u:
+                abort(403)
+
+            status = (getattr(u, "subscription_status", None) or "").lower().strip()
+
+            # If already subscribed, don't start checkout again
+            if status in ("trialing", "active", "past_due"):
+                flash("You already have an active subscription. Manage billing below.", "info")
+                return redirect(url_for("billing"))
+
+            # ✅ Always reuse the same Stripe customer
+            cust = (getattr(u, "stripe_customer_id", None) or "").strip()
+            if not cust:
+                customer = stripe.Customer.create(
+                    email=(u.email or None),
+                    metadata={"app_user_id": str(uid)},
+                )
+                cust = customer["id"]
+                u.stripe_customer_id = cust
+                s.commit()
+
+            # ✅ One-trial-per-user: only include trial if never used
+            subscription_data = {}
+            if getattr(u, "trial_used_at", None) is None:
+                subscription_data["trial_period_days"] = 7
+
+            cs = stripe.checkout.Session.create(
+                mode="subscription",
+                customer=cust,  # ✅ critical: prevents Stripe creating a new customer (and a new trial)
+                line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+                client_reference_id=str(uid),
+                subscription_data=subscription_data,
+                success_url=f"{base}{url_for('billing_success')}?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{base}{url_for('billing')}",
+            )
+
+        return redirect(cs.url, code=303)
+
+    @app.route("/billing/success")
+    @login_required
+    def billing_success():
+        return render_template("billing_success.html")
+
+    @app.route("/billing/portal", methods=["POST"])
+    @login_required
+    def billing_portal():
+        if not stripe.api_key:
+            abort(500)
+
+        base = _base_url()
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            cust = (getattr(u, "stripe_customer_id", None) or "").strip()
+            if not cust:
+                flash("No billing profile yet. Start your trial first.", "error")
+                return redirect(url_for("billing"))
+
+        ps = stripe.billing_portal.Session.create(
+            customer=cust,
+            return_url=f"{base}{url_for('billing')}",
+        )
+        return redirect(ps.url, code=303)
+
+    # -----------------------------
+    # Stripe Webhook
+    # -----------------------------
+    @app.route("/stripe/webhook", methods=["POST"])
+    def stripe_webhook():
+        if not STRIPE_WEBHOOK_SECRET:
+            abort(500)
+
+        payload = request.get_data(as_text=False)
+        sig_header = request.headers.get("Stripe-Signature", "")
+
+        try:
+            event = stripe.Webhook.construct_event(
+                payload=payload,
+                sig_header=sig_header,
+                secret=STRIPE_WEBHOOK_SECRET,
+            )
+        except Exception as e:
+            print(f"[STRIPE] Webhook signature verification failed: {repr(e)}")
+            return ("bad signature", 400)
+
+        etype = event["type"]
+        obj = event["data"]["object"]
+
+        with db_session() as s:
+            if etype == "checkout.session.completed":
+                uid = int(obj.get("client_reference_id") or 0)
+                customer_id = obj.get("customer")
+                subscription_id = obj.get("subscription")
+
+                u = s.get(User, uid) if uid else None
+                if u:
+                    if customer_id:
+                        u.stripe_customer_id = customer_id
+                    if subscription_id:
+                        u.stripe_subscription_id = subscription_id
+
+                    # Set status immediately (good UX) using a retrieve
+                    try:
+                        if subscription_id:
+                            sub = stripe.Subscription.retrieve(subscription_id)
+                            u.subscription_status = (sub.get("status") or "").lower() or None
+
+                            trial_end = sub.get("trial_end")
+                            cpe = sub.get("current_period_end")
+                            u.trial_ends_at = datetime.utcfromtimestamp(trial_end) if trial_end else None
+                            u.current_period_end = datetime.utcfromtimestamp(cpe) if cpe else None
+
+                            # ✅ mark trial used once, forever
+                            if (u.subscription_status == "trialing") and (getattr(u, "trial_used_at", None) is None):
+                                u.trial_used_at = datetime.utcnow()
+                    except Exception as e:
+                        print("[STRIPE] retrieve subscription failed:", repr(e))
+
+                    s.commit()
+
+            elif etype in (
+                "customer.subscription.created",
+                "customer.subscription.updated",
+                "customer.subscription.deleted",
+            ):
+                sub_id = obj.get("id")
+                customer_id = obj.get("customer")
+
+                status = (obj.get("status") or "").lower()
+                if etype == "customer.subscription.deleted":
+                    status = "canceled"
+
+                u = None
+                if sub_id:
+                    u = s.query(User).filter(User.stripe_subscription_id == sub_id).first()
+
+                if not u and customer_id:
+                    u = s.query(User).filter(User.stripe_customer_id == customer_id).first()
+                    if u and not (getattr(u, "stripe_subscription_id", None) or "").strip():
+                        u.stripe_subscription_id = sub_id
+
+                if u:
+                    u.subscription_status = status
+
+                    trial_end = obj.get("trial_end")
+                    cpe = obj.get("current_period_end")
+                    u.trial_ends_at = datetime.utcfromtimestamp(trial_end) if trial_end else None
+                    u.current_period_end = datetime.utcfromtimestamp(cpe) if cpe else None
+
+                    # ✅ mark trial used once, forever
+                    if status == "trialing" and getattr(u, "trial_used_at", None) is None:
+                        u.trial_used_at = datetime.utcnow()
+
+                    s.commit()
+
+            elif etype == "invoice.payment_failed":
+                cust = obj.get("customer")
+                u = s.query(User).filter(User.stripe_customer_id == cust).first()
+                if u:
+                    u.subscription_status = "past_due"
+                    s.commit()
+
+        return ("ok", 200)
+
+    # -----------------------------
     # Index
     # -----------------------------
     @app.route("/")
@@ -705,7 +931,7 @@ def create_app():
         return redirect(url_for("invoices" if current_user.is_authenticated else "login"))
 
     # -----------------------------
-    # Invoice list (scoped to user)
+    # Invoice list (scoped)
     # -----------------------------
     @app.route("/invoices")
     @login_required
@@ -719,10 +945,7 @@ def create_app():
         with db_session() as s:
             invoices_q = (
                 s.query(Invoice)
-                .options(
-                    selectinload(Invoice.parts),
-                    selectinload(Invoice.labor_items),
-                )
+                .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
                 .filter(Invoice.user_id == uid)
                 .order_by(Invoice.created_at.desc())
             )
@@ -758,24 +981,21 @@ def create_app():
         )
 
     # -----------------------------
-    # Create invoice (owned by user)
+    # Create invoice — GATED
     # -----------------------------
     @app.route("/invoices/new", methods=["GET", "POST"])
     @login_required
+    @subscription_required
     def invoice_new():
         if request.method == "POST":
             name = request.form.get("name", "").strip()
             vehicle = request.form.get("vehicle", "").strip()
 
-            # Decide which template is currently active for THIS user (for validation + labels)
             with db_session() as s:
                 u = s.get(User, _current_user_id_int())
                 user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
                 tmpl = _template_config_for(user_template_key)
 
-            # Required fields:
-            # - Name always required
-            # - "vehicle" field is still used under the hood, but for accountant/general it can be a blank engagement/job
             if not name:
                 flash("Name is required.", "error")
                 return render_template("invoice_form.html", mode="new", form=request.form, tmpl=tmpl)
@@ -791,11 +1011,11 @@ def create_app():
                 inv = Invoice(
                     user_id=_current_user_id_int(),
                     invoice_number=inv_no,
-                    invoice_template=user_template_key,  # ✅ lock profession at creation time
+                    invoice_template=user_template_key,
                     customer_email=(request.form.get("customer_email") or "").strip() or None,
                     customer_phone=(request.form.get("customer_phone") or "").strip() or None,
                     name=name,
-                    vehicle=vehicle,  # (labeled by tmpl["job_label"] in templates)
+                    vehicle=vehicle,
                     hours=_to_float(request.form.get("hours")),
                     price_per_hour=_to_float(request.form.get("price_per_hour")),
                     shop_supplies=_to_float(request.form.get("shop_supplies")),
@@ -821,7 +1041,6 @@ def create_app():
 
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
 
-        # GET request: show form using user's current template for labels
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
             tmpl = _template_config_for(getattr(u, "invoice_template", None) if u else None)
@@ -834,7 +1053,7 @@ def create_app():
         )
 
     # -----------------------------
-    # View invoice (scoped)
+    # View invoice
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>")
     @login_required
@@ -845,10 +1064,11 @@ def create_app():
         return render_template("invoice_view.html", inv=inv, tmpl=tmpl)
 
     # -----------------------------
-    # Edit invoice (scoped)
+    # Edit invoice — GATED
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
     @login_required
+    @subscription_required
     def invoice_edit(invoice_id):
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
@@ -887,7 +1107,7 @@ def create_app():
         return render_template("invoice_form.html", mode="edit", inv=inv, tmpl=tmpl)
 
     # -----------------------------
-    # Year Summary (scoped)
+    # Year Summary — GATED
     # -----------------------------
     def _parse_year_from_datein(date_in: str):
         s = (date_in or "").strip()
@@ -913,6 +1133,7 @@ def create_app():
 
     @app.route("/year-summary")
     @login_required
+    @subscription_required
     def year_summary():
         year_text = (request.args.get("year") or "").strip()
         if not (year_text.isdigit() and len(year_text) == 4):
@@ -997,10 +1218,11 @@ def create_app():
         return render_template("year_summary.html", **context)
 
     # -----------------------------
-    # Delete invoice (scoped)
+    # Delete invoice — GATED
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>/delete", methods=["POST"])
     @login_required
+    @subscription_required
     def invoice_delete(invoice_id: int):
         delete_pdf = (request.form.get("delete_pdf") or "").strip() == "1"
 
@@ -1020,10 +1242,11 @@ def create_app():
         return redirect(url_for("invoices"))
 
     # -----------------------------
-    # Mark invoice as paid (scoped)
+    # Mark invoice as paid — GATED
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>/mark_paid", methods=["POST"])
     @login_required
+    @subscription_required
     def invoice_mark_paid(invoice_id: int):
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
@@ -1034,10 +1257,11 @@ def create_app():
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
     # -----------------------------
-    # PDF routes (scoped)
+    # PDF routes — GATED
     # -----------------------------
     @app.route("/invoices/<int:invoice_id>/pdf/generate", methods=["POST"])
     @login_required
+    @subscription_required
     def invoice_pdf_generate(invoice_id):
         with db_session() as s:
             _invoice_owned_or_404(s, invoice_id)
@@ -1046,6 +1270,7 @@ def create_app():
 
     @app.route("/invoices/<int:invoice_id>/pdf/download")
     @login_required
+    @subscription_required
     def invoice_pdf_download(invoice_id):
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
@@ -1062,6 +1287,7 @@ def create_app():
 
     @app.route("/invoices/<int:invoice_id>/send", methods=["POST"])
     @login_required
+    @subscription_required
     def invoice_send(invoice_id: int):
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
@@ -1071,7 +1297,6 @@ def create_app():
                 flash("Customer email is missing. Add it on the invoice edit page first.", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
-            # Ensure PDF exists; generate if missing
             if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
                 generate_and_store_pdf(s, invoice_id)
                 inv = _invoice_owned_or_404(s, invoice_id)
@@ -1102,6 +1327,7 @@ def create_app():
 
     @app.route("/pdfs/download_all")
     @login_required
+    @subscription_required
     def pdfs_download_all():
         year = (request.args.get("year") or "").strip()
         uid = _current_user_id_int()
@@ -1131,8 +1357,4 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True)
-
-
-
-
 

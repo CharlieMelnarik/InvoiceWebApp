@@ -1,4 +1,3 @@
-# models.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -43,10 +42,6 @@ class User(Base):
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # ✅ Invoice template / profession (user default for NEW invoices)
-    # Allowed examples:
-    #   - "auto_repair"
-    #   - "general_service"
-    #   - "accountant"
     invoice_template: Mapped[str] = mapped_column(String(50), nullable=False, default="auto_repair")
 
     # Profile / business info (for PDF header)
@@ -54,8 +49,23 @@ class User(Base):
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
 
+    # -----------------------------
+    # ✅ Stripe billing fields
+    # -----------------------------
+    stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    subscription_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # ✅ one-trial-per-user flag
+    trial_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     invoices: Mapped[list["Invoice"]] = relationship(
         back_populates="user",
@@ -75,7 +85,9 @@ class InvoiceSequence(Base):
     last_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
 
 class Invoice(Base):
@@ -86,13 +98,12 @@ class Invoice(Base):
     user_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
-        nullable=True
+        nullable=True,
     )
 
     invoice_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
 
     # ✅ Locks in the profession/template at the time the invoice was created
-    # Same allowed examples as User.invoice_template.
     invoice_template: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Customer contact
@@ -101,7 +112,7 @@ class Invoice(Base):
 
     # Core fields (labels change by template in UI/PDF)
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
-    vehicle: Mapped[str] = mapped_column(String(200), nullable=False, index=True)  # label changes by template
+    vehicle: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     price_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     shop_supplies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -113,7 +124,9 @@ class Invoice(Base):
     pdf_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     user: Mapped[Optional["User"]] = relationship(back_populates="invoices")
 
@@ -145,7 +158,11 @@ class InvoicePart(Base):
     __tablename__ = "invoice_parts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     part_name: Mapped[str] = mapped_column(String(300), nullable=False, default="")
     part_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -157,7 +174,11 @@ class InvoiceLabor(Base):
     __tablename__ = "invoice_labor"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     labor_desc: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     labor_time_hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -201,6 +222,7 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
+
 
 
 

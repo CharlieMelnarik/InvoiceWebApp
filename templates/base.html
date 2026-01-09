@@ -39,13 +39,23 @@
     <div class="d-flex align-items-center gap-2">
       {% if current_user.is_authenticated %}
 
+        {# Billing status badge (set via context_processor) #}
+        {% if billing_status %}
+          <span class="badge text-bg-light border">
+            {{ billing_status }}
+          </span>
+        {% endif %}
+
+        {# If not subscribed, route paid actions to Billing #}
+        {% set paid_href = url_for('billing') if not is_subscribed else None %}
+
         <a class="btn btn-outline-primary btn-sm"
-           href="{{ url_for('invoice_new') }}">
+           href="{{ paid_href or url_for('invoice_new') }}">
           New Invoice
         </a>
 
         <a class="btn btn-outline-secondary btn-sm"
-           href="{{ url_for('year_summary') }}">
+           href="{{ paid_href or url_for('year_summary') }}">
           Year Summary
         </a>
 
@@ -55,8 +65,13 @@
         </a>
 
         <a class="btn btn-outline-secondary btn-sm"
-           href="{{ url_for('pdfs_download_all') }}">
+           href="{{ paid_href or url_for('pdfs_download_all') }}">
           Download PDFs (ZIP)
+        </a>
+
+        <a class="btn btn-outline-success btn-sm"
+           href="{{ url_for('billing') }}">
+          Billing
         </a>
 
         <a class="btn btn-outline-danger btn-sm"
@@ -99,5 +114,6 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
+
 
 

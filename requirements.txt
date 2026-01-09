@@ -7,3 +7,5 @@ gunicorn
 reportlab
 
 itsdangerous
+
+stripe
