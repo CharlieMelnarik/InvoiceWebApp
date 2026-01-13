@@ -621,27 +621,10 @@ def create_app():
                 u.failed_login_attempts = attempts
                 u.last_failed_login = datetime.utcnow()
 
-                # If hit limit, require password reset and optionally email link once
+                # If hit limit, require password reset (no auto-email)
                 if attempts >= 6:
                     u.password_reset_required = True
                     s.commit()
-
-                    # OPTIONAL: automatically send reset email when lock triggers
-                    email = _normalize_email(getattr(u, "email", "") or "")
-                    if _looks_like_email(email):
-                        token = make_password_reset_token(u.id)
-
-                        base = (current_app.config.get("APP_BASE_URL") or "").rstrip("/")
-                        if not base:
-                            base = request.host_url.rstrip("/")
-
-                        reset_url = f"{base}{url_for('reset_password', token=token)}"
-
-                        try:
-                            _send_reset_email(email, reset_url)
-                            print(f"[SECURITY] Auto-sent reset email after failed logins to {email}")
-                        except Exception as e:
-                            print(f"[SECURITY] Failed to send reset email to {email}: {repr(e)}")
 
                     flash("Too many failed login attempts. Please reset your password.", "error")
                     return redirect(url_for("forgot_password"))
@@ -650,8 +633,9 @@ def create_app():
                 flash(generic_fail_msg, "error")
                 return render_template("login.html")
 
-        # ✅ This guarantees GET (and any fall-through) returns a response
+        # Always return something for GET
         return render_template("login.html")
+
 
 
 
