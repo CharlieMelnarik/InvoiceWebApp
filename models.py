@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     Float,
     DateTime,
+    Boolean,
     ForeignKey,
     UniqueConstraint,
     select,
@@ -61,6 +62,13 @@ class User(Base):
 
     # ✅ one-trial-per-user flag
     trial_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # -----------------------------
+    # ✅ Login security fields
+    # -----------------------------
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    password_reset_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_failed_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -222,6 +230,7 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
+
 
 
 

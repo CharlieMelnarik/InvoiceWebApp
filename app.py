@@ -411,6 +411,29 @@ def _migrate_user_billing_fields(engine):
             conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_sub_idx ON users (stripe_subscription_id)"))
     except Exception:
         pass
+        
+def _migrate_user_security_fields(engine):
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "failed_login_attempts"):
+        stmts.append("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER")
+    if not _column_exists(engine, "users", "password_reset_required"):
+        stmts.append("ALTER TABLE users ADD COLUMN password_reset_required BOOLEAN")
+    if not _column_exists(engine, "users", "last_failed_login"):
+        stmts.append("ALTER TABLE users ADD COLUMN last_failed_login TIMESTAMP NULL")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+        # set defaults for existing rows
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET failed_login_attempts = 0 WHERE failed_login_attempts IS NULL"))
+            conn.execute(text("UPDATE users SET password_reset_required = FALSE WHERE password_reset_required IS NULL"))
+
 
 
 # -----------------------------
@@ -435,6 +458,16 @@ def create_app():
     login_manager.init_app(app)
 
     engine = make_engine(Config.SQLALCHEMY_DATABASE_URI, echo=Config.SQLALCHEMY_ECHO)
+    
+    print("SQLALCHEMY_DATABASE_URI =", Config.SQLALCHEMY_DATABASE_URI, flush=True)
+    print("ENGINE URL =", str(engine.url), flush=True)
+
+    # If SQLite, print the resolved DB file path
+    try:
+        if engine.url.get_backend_name().startswith("sqlite") and engine.url.database:
+            print("SQLITE DB FILE =", os.path.abspath(engine.url.database), flush=True)
+    except Exception:
+        pass
 
     Base.metadata.create_all(bind=engine)
 
@@ -445,6 +478,8 @@ def create_app():
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
     _migrate_user_billing_fields(engine)
+    _migrate_user_security_fields(engine)
+
 
     SessionLocal = make_session_factory(engine)
 
@@ -554,14 +589,71 @@ def create_app():
         if request.method == "POST":
             username = (request.form.get("username") or "").strip()
             password = request.form.get("password") or ""
+
             with db_session() as s:
                 u = s.query(User).filter(User.username == username).first()
-                if u and check_password_hash(u.password_hash, password):
+
+                # Always use a generic error to avoid account enumeration
+                generic_fail_msg = "Invalid username or password."
+
+                if not u:
+                    flash(generic_fail_msg, "error")
+                    return render_template("login.html")
+
+                # If too many failures, force reset via email
+                if bool(getattr(u, "password_reset_required", False)):
+                    flash("Too many failed login attempts. Please reset your password.", "error")
+                    return redirect(url_for("forgot_password"))
+
+                # Correct password?
+                if check_password_hash(u.password_hash, password):
+                    # reset security counters
+                    u.failed_login_attempts = 0
+                    u.password_reset_required = False
+                    u.last_failed_login = None
+                    s.commit()
+
                     login_user(AppUser(u.id, u.username))
                     return redirect(url_for("invoices"))
 
-            flash("Invalid username or password.", "error")
+                # Wrong password → increment attempts
+                attempts = int(getattr(u, "failed_login_attempts", 0) or 0) + 1
+                u.failed_login_attempts = attempts
+                u.last_failed_login = datetime.utcnow()
+
+                # If hit limit, require password reset and optionally email link once
+                if attempts >= 6:
+                    u.password_reset_required = True
+                    s.commit()
+
+                    # OPTIONAL: automatically send reset email when lock triggers
+                    email = _normalize_email(getattr(u, "email", "") or "")
+                    if _looks_like_email(email):
+                        token = make_password_reset_token(u.id)
+
+                        base = (current_app.config.get("APP_BASE_URL") or "").rstrip("/")
+                        if not base:
+                            base = request.host_url.rstrip("/")
+
+                        reset_url = f"{base}{url_for('reset_password', token=token)}"
+
+                        try:
+                            _send_reset_email(email, reset_url)
+                            print(f"[SECURITY] Auto-sent reset email after failed logins to {email}")
+                        except Exception as e:
+                            print(f"[SECURITY] Failed to send reset email to {email}: {repr(e)}")
+
+                    flash("Too many failed login attempts. Please reset your password.", "error")
+                    return redirect(url_for("forgot_password"))
+
+                s.commit()
+                flash(generic_fail_msg, "error")
+                return render_template("login.html")
+
+        # ✅ This guarantees GET (and any fall-through) returns a response
         return render_template("login.html")
+
+
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
@@ -681,6 +773,10 @@ def create_app():
                     return redirect(url_for("forgot_password"))
 
                 u.password_hash = generate_password_hash(pw1)
+                u.failed_login_attempts = 0
+                u.password_reset_required = False
+                u.last_failed_login = None
+
                 s.commit()
 
             flash("Password updated. Please log in.", "success")
@@ -826,8 +922,15 @@ def create_app():
     # -----------------------------
     # Stripe Webhook
     # -----------------------------
+    
+    @app.before_request
+    def allow_stripe_webhook():
+        if request.path == "/stripe/webhook":
+            return None
+
     @app.route("/stripe/webhook", methods=["POST"])
     def stripe_webhook():
+        print("### STRIPE WEBHOOK HIT ###", datetime.utcnow().isoformat(), flush=True)
         if not STRIPE_WEBHOOK_SECRET:
             abort(500)
 
@@ -1356,5 +1459,5 @@ def create_app():
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
 

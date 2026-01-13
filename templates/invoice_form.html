@@ -10,7 +10,7 @@
     - edit invoice: tmpl from inv.invoice_template
 --------------------------------------------------------------------- #}
 {% set _tmpl = tmpl if tmpl is defined and tmpl else {} %}
-{% set job_label = _tmpl.get('job_label', 'Vehicle') %}
+{% set job_label = _tmpl.get('job_label', 'Job') %}
 {% set labor_title = _tmpl.get('labor_title', 'Labor') %}
 {% set labor_desc_label = _tmpl.get('labor_desc_label', 'Labor Description') %}
 {% set parts_title = _tmpl.get('parts_title', 'Parts') %}
