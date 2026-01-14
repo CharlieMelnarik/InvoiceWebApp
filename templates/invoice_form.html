@@ -3,15 +3,6 @@
 
 {% block content %}
 
-{# --------------------------------------------------------------------
-  Profession-aware labels.
-  app.py passes:
-    - tmpl: dict config for the invoice template
-    - tmpl_key: key string, like "auto_repair"
-    - customers: list of Customer objects
-    - customers_for_js: [{id, name}, ...] for autocomplete
-    - pre_customer (optional) for GET /invoices/new?customer_id=
---------------------------------------------------------------------- #}
 {% set _tmpl = tmpl if tmpl is defined and tmpl else {} %}
 {% set tmpl_key = (tmpl_key if tmpl_key is defined and tmpl_key else "auto_repair") %}
 
@@ -26,16 +17,12 @@
 {% set part_placeholder = _tmpl.get('parts_placeholder', 'e.g. Item') %}
 {% set labor_placeholder = _tmpl.get('labor_placeholder', 'e.g. Service performed') %}
 
-{# ---------------------------------------------------------
-   Customer prefill logic (works for new/edit + failed POST)
----------------------------------------------------------- #}
 {% if mode == "edit" %}
-  {% set _cust_id = ( (form.customer_id if form else inv.customer_id) | string ) %}
-  {% set _cust_name = (form.customer_name if form else "") %}
-  {# If form.customer_name empty on edit, fall back to customer list lookup via JS by id #}
+  {% set _cust_id = (inv.customer_id|string) %}
+  {% set _cust_name = (inv.name or "") %}
 {% else %}
-  {% set _cust_id = (form.customer_id if form else (pre_customer.id|string if pre_customer else "")) %}
-  {% set _cust_name = (form.customer_name if form else (pre_customer.name if pre_customer else "")) %}
+  {% set _cust_id = (form.customer_id if form else "") %}
+  {% set _cust_name = (form.customer_name if form else "") %}
 {% endif %}
 
 <div class="d-flex justify-content-between align-items-end mb-3">
@@ -57,38 +44,38 @@
   </div>
 </div>
 
-<form method="post" class="card shadow-sm" id="invoiceForm" novalidate>
+{# JS customer data (id/name/email/phone) #}
+<script>
+  const CUSTOMERS = {{ (customers_for_js if customers_for_js is defined else [])|tojson|safe }};
+</script>
+
+<form method="post" class="card shadow-sm" id="invoiceForm">
   <div class="card-body">
 
     <div class="row g-3">
 
-      <!-- Customer selection: real typeahead -->
+      <!-- Customer selection: type-to-search -->
       <div class="col-12 col-md-6">
         <label class="form-label req">Customer</label>
 
-        <div class="position-relative">
-          <input
-            class="form-control"
-            id="customer_name"
-            name="customer_name"
-            value="{{ _cust_name }}"
-            placeholder="Start typing a customer name…"
-            autocomplete="off"
-            required
-          />
+        <input
+          class="form-control"
+          id="customer_name"
+          name="customer_name"
+          list="customers_datalist"
+          value="{{ _cust_name }}"
+          placeholder="Start typing a customer name…"
+          autocomplete="off"
+          required
+        />
 
-          <!-- Hidden actual selected id -->
-          <input type="hidden" id="customer_id" name="customer_id" value="{{ _cust_id }}">
+        <input type="hidden" id="customer_id" name="customer_id" value="{{ _cust_id }}">
 
-          <!-- Suggestions dropdown -->
-          <div
-            id="customerSuggestions"
-            class="list-group position-absolute w-100 shadow-sm d-none"
-            style="z-index: 1000; max-height: 240px; overflow:auto;"
-            role="listbox"
-            aria-label="Customer suggestions"
-          ></div>
-        </div>
+        <datalist id="customers_datalist">
+          {% for c in customers %}
+            <option value="{{ c.name }}" data-id="{{ c.id }}"></option>
+          {% endfor %}
+        </datalist>
 
         <div class="small-muted mt-1">
           Need a new customer? <a href="{{ url_for('customer_new') }}">Create one</a>.
@@ -101,53 +88,54 @@
         <input class="form-control" name="vehicle"
                {% if tmpl_key=='auto_repair' %}required{% endif %}
                placeholder="{{ job_placeholder }}"
-               value="{% if mode=='edit' %}{{ (form.vehicle if form else inv.vehicle) }}{% else %}{{ (form.vehicle if form else '') }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.vehicle }}{% else %}{{ (form.vehicle if form else '') }}{% endif %}">
       </div>
 
       <!-- Customer contact (invoice-level override) -->
       <div class="col-12 col-md-6">
         <label class="form-label">Customer Email (override)</label>
-        <input class="form-control" type="email" name="customer_email"
-               value="{% if mode=='edit' %}{{ (form.customer_email if form else (inv.customer_email or '')) }}{% else %}{{ (form.customer_email if form else '') }}{% endif %}"
+        <input class="form-control" type="email" id="customer_email" name="customer_email"
+               value="{% if mode=='edit' %}{{ inv.customer_email or '' }}{% else %}{{ (form.customer_email if form else '') }}{% endif %}"
                placeholder="customer@example.com">
-        <div class="small-muted mt-1">If blank, emailing can fall back to the customer profile email.</div>
+        <div class="small-muted mt-1">If blank, we’ll use the customer profile email automatically.</div>
       </div>
 
       <div class="col-12 col-md-6">
         <label class="form-label">Customer Phone (override)</label>
-        <input class="form-control" name="customer_phone"
-               value="{% if mode=='edit' %}{{ (form.customer_phone if form else (inv.customer_phone or '')) }}{% else %}{{ (form.customer_phone if form else '') }}{% endif %}"
+        <input class="form-control" id="customer_phone" name="customer_phone"
+               value="{% if mode=='edit' %}{{ inv.customer_phone or '' }}{% else %}{{ (form.customer_phone if form else '') }}{% endif %}"
                placeholder="(406) 555-1234">
+        <div class="small-muted mt-1">If blank, we’ll use the customer profile phone automatically.</div>
       </div>
 
       <div class="col-6 col-md-3">
         <label class="form-label">Hours (Total)</label>
         <input class="form-control" name="hours" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ (form.hours if form else inv.hours) }}{% else %}{{ (form.hours if form else '') }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.hours }}{% else %}{{ (form.hours if form else '') }}{% endif %}">
       </div>
 
       <div class="col-6 col-md-3">
         <label class="form-label">Rate / Hour</label>
         <input class="form-control" name="price_per_hour" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ (form.price_per_hour if form else inv.price_per_hour) }}{% else %}{{ (form.price_per_hour if form else '') }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.price_per_hour }}{% else %}{{ (form.price_per_hour if form else '') }}{% endif %}">
       </div>
 
       <div class="col-6 col-md-3">
         <label class="form-label">{{ shop_supplies_label }}</label>
         <input class="form-control" name="shop_supplies" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ (form.shop_supplies if form else inv.shop_supplies) }}{% else %}{{ (form.shop_supplies if form else '0') }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.shop_supplies }}{% else %}{{ (form.shop_supplies if form else '0') }}{% endif %}">
       </div>
 
       <div class="col-6 col-md-3">
         <label class="form-label">Paid</label>
         <input class="form-control" name="paid" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ (form.paid if form else inv.paid) }}{% else %}{{ (form.paid if form else '0') }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.paid }}{% else %}{{ (form.paid if form else '0') }}{% endif %}">
       </div>
 
       <div class="col-12 col-md-4">
         <label class="form-label">Date In (text)</label>
         <input class="form-control" name="date_in"
-               value="{% if mode=='edit' %}{{ (form.date_in if form else inv.date_in) }}{% else %}{{ (form.date_in if form else default_date) }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.date_in }}{% else %}{{ (form.date_in if form else default_date) }}{% endif %}">
       </div>
 
     </div>
@@ -244,7 +232,7 @@
     <div class="mb-3">
       <label class="form-label">Notes</label>
       <textarea class="form-control" name="notes" rows="6"
-        placeholder="One note per line (recommended).">{% if mode=='edit' %}{{ (form.notes if form else inv.notes) }}{% else %}{{ (form.notes if form else '') }}{% endif %}</textarea>
+        placeholder="One note per line (recommended).">{% if mode=='edit' %}{{ inv.notes }}{% else %}{{ (form.notes if form else '') }}{% endif %}</textarea>
       <div class="small-muted mt-1">These notes will wrap nicely in the PDF.</div>
     </div>
 
@@ -269,7 +257,7 @@
     const tbody = document.querySelector("#partsTable tbody");
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><input class="form-control" name="part_name" placeholder="{{ part_placeholder|e }}"></td>
+      <td><input class="form-control" name="part_name" placeholder="{{ parts_name_label|e }}"></td>
       <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="0.00"></td>
       <td class="text-end">
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
@@ -282,7 +270,7 @@
     const tbody = document.querySelector("#laborTable tbody");
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><input class="form-control" name="labor_desc" placeholder="{{ labor_placeholder|e }}"></td>
+      <td><input class="form-control" name="labor_desc" placeholder="{{ labor_desc_label|e }}"></td>
       <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
       <td class="text-end">
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
@@ -292,187 +280,87 @@
   }
 
   // -----------------------------
-  // Customer typeahead (reliable)
-  // Uses customers_for_js from app.py: [{id, name}, ...]
+  // Customer typeahead → set hidden customer_id
+  // AND auto-fill email/phone from customer profile (if override fields are blank)
   // -----------------------------
   (function () {
-    const customers = {{ (customers_for_js if customers_for_js is defined else []) | tojson }};
     const nameInput = document.getElementById("customer_name");
     const idInput = document.getElementById("customer_id");
-    const box = document.getElementById("customerSuggestions");
-    const form = document.getElementById("invoiceForm");
+    const dl = document.getElementById("customers_datalist");
+    const emailInput = document.getElementById("customer_email");
+    const phoneInput = document.getElementById("customer_phone");
 
-    let activeIndex = -1;
-    let currentItems = [];
-
-    function norm(s) {
-      return (s || "").trim().toLowerCase();
+    const nameToId = {};
+    if (dl) {
+      const opts = dl.querySelectorAll("option");
+      opts.forEach(opt => {
+        const n = (opt.value || "").trim();
+        const id = (opt.getAttribute("data-id") || "").trim();
+        if (n && id && !nameToId[n.toLowerCase()]) {
+          nameToId[n.toLowerCase()] = id;
+        }
+      });
     }
 
-    function setSelected(cust) {
-      if (!cust) return;
-      nameInput.value = cust.name;
-      idInput.value = String(cust.id);
-      hide();
+    const idToCustomer = {};
+    if (Array.isArray(CUSTOMERS)) {
+      CUSTOMERS.forEach(c => {
+        if (c && c.id != null) idToCustomer[String(c.id)] = c;
+      });
     }
 
-    function clearSelectionIfMismatch() {
-      const v = norm(nameInput.value);
-      const exact = customers.find(c => norm(c.name) === v);
-      if (exact) {
-        idInput.value = String(exact.id);
+    function fillContactFromCustomerId() {
+      if (!idInput.value) return;
+      const c = idToCustomer[String(idInput.value)];
+      if (!c) return;
+
+      if (emailInput && !(emailInput.value || "").trim()) {
+        emailInput.value = (c.email || "").trim();
+      }
+      if (phoneInput && !(phoneInput.value || "").trim()) {
+        phoneInput.value = (c.phone || "").trim();
+      }
+    }
+
+    function syncCustomerId() {
+      const v = (nameInput.value || "").trim().toLowerCase();
+      if (!v) {
+        idInput.value = "";
+        return;
+      }
+      if (nameToId[v]) {
+        idInput.value = nameToId[v];
+        fillContactFromCustomerId();
       } else {
         idInput.value = "";
       }
     }
 
-    function hide() {
-      box.classList.add("d-none");
-      box.innerHTML = "";
-      activeIndex = -1;
-      currentItems = [];
-    }
-
-    function show(items) {
-      box.innerHTML = "";
-      activeIndex = -1;
-      currentItems = items;
-
-      if (!items.length) {
-        hide();
-        return;
-      }
-
-      items.forEach((c, idx) => {
-        const a = document.createElement("button");
-        a.type = "button";
-        a.className = "list-group-item list-group-item-action";
-        a.textContent = c.name;
-        a.setAttribute("role", "option");
-        a.addEventListener("mousedown", (e) => {
-          // mousedown so it fires before input blur
-          e.preventDefault();
-          setSelected(c);
-        });
-        box.appendChild(a);
-      });
-
-      box.classList.remove("d-none");
-    }
-
-    function highlight(index) {
-      const children = Array.from(box.children);
-      children.forEach((el, i) => {
-        if (i === index) el.classList.add("active");
-        else el.classList.remove("active");
-      });
-    }
-
-    function getMatches(q) {
-      const n = norm(q);
-      if (!n) return [];
-      const starts = [];
-      const contains = [];
-      for (const c of customers) {
-        const cn = norm(c.name);
-        if (!cn) continue;
-        if (cn.startsWith(n)) starts.push(c);
-        else if (cn.includes(n)) contains.push(c);
-      }
-      return starts.concat(contains).slice(0, 10);
-    }
-
-    function onInput() {
-      // User typed -> selection no longer guaranteed
-      idInput.value = "";
-      const items = getMatches(nameInput.value);
-      show(items);
-    }
-
-    function onKeyDown(e) {
-      if (box.classList.contains("d-none")) {
-        // If Enter pressed without dropdown, attempt autocomplete to first match
-        if (e.key === "Enter") {
-          clearSelectionIfMismatch();
-          if (!idInput.value) {
-            const items = getMatches(nameInput.value);
-            if (items.length) {
-              e.preventDefault();
-              setSelected(items[0]); // Enter autocompletes best match
-            }
-          }
-        }
-        return;
-      }
-
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        activeIndex = Math.min(activeIndex + 1, currentItems.length - 1);
-        highlight(activeIndex);
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        activeIndex = Math.max(activeIndex - 1, 0);
-        highlight(activeIndex);
-      } else if (e.key === "Escape") {
-        hide();
-      } else if (e.key === "Enter") {
-        // If user hasn't arrowed to anything, pick first match
-        const pick = (activeIndex >= 0 ? currentItems[activeIndex] : currentItems[0]);
-        if (pick) {
-          e.preventDefault();
-          setSelected(pick);
-        }
-      }
-    }
-
-    function onBlur() {
-      // Give click selection time (mousedown already handles it)
-      setTimeout(() => {
-        clearSelectionIfMismatch();
-        hide();
-      }, 120);
-    }
-
-    // Prefill: if we have a customer_id but empty name (common on edit),
-    // fill name from list so the user sees it.
-    function prefillFromId() {
-      const id = (idInput.value || "").trim();
-      if (!id) return;
-      if (nameInput.value && nameInput.value.trim()) return;
-      const found = customers.find(c => String(c.id) === id);
-      if (found) nameInput.value = found.name;
-    }
-
     if (nameInput) {
-      nameInput.addEventListener("input", onInput);
-      nameInput.addEventListener("keydown", onKeyDown);
-      nameInput.addEventListener("blur", onBlur);
-      nameInput.addEventListener("change", clearSelectionIfMismatch);
+      nameInput.addEventListener("input", syncCustomerId);
+      nameInput.addEventListener("change", syncCustomerId);
+      nameInput.addEventListener("blur", syncCustomerId);
     }
 
-    document.addEventListener("click", (e) => {
-      if (!box.contains(e.target) && e.target !== nameInput) hide();
-    });
-
+    const form = document.getElementById("invoiceForm");
     if (form) {
       form.addEventListener("submit", function (e) {
-        clearSelectionIfMismatch();
-
+        syncCustomerId();
         if (!idInput.value) {
           e.preventDefault();
-          alert("Please select a customer from the suggestions (existing customer).");
+          alert("Please select an existing customer (choose one from the suggestions).");
           nameInput.focus();
-          return;
         }
       });
     }
 
-    prefillFromId();
-    clearSelectionIfMismatch();
+    syncCustomerId();
+    fillContactFromCustomerId();
   })();
 </script>
 
 {% endblock %}
+
 
 
 

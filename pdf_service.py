@@ -10,7 +10,7 @@ from reportlab.lib import colors
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
 from config import Config
-from models import Invoice, User
+from models import Invoice, User, Customer  # ✅ add Customer
 
 
 def _money(x) -> str:
@@ -84,9 +84,21 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     except Exception:
         owner = None
 
-    # Customer contact (for BILL TO box)
-    customer_email = (getattr(inv, "customer_email", None) or "").strip()
-    customer_phone = (getattr(inv, "customer_phone", None) or "").strip()
+    # Pull Customer (Option B)
+    customer = None
+    try:
+        if getattr(inv, "customer_id", None):
+            customer = session.get(Customer, inv.customer_id)
+    except Exception:
+        customer = None
+
+    # Invoice-level overrides (preferred), otherwise fall back to customer profile
+    inv_email = (getattr(inv, "customer_email", None) or "").strip()
+    inv_phone = (getattr(inv, "customer_phone", None) or "").strip()
+
+    customer_email = inv_email or ((getattr(customer, "email", None) or "").strip() if customer else "")
+    customer_phone = inv_phone or ((getattr(customer, "phone", None) or "").strip() if customer else "")
+    customer_address = ((getattr(customer, "address", None) or "").strip() if customer else "")
 
     # -----------------------------
     # Invoice template / profession config (locked per invoice)
@@ -267,40 +279,52 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # Bill To
     pdf.roundRect(M, top_y - box_h, box_w, box_h, 8, stroke=1, fill=0)
     pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawString(M + 10, top_y - 18, "BILL TO")
+    pdf.drawString(M + 10, top_y - 16, "BILL TO")
 
-    # Customer name (keep your old ":" behavior if ever used)
-    nameFirst, _, _tail = (inv.name or "").partition(":")
-    customer_name = (nameFirst or inv.name or "").strip()
+    # Prefer Customer.name when available (otherwise invoice legacy name parsing)
+    if customer and (getattr(customer, "name", None) or "").strip():
+        customer_name = (customer.name or "").strip()
+    else:
+        nameFirst, _, _tail = (inv.name or "").partition(":")
+        customer_name = (nameFirst or inv.name or "").strip()
 
-    # Draw customer name slightly larger
+    # Layout: left = contact, right = address
+    left_x = M + 10
+    right_x = M + (box_w / 2) + 5
+
+    name_y = top_y - 34
+    line_step = 12
+
+    # ---- LEFT: Name, Phone, Email ----
     pdf.setFont("Helvetica", 11)
-    pdf.drawString(M + 10, top_y - 38, customer_name)
+    pdf.drawString(left_x, name_y, customer_name)
 
-    # Draw phone/email below (wrapped to fit the box)
-    contact_font = "Helvetica"
-    contact_size = 10
-    max_contact_w = box_w - 20  # padding left+right
+    pdf.setFont("Helvetica", 9)
+    y_left = name_y - line_step
 
-    contact_lines = []
     if customer_phone:
-        contact_lines.extend(_wrap_text(f"Phone: {customer_phone}", contact_font, contact_size, max_contact_w))
+        pdf.drawString(left_x, y_left, f"Phone: {customer_phone}")
+        y_left -= line_step
+
     if customer_email:
-        contact_lines.extend(_wrap_text(f"Email: {customer_email}", contact_font, contact_size, max_contact_w))
+        max_w_left = (box_w / 2) - 20
+        email_lines = _wrap_text(f"Email: {customer_email}", "Helvetica", 9, max_w_left)
+        for ln in email_lines[:2]:
+            pdf.drawString(left_x, y_left, ln)
+            y_left -= line_step
 
-    pdf.setFont(contact_font, contact_size)
+    # ---- RIGHT: Address (stacked) ----
+    pdf.setFont("Helvetica", 9)
+    y_right = name_y
 
-    # Start a bit below the name
-    y_contact = top_y - 54
-    line_step = 14
+    if customer_address:
+        max_w_right = (box_w / 2) - 20
+        addr_lines = _wrap_text(customer_address, "Helvetica", 9, max_w_right)
+        for ln in addr_lines[:4]:
+            pdf.drawString(right_x, y_right, ln)
+            y_right -= line_step
 
-    # Only draw as many lines as fit in the box
-    bottom_limit = (top_y - box_h) + 12
-    for ln in contact_lines:
-        if y_contact < bottom_limit:
-            break
-        pdf.drawString(M + 10, y_contact, ln)
-        y_contact -= line_step
+
 
     # Job Details
     x2 = M + box_w + 0.35 * inch
@@ -565,8 +589,4 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     session.commit()
 
     return pdf_path
-
-
-
-
 

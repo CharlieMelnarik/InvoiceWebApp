@@ -44,6 +44,11 @@
     {% if customer %}
       <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=customer.id) }}">Back to Customer</a>
     {% endif %}
+
+    <form method="post" action="{{ url_for('invoice_duplicate', invoice_id=inv.id) }}">
+      <button class="btn btn-outline-primary" type="submit">Duplicate</button>
+    </form>
+
     <a class="btn btn-outline-primary" href="{{ url_for('invoice_edit', invoice_id=inv.id) }}">Edit</a>
   </div>
 </div>
@@ -55,10 +60,7 @@
       <div class="card-body">
         <div class="fw-semibold mb-2">Summary</div>
 
-        <div class="mb-2">
-          <div class="small-muted">Attn / Contact</div>
-          <div>{{ inv.name or "" }}</div>
-        </div>
+        {# ✅ Removed Attn/Contact block entirely #}
 
         <div class="mb-2">
           <div class="small-muted">{{ job_label }}</div>
@@ -217,6 +219,7 @@
 </div>
 
 {% endblock %}
+
 
 
 

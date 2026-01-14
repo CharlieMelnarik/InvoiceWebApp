@@ -442,8 +442,6 @@ def _migrate_user_security_fields(engine):
 
 
 def _migrate_customers(engine):
-    # customers table will be created by Base.metadata.create_all if models include Customer.
-    # Here we ensure invoices.customer_id exists for older DBs.
     if not _table_exists(engine, "invoices"):
         return
 
@@ -461,11 +459,16 @@ def _migrate_invoice_customer_id(engine):
     if not _column_exists(engine, "invoices", "customer_id"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE invoices ADD COLUMN customer_id INTEGER"))
-            
+
+
 def _migrate_customers_unique_name_ci(engine):
+    """
+    Recommended: enforce per-user customer uniqueness case-insensitively on Postgres:
+      UNIQUE (user_id, LOWER(name))
+    Safe to no-op on sqlite.
+    """
     if not _table_exists(engine, "customers"):
         return
-    # Postgres functional unique index: (user_id, lower(name))
     try:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -473,9 +476,7 @@ def _migrate_customers_unique_name_ci(engine):
                 ON customers (user_id, LOWER(name));
             """))
     except Exception:
-        # SQLite won't support this; and Postgres may error if permissions differ.
         pass
-
 
 
 # -----------------------------
@@ -512,8 +513,8 @@ def create_app():
     _migrate_user_billing_fields(engine)
     _migrate_user_security_fields(engine)
     _migrate_customers(engine)
-    _migrate_invoice_customer_id(engine)
     _migrate_customers_unique_name_ci(engine)
+    _migrate_invoice_customer_id(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -638,7 +639,7 @@ def create_app():
         Merge source customer into target customer (same user).
         - Reassign invoices.customer_id from source -> target
         - Optionally fill missing target contact fields from source
-        - Update Invoice.name to target.name for moved invoices (keeps your invariant)
+        - Update Invoice.name to target.name for moved invoices
         - Delete the source customer
         """
         if not source or not target:
@@ -940,10 +941,6 @@ def create_app():
     @app.route("/billing/checkout", methods=["POST"])
     @login_required
     def billing_checkout():
-        print("APP_BASE_URL env =", os.getenv("APP_BASE_URL"))
-        print("APP_BASE_URL cfg =", current_app.config.get("APP_BASE_URL"))
-        print("request.host_url  =", request.host_url)
-
         if not stripe.api_key or not STRIPE_PRICE_ID:
             abort(500)
 
@@ -1017,6 +1014,7 @@ def create_app():
     # -----------------------------
     @app.route("/stripe/webhook", methods=["POST"])
     def stripe_webhook():
+        STRIPE_WEBHOOK_SECRET = app.config.get("STRIPE_WEBHOOK_SECRET") or os.getenv("STRIPE_WEBHOOK_SECRET")
         if not STRIPE_WEBHOOK_SECRET:
             abort(500)
 
@@ -1154,6 +1152,17 @@ def create_app():
                 return render_template("customer_form.html", mode="new", form=request.form)
 
             with db_session() as s:
+                # quick UX: if exists (case-insensitive), jump to it
+                existing = (
+                    s.query(Customer)
+                    .filter(Customer.user_id == _current_user_id_int())
+                    .filter(text("lower(name) = :n")).params(n=name.lower())
+                    .first()
+                )
+                if existing:
+                    flash("That customer already exists.", "info")
+                    return redirect(url_for("customer_view", customer_id=existing.id))
+
                 c = Customer(
                     user_id=_current_user_id_int(),
                     name=name,
@@ -1162,7 +1171,13 @@ def create_app():
                     address=address,
                 )
                 s.add(c)
-                s.commit()
+                try:
+                    s.commit()
+                except IntegrityError:
+                    s.rollback()
+                    flash("That customer name is already in use.", "error")
+                    return render_template("customer_form.html", mode="new", form=request.form)
+
                 return redirect(url_for("customer_view", customer_id=c.id))
 
         return render_template("customer_form.html", mode="new")
@@ -1334,7 +1349,6 @@ def create_app():
 
             invoices_list = invoices_q.all()
 
-            # Build lookup of customer_id -> name (only for this user)
             customers = s.query(Customer.id, Customer.name).filter(Customer.user_id == uid).all()
             customer_map = {cid: (name or "").strip() for cid, name in customers}
 
@@ -1365,8 +1379,6 @@ def create_app():
     @subscription_required
     def invoice_new():
         uid = _current_user_id_int()
-
-        # preselect via ?customer_id=
         pre_customer_id = (request.args.get("customer_id") or "").strip()
 
         with db_session() as s:
@@ -1381,8 +1393,12 @@ def create_app():
                 .all()
             )
 
-            # Used by autocomplete JS to map name->id
-            customers_for_js = [{"id": c.id, "name": (c.name or "").strip()} for c in customers]
+            customers_for_js = [{
+                "id": c.id,
+                "name": (c.name or "").strip(),
+                "email": (c.email or "").strip(),
+                "phone": (c.phone or "").strip(),
+            } for c in customers]
 
             pre_customer = None
             if pre_customer_id.isdigit():
@@ -1393,10 +1409,8 @@ def create_app():
 
         if request.method == "POST":
             customer_id_raw = (request.form.get("customer_id") or "").strip()
-            customer_name_typed = (request.form.get("customer_name") or "").strip()
             vehicle = (request.form.get("vehicle") or "").strip()
 
-            # Must come from a real selection
             if not customer_id_raw.isdigit():
                 flash("Please select a customer from the list.", "error")
                 return render_template(
@@ -1431,7 +1445,9 @@ def create_app():
                 year = int(datetime.now().strftime("%Y"))
                 inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
 
-                # ✅ remove Attn/Contact: invoice.name now mirrors customer name
+                cust_email_override = (request.form.get("customer_email") or "").strip() or None
+                cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
+
                 inv = Invoice(
                     user_id=uid,
                     customer_id=c.id,
@@ -1439,11 +1455,11 @@ def create_app():
                     invoice_number=inv_no,
                     invoice_template=user_template_key,
 
-                    customer_email=(request.form.get("customer_email") or "").strip() or None,
-                    customer_phone=(request.form.get("customer_phone") or "").strip() or None,
+                    # ✅ autofill fallback
+                    customer_email=(cust_email_override or (c.email or None)),
+                    customer_phone=(cust_phone_override or (c.phone or None)),
 
                     name=(c.name or "").strip(),
-
                     vehicle=vehicle,
 
                     hours=_to_float(request.form.get("hours")),
@@ -1471,7 +1487,6 @@ def create_app():
 
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
 
-        # GET
         return render_template(
             "invoice_form.html",
             mode="new",
@@ -1493,8 +1508,57 @@ def create_app():
             inv = _invoice_owned_or_404(s, invoice_id)
             tmpl = _template_config_for(inv.invoice_template)
             c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
-
         return render_template("invoice_view.html", inv=inv, tmpl=tmpl, customer=c)
+
+    # -----------------------------
+    # Duplicate invoice — GATED
+    # -----------------------------
+    @app.route("/invoices/<int:invoice_id>/duplicate", methods=["POST"])
+    @login_required
+    @subscription_required
+    def invoice_duplicate(invoice_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            inv = _invoice_owned_or_404(s, invoice_id)
+
+            year = int(datetime.now().strftime("%Y"))
+            new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+
+            new_inv = Invoice(
+                user_id=uid,
+                customer_id=inv.customer_id,
+                invoice_number=new_no,
+                invoice_template=inv.invoice_template,
+
+                name=inv.name,
+                vehicle=inv.vehicle,
+
+                hours=inv.hours,
+                price_per_hour=inv.price_per_hour,
+                shop_supplies=inv.shop_supplies,
+
+                notes=inv.notes,
+                paid=0.0,
+                date_in=datetime.now().strftime("%m/%d/%Y"),
+
+                customer_email=inv.customer_email,
+                customer_phone=inv.customer_phone,
+
+                pdf_path=None,
+                pdf_generated_at=None,
+            )
+
+            for p in inv.parts:
+                new_inv.parts.append(InvoicePart(part_name=p.part_name, part_price=p.part_price))
+
+            for li in inv.labor_items:
+                new_inv.labor_items.append(InvoiceLabor(labor_desc=li.labor_desc, labor_time_hours=li.labor_time_hours))
+
+            s.add(new_inv)
+            s.commit()
+
+            flash(f"Duplicated invoice as {new_no}.", "success")
+            return redirect(url_for("invoice_edit", invoice_id=new_inv.id))
 
     # -----------------------------
     # Edit invoice — GATED
@@ -1514,7 +1578,13 @@ def create_app():
                 .order_by(Customer.name.asc())
                 .all()
             )
-            customers_for_js = [{"id": c.id, "name": (c.name or "").strip()} for c in customers]
+
+            customers_for_js = [{
+                "id": c.id,
+                "name": (c.name or "").strip(),
+                "email": (c.email or "").strip(),
+                "phone": (c.phone or "").strip(),
+            } for c in customers]
 
             tmpl_key = _template_key_fallback(inv.invoice_template)
             tmpl = _template_config_for(tmpl_key)
@@ -1535,11 +1605,9 @@ def create_app():
                     )
 
                 customer_id = int(customer_id_raw)
-                c = _customer_owned_or_404(s, customer_id)  # validate + load
+                c = _customer_owned_or_404(s, customer_id)
 
                 inv.customer_id = customer_id
-
-                # ✅ remove Attn/Contact: keep invoice.name == customer name
                 inv.name = (c.name or "").strip()
 
                 inv.vehicle = (request.form.get("vehicle") or "").strip()
@@ -1550,8 +1618,12 @@ def create_app():
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = request.form.get("notes", "").rstrip()
 
-                inv.customer_email = (request.form.get("customer_email") or "").strip() or None
-                inv.customer_phone = (request.form.get("customer_phone") or "").strip() or None
+                cust_email_override = (request.form.get("customer_email") or "").strip() or None
+                cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
+
+                # ✅ autofill fallback
+                inv.customer_email = cust_email_override or (c.email or None)
+                inv.customer_phone = cust_phone_override or (c.phone or None)
 
                 if tmpl_key == "auto_repair" and not inv.vehicle:
                     flash("Vehicle is required for Auto Repair invoices.", "error")
@@ -1848,7 +1920,4 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True, port=5001)
-
-
-
 
