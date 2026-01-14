@@ -20,6 +20,7 @@ from flask_login import (
 )
 from sqlalchemy import text
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
@@ -460,6 +461,21 @@ def _migrate_invoice_customer_id(engine):
     if not _column_exists(engine, "invoices", "customer_id"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE invoices ADD COLUMN customer_id INTEGER"))
+            
+def _migrate_customers_unique_name_ci(engine):
+    if not _table_exists(engine, "customers"):
+        return
+    # Postgres functional unique index: (user_id, lower(name))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS customers_user_lower_name_unique
+                ON customers (user_id, LOWER(name));
+            """))
+    except Exception:
+        # SQLite won't support this; and Postgres may error if permissions differ.
+        pass
+
 
 
 # -----------------------------
@@ -497,6 +513,7 @@ def create_app():
     _migrate_user_security_fields(engine)
     _migrate_customers(engine)
     _migrate_invoice_customer_id(engine)
+    _migrate_customers_unique_name_ci(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -612,6 +629,43 @@ def create_app():
                 print(f"[MIGRATE] Backfilled customers for {changed} invoices", flush=True)
 
     _backfill_customers_from_invoices()
+
+    # -----------------------------
+    # Customer merge helper
+    # -----------------------------
+    def _merge_customers(session, source: Customer, target: Customer) -> None:
+        """
+        Merge source customer into target customer (same user).
+        - Reassign invoices.customer_id from source -> target
+        - Optionally fill missing target contact fields from source
+        - Update Invoice.name to target.name for moved invoices (keeps your invariant)
+        - Delete the source customer
+        """
+        if not source or not target:
+            raise ValueError("source/target missing")
+        if source.id == target.id:
+            return
+        if source.user_id != target.user_id:
+            raise ValueError("Cannot merge across users")
+
+        # Fill missing target fields from source (only if target is empty)
+        for field in ("email", "phone", "address"):
+            tv = (getattr(target, field, None) or "").strip()
+            sv = (getattr(source, field, None) or "").strip()
+            if (not tv) and sv:
+                setattr(target, field, sv)
+
+        moved = (
+            session.query(Invoice)
+            .filter(Invoice.user_id == target.user_id)
+            .filter(Invoice.customer_id == source.id)
+            .all()
+        )
+        for inv in moved:
+            inv.customer_id = target.id
+            inv.name = (target.name or "").strip()
+
+        session.delete(source)
 
     # -----------------------------
     # Subscription gating
@@ -1130,16 +1184,80 @@ def create_app():
                     flash("Customer name is required.", "error")
                     return render_template("customer_form.html", mode="edit", c=c)
 
+                # If renaming to an existing customer name for this user, MERGE instead of 500.
+                dup = (
+                    s.query(Customer)
+                    .filter(Customer.user_id == _current_user_id_int())
+                    .filter(text("lower(name) = :n")).params(n=name.lower())
+                    .filter(Customer.id != c.id)
+                    .first()
+                )
+                if dup:
+                    try:
+                        _merge_customers(s, source=c, target=dup)
+                        s.commit()
+                        flash(f"Merged into existing customer: {dup.name}", "success")
+                        return redirect(url_for("customer_view", customer_id=dup.id))
+                    except Exception as e:
+                        s.rollback()
+                        print("[CUSTOMER MERGE] ERROR:", repr(e), flush=True)
+                        flash("Could not merge customers (server error).", "error")
+                        return render_template("customer_form.html", mode="edit", c=c)
+
+                # Normal update (no collision)
                 c.name = name
                 c.email = (email if (email and _looks_like_email(email)) else (email or None))
                 c.phone = phone
                 c.address = address
-                s.commit()
+
+                try:
+                    s.commit()
+                except IntegrityError:
+                    s.rollback()
+                    flash("That customer name is already in use. Try a different name, or merge customers.", "error")
+                    return render_template("customer_form.html", mode="edit", c=c)
 
                 flash("Customer updated.", "success")
                 return redirect(url_for("customer_view", customer_id=c.id))
 
         return render_template("customer_form.html", mode="edit", c=c)
+
+    @app.route("/customers/<int:customer_id>/merge", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def customer_merge(customer_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            source = _customer_owned_or_404(s, customer_id)
+
+            customers = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .filter(Customer.id != source.id)
+                .order_by(Customer.name.asc())
+                .all()
+            )
+
+            if request.method == "POST":
+                target_id_raw = (request.form.get("target_customer_id") or "").strip()
+                if not target_id_raw.isdigit():
+                    flash("Pick a customer to merge into.", "error")
+                    return render_template("customer_merge.html", source=source, customers=customers)
+
+                target = _customer_owned_or_404(s, int(target_id_raw))
+
+                try:
+                    _merge_customers(s, source=source, target=target)
+                    s.commit()
+                    flash(f"Merged '{source.name}' into '{target.name}'.", "success")
+                    return redirect(url_for("customer_view", customer_id=target.id))
+                except Exception as e:
+                    s.rollback()
+                    print("[CUSTOMER MERGE] ERROR:", repr(e), flush=True)
+                    flash("Merge failed (server error).", "error")
+                    return render_template("customer_merge.html", source=source, customers=customers)
+
+        return render_template("customer_merge.html", source=source, customers=customers)
 
     @app.route("/customers/<int:customer_id>")
     @login_required
