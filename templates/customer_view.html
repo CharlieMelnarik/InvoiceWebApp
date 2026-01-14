@@ -20,6 +20,34 @@
   </div>
 </div>
 
+<!-- ✅ Dashboard summary -->
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-3 align-items-center">
+
+      <div class="col-12 col-md-4">
+        <div class="small-muted">Total Business</div>
+        <div class="h4 mb-0 mono">${{ "%.2f"|format(total_business or 0) }}</div>
+      </div>
+
+      <div class="col-6 col-md-4 text-md-center">
+        <div class="small-muted">Total Paid</div>
+        <div class="mono fw-semibold text-success">
+          ${{ "%.2f"|format(total_paid or 0) }}
+        </div>
+      </div>
+
+      <div class="col-6 col-md-4 text-md-end">
+        <div class="small-muted">Total Unpaid</div>
+        <div class="mono fw-semibold text-danger">
+          ${{ "%.2f"|format(total_unpaid or 0) }}
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 <form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('customer_view', customer_id=c.id) }}">
   <div class="col-6 col-md-3">
     <label class="form-label">Year</label>
@@ -103,4 +131,6 @@
 </div>
 
 {% endblock %}
+
+
 

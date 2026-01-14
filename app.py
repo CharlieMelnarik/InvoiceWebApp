@@ -1372,14 +1372,35 @@ def create_app():
                     if status == "unpaid" and not fully_paid:
                         filtered.append(inv)
                 invoices_list = filtered
+                
+            # --- Total Business (money spent) ---
+            total_business = 0.0
+            total_paid = 0.0
+            total_unpaid = 0.0
+
+            for inv in invoices_list:
+                try:
+                    total = float(inv.invoice_total() or 0.0)
+                    paid = float(inv.paid or 0.0)
+                    total_business += total
+                    total_paid += paid
+                    total_unpaid += max(total - paid, 0.0)
+                except Exception:
+                    pass
+
+
 
         return render_template(
             "customer_view.html",
             c=c,
             invoices=invoices_list,
             year=year,
-            status=status or "all"
+            status=status or "all",
+            total_business=total_business,
+            total_paid=total_paid,
+            total_unpaid=total_unpaid,
         )
+
 
     # -----------------------------
     # All invoices list (optional / legacy)
