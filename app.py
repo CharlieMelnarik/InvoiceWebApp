@@ -8,6 +8,8 @@ from email.message import EmailMessage
 from datetime import datetime
 from pathlib import Path
 from functools import wraps
+from werkzeug.utils import secure_filename
+
 
 import stripe
 from flask import (
@@ -77,6 +79,11 @@ def _parse_repeating_fields(names, prices):
 def _ensure_dirs():
     Path("instance").mkdir(parents=True, exist_ok=True)
     Path(Config.EXPORTS_DIR).mkdir(parents=True, exist_ok=True)
+    
+def _logo_upload_dir() -> Path:
+    d = Path("instance") / "uploads" / "logos"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _current_user_id_int() -> int:
@@ -477,6 +484,14 @@ def _migrate_customers_unique_name_ci(engine):
             """))
     except Exception:
         pass
+        
+def _migrate_user_logo(engine):
+    if not _table_exists(engine, "users"):
+        return
+    if not _column_exists(engine, "users", "logo_path"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN logo_path VARCHAR(300)"))
+
 
 
 # -----------------------------
@@ -515,6 +530,8 @@ def create_app():
     _migrate_customers(engine)
     _migrate_customers_unique_name_ci(engine)
     _migrate_invoice_customer_id(engine)
+    _migrate_user_logo(engine)
+
 
     SessionLocal = make_session_factory(engine)
 
@@ -912,6 +929,53 @@ def create_app():
                         return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
                     u.email = new_email
+                
+                # -----------------------------
+                # Logo upload / remove
+                # -----------------------------
+                remove_logo = (request.form.get("remove_logo") or "").strip() == "1"
+                logo_file = request.files.get("logo")
+
+                if remove_logo:
+                    # delete existing logo file if present
+                    old_rel = (getattr(u, "logo_path", None) or "").strip()
+                    if old_rel:
+                        old_abs = (Path("instance") / old_rel).resolve()
+                        try:
+                            if old_abs.exists():
+                                old_abs.unlink()
+                        except Exception:
+                            pass
+                    u.logo_path = None
+
+                elif logo_file and getattr(logo_file, "filename", ""):
+                    filename = secure_filename(logo_file.filename or "")
+                    ext = (os.path.splitext(filename)[1] or "").lower()
+
+                    if ext not in (".png", ".jpg", ".jpeg"):
+                        flash("Logo must be a .png, .jpg, or .jpeg file.", "error")
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+                    # store under instance/uploads/logos/
+                    d = _logo_upload_dir()
+                    out_name = f"user_{u.id}{ext}"
+                    out_path = (d / out_name).resolve()
+
+                    # delete old if different extension/name
+                    old_rel = (getattr(u, "logo_path", None) or "").strip()
+                    if old_rel:
+                        old_abs = (Path("instance") / old_rel).resolve()
+                        try:
+                            if old_abs.exists() and old_abs != out_path:
+                                old_abs.unlink()
+                        except Exception:
+                            pass
+
+                    logo_file.save(out_path)
+
+                    # store relative-to-instance path (portable)
+                    u.logo_path = str(Path("uploads") / "logos" / out_name)
+
 
                 tmpl = (request.form.get("invoice_template") or "").strip()
                 tmpl = _template_key_fallback(tmpl)

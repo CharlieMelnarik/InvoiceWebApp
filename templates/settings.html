@@ -15,7 +15,8 @@
           Your email is used for login recovery. Business information appears at the top of your PDF invoices.
         </p>
 
-        <form method="post">
+        <!-- IMPORTANT: multipart for file upload -->
+        <form method="post" enctype="multipart/form-data">
 
           <!-- Email (required) -->
           <div class="mb-3">
@@ -93,6 +94,45 @@
             >{{ u.address or '' }}</textarea>
           </div>
 
+          <hr class="my-4" />
+
+          <!-- Logo Upload -->
+          <div class="mb-3">
+            <label class="form-label">
+              Logo (shown on invoices)
+            </label>
+            <input
+              class="form-control"
+              type="file"
+              name="logo"
+              accept=".png,.jpg,.jpeg"
+            >
+
+            <div class="small-muted mt-1">
+              Recommended: transparent PNG, about 600px wide. It will be scaled down on the invoice.
+            </div>
+
+            {% if u.logo_path %}
+              <div class="mt-2">
+                <div class="small-muted">Current logo file:</div>
+                <div class="mono">{{ u.logo_path }}</div>
+              </div>
+
+              <div class="form-check mt-2">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  value="1"
+                  id="remove_logo"
+                  name="remove_logo"
+                >
+                <label class="form-check-label" for="remove_logo">
+                  Remove logo
+                </label>
+              </div>
+            {% endif %}
+          </div>
+
           <div class="d-flex justify-content-between align-items-center mt-4">
             <button type="submit" class="btn btn-primary">
               Save Settings
@@ -112,5 +152,6 @@
 </div>
 
 {% endblock %}
+
 
 

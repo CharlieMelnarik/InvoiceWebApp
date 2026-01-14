@@ -2,15 +2,17 @@
 import os
 import re
 from datetime import datetime
+from pathlib import Path
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.lib.utils import ImageReader
 
 from config import Config
-from models import Invoice, User, Customer  # ✅ add Customer
+from models import Invoice, User, Customer
 
 
 def _money(x) -> str:
@@ -84,7 +86,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     except Exception:
         owner = None
 
-    # Pull Customer (Option B)
+    # Pull customer (for Bill To)
     customer = None
     try:
         if getattr(inv, "customer_id", None):
@@ -92,12 +94,14 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     except Exception:
         customer = None
 
-    # Invoice-level overrides (preferred), otherwise fall back to customer profile
-    inv_email = (getattr(inv, "customer_email", None) or "").strip()
-    inv_phone = (getattr(inv, "customer_phone", None) or "").strip()
-
-    customer_email = inv_email or ((getattr(customer, "email", None) or "").strip() if customer else "")
-    customer_phone = inv_phone or ((getattr(customer, "phone", None) or "").strip() if customer else "")
+    # Customer contact priority:
+    # invoice override -> customer profile
+    customer_email = (getattr(inv, "customer_email", None) or "").strip() or (
+        (getattr(customer, "email", None) or "").strip() if customer else ""
+    )
+    customer_phone = (getattr(inv, "customer_phone", None) or "").strip() or (
+        (getattr(customer, "phone", None) or "").strip() if customer else ""
+    )
     customer_address = ((getattr(customer, "address", None) or "").strip() if customer else "")
 
     # -----------------------------
@@ -140,7 +144,6 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
             "shop_supplies_label": "Supplies / Fees",
         },
-        # ✅ NEW: Accountant
         "accountant": {
             "job_label": "Client / Engagement",
             "job_box_title": "ENGAGEMENT DETAILS",
@@ -169,7 +172,6 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     cfg = TEMPLATE_CFG[template_key]
 
     # Determine header identity lines (left side)
-    # business_name -> fallback to username -> fallback to blank
     business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
     header_name = business_name or username or ""
@@ -177,7 +179,13 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
     header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
 
-    # Ensure parts + labor loaded (relationship order is defined in models)
+    # Owner logo (stored relative to instance/)
+    owner_logo_rel = (getattr(owner, "logo_path", None) or "").strip() if owner else ""
+    owner_logo_abs = ""
+    if owner_logo_rel:
+        owner_logo_abs = str((Path("instance") / owner_logo_rel).resolve())
+
+    # Ensure parts + labor loaded
     parts = inv.parts
     labor_items = inv.labor_items
 
@@ -234,15 +242,54 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf.setLineWidth(1)
     pdf.line(M, PAGE_H - 1.30 * inch, PAGE_W - M, PAGE_H - 1.30 * inch)
 
+    # ---- Header Title Area: [LOGO] INVOICE ----
+    header_title_y = PAGE_H - 0.75 * inch
+    invoice_font = ("Helvetica-Bold", 20)
+
+    # Default: no logo -> INVOICE starts at M
+    invoice_x = M
+
+    # If logo exists, draw it first at M, then move INVOICE to the right of it.
+    if owner_logo_abs and os.path.exists(owner_logo_abs):
+        try:
+            img = ImageReader(owner_logo_abs)
+            iw, ih = img.getSize()
+
+            # max logo box
+            max_h = 0.45 * inch
+            max_w = 1.55 * inch
+
+            # scale to fit preserving aspect ratio
+            scale = min(max_w / float(iw), max_h / float(ih))
+            w = float(iw) * scale
+            h = float(ih) * scale
+
+            # place logo BEFORE the word INVOICE
+            logo_x = M
+            # Align logo bottom to the bottom of the INVOICE glyphs (not the baseline)
+            invoice_font_size = 20
+            descent = invoice_font_size * 0.28  # empirical for Helvetica-Bold
+            text_bottom_y = header_title_y - descent
+            logo_y = text_bottom_y
+
+
+            pdf.drawImage(img, logo_x, logo_y, width=w, height=h, mask="auto")
+
+            gap = 10  # small spacing between logo and text
+            invoice_x = logo_x + w + gap
+
+        except Exception:
+            # if image fails, fall back to plain text at M
+            invoice_x = M
+
     pdf.setFillColorRGB(0, 0, 0)
-    pdf.setFont("Helvetica-Bold", 20)
-    pdf.drawString(M, PAGE_H - 0.75 * inch, "INVOICE")
+    pdf.setFont(*invoice_font)
+    pdf.drawString(invoice_x, header_title_y, "INVOICE")
 
     # Business info (left)
     pdf.setFont("Helvetica", 10)
 
     left_lines = []
-
     if header_name:
         left_lines.append(header_name)
 
@@ -295,7 +342,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     name_y = top_y - 34
     line_step = 12
 
-    # ---- LEFT: Name, Phone, Email ----
+    # LEFT: Name, Phone, Email
     pdf.setFont("Helvetica", 11)
     pdf.drawString(left_x, name_y, customer_name)
 
@@ -313,7 +360,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             pdf.drawString(left_x, y_left, ln)
             y_left -= line_step
 
-    # ---- RIGHT: Address (stacked) ----
+    # RIGHT: Address (stacked)
     pdf.setFont("Helvetica", 9)
     y_right = name_y
 
@@ -323,8 +370,6 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         for ln in addr_lines[:4]:
             pdf.drawString(right_x, y_right, ln)
             y_right -= line_step
-
-
 
     # Job Details
     x2 = M + box_w + 0.35 * inch
@@ -589,4 +634,5 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     session.commit()
 
     return pdf_path
+
 

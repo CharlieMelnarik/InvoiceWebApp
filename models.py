@@ -64,6 +64,10 @@ class User(Base):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     password_reset_required: Mapped[bool] = mapped_column(nullable=False, default=False)
     last_failed_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # Logo for PDF header (relative path under instance/, e.g. "uploads/logos/user_1.png")
+    logo_path: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
