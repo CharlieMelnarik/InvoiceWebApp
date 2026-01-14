@@ -3,303 +3,221 @@
 
 {% block content %}
 
-{# --------------------------------------------------------------------
-  Profession-aware labels.
-  app.py should pass tmpl into this template:
-    - invoice_view: tmpl based on inv.invoice_template
---------------------------------------------------------------------- #}
+{# profession-aware labels #}
 {% set _tmpl = tmpl if tmpl is defined and tmpl else {} %}
 {% set job_label = _tmpl.get('job_label', 'Vehicle') %}
 {% set labor_title = _tmpl.get('labor_title', 'Labor') %}
-{% set labor_desc_label = _tmpl.get('labor_desc_label', 'Description') %}
-{% set labor_time_label = _tmpl.get('labor_time_label', 'Hours') %}
-{% set labor_total_label = _tmpl.get('labor_total_label', 'Line Total') %}
-
+{% set labor_desc_label = _tmpl.get('labor_desc_label', 'Labor Description') %}
 {% set parts_title = _tmpl.get('parts_title', 'Parts') %}
-{% set parts_name_label = _tmpl.get('parts_name_label', 'Item') %}
-{% set parts_price_label = _tmpl.get('parts_price_label', 'Price') %}
-
+{% set parts_name_label = _tmpl.get('parts_name_label', 'Part Name') %}
 {% set shop_supplies_label = _tmpl.get('shop_supplies_label', 'Shop Supplies') %}
-{% set hours_label = _tmpl.get('hours_label', 'Hours') %}
-{% set rate_label = _tmpl.get('rate_label', 'Rate / Hour') %}
 
-<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+{% set total = inv.invoice_total() %}
+{% set fully_paid = (inv.paid or 0) + 0.01 >= total %}
+
+<div class="d-flex justify-content-between align-items-end mb-3">
   <div>
     <h1 class="h3 fw-bold mb-1">
       Invoice <span class="mono">{{ inv.invoice_number }}</span>
+      {% if fully_paid %}
+        <span class="badge text-bg-success ms-2">Paid</span>
+      {% else %}
+        <span class="badge text-bg-warning ms-2">Unpaid</span>
+      {% endif %}
     </h1>
+
     <div class="small-muted">
-      {{ inv.name }} • {{ inv.vehicle }} • Date In: {{ inv.date_in }}
+      {% if customer %}
+        Customer:
+        <a href="{{ url_for('customer_view', customer_id=customer.id) }}" class="text-decoration-none fw-semibold">
+          {{ customer.name }}
+        </a>
+      {% else %}
+        Customer: <span class="text-danger">Missing</span>
+      {% endif %}
+      {% if inv.date_in %} · Date In: <span class="mono">{{ inv.date_in }}</span>{% endif %}
     </div>
   </div>
 
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="{{ url_for('invoices') }}">Back</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
+    {% if customer %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=customer.id) }}">Back to Customer</a>
+    {% endif %}
     <a class="btn btn-outline-primary" href="{{ url_for('invoice_edit', invoice_id=inv.id) }}">Edit</a>
-
-    <form method="post"
-          action="{{ url_for('invoice_delete', invoice_id=inv.id) }}"
-          onsubmit="return confirmDeleteInvoice();"
-          class="d-inline">
-      <input type="hidden" name="delete_pdf" id="delete_pdf_field" value="0">
-      <button class="btn btn-outline-danger" type="submit">Delete</button>
-    </form>
   </div>
 </div>
 
 <div class="row g-3">
-  <!-- LEFT: DETAILS -->
-  <div class="col-12 col-lg-7">
+
+  <div class="col-12 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="fw-semibold mb-2">Summary</div>
+
+        <div class="mb-2">
+          <div class="small-muted">Attn / Contact</div>
+          <div>{{ inv.name or "" }}</div>
+        </div>
+
+        <div class="mb-2">
+          <div class="small-muted">{{ job_label }}</div>
+          <div>{{ inv.vehicle }}</div>
+        </div>
+
+        <div class="mb-2">
+          <div class="small-muted">Total</div>
+          <div class="mono fw-semibold">${{ "%.2f"|format(total) }}</div>
+        </div>
+
+        <div class="mb-2">
+          <div class="small-muted">Paid</div>
+          <div class="mono">${{ "%.2f"|format(inv.paid or 0) }}</div>
+        </div>
+
+        <div class="mb-0">
+          <div class="small-muted">Amount Due</div>
+          <div class="mono fw-semibold">${{ "%.2f"|format(inv.amount_due()) }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-8">
     <div class="card shadow-sm">
       <div class="card-body">
 
-        <h2 class="h5 fw-bold mb-3">Details</h2>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="fw-semibold">Customer Contact</div>
+        </div>
 
-        <div class="row g-2">
-          <div class="col-6">
-            <div class="small-muted">Name</div>
-            <div class="fw-semibold">{{ inv.name }}</div>
+        <div class="row g-3">
+          <div class="col-12 col-md-6">
+            <div class="small-muted">Email (invoice override)</div>
+            <div class="mono">{{ inv.customer_email or "" }}</div>
+          </div>
+          <div class="col-12 col-md-6">
+            <div class="small-muted">Phone (invoice override)</div>
+            <div class="mono">{{ inv.customer_phone or "" }}</div>
           </div>
 
-          <div class="col-6">
-            <div class="small-muted">{{ job_label }}</div>
-            <div class="fw-semibold">{{ inv.vehicle }}</div>
-          </div>
+          {% if customer %}
+            <div class="col-12 col-md-6">
+              <div class="small-muted">Email (customer)</div>
+              <div class="mono">{{ customer.email or "" }}</div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="small-muted">Phone (customer)</div>
+              <div class="mono">{{ customer.phone or "" }}</div>
+            </div>
+          {% endif %}
+        </div>
 
-          <!-- Customer contact -->
-          <div class="col-6">
-            <div class="small-muted">Customer Email</div>
-            {% if inv.customer_email %}
-              <div class="fw-semibold">{{ inv.customer_email }}</div>
-            {% else %}
-              <div class="small-muted">—</div>
-            {% endif %}
-          </div>
+        <hr class="my-4">
 
-          <div class="col-6">
-            <div class="small-muted">Customer Phone</div>
-            {% if inv.customer_phone %}
-              <div class="fw-semibold">{{ inv.customer_phone }}</div>
-            {% else %}
-              <div class="small-muted">—</div>
-            {% endif %}
+        <div class="row g-3">
+          <div class="col-12 col-md-4">
+            <div class="small-muted">Hours</div>
+            <div class="mono">{{ "%.2f"|format(inv.hours or 0) }}</div>
           </div>
-
-          <div class="col-4">
-            <div class="small-muted">{{ hours_label }}</div>
-            <div class="fw-semibold">{{ inv.hours }}</div>
+          <div class="col-12 col-md-4">
+            <div class="small-muted">Rate / Hour</div>
+            <div class="mono">${{ "%.2f"|format(inv.price_per_hour or 0) }}</div>
           </div>
-
-          <div class="col-4">
-            <div class="small-muted">{{ rate_label }}</div>
-            <div class="fw-semibold">{{ "${:,.2f}".format(inv.price_per_hour or 0) }}</div>
-          </div>
-
-          <div class="col-4">
+          <div class="col-12 col-md-4">
             <div class="small-muted">{{ shop_supplies_label }}</div>
-            <div class="fw-semibold">{{ "${:,.2f}".format(inv.shop_supplies or 0) }}</div>
-          </div>
-
-          <div class="col-6">
-            <div class="small-muted">Paid</div>
-            <div class="fw-semibold">{{ "${:,.2f}".format(inv.paid or 0) }}</div>
-          </div>
-
-          <div class="col-6">
-            <div class="small-muted">Amount Due</div>
-            {% set due = inv.amount_due() %}
-            {% if due <= 0 %}
-              <div class="fw-semibold text-success">Paid</div>
-            {% else %}
-              <div class="fw-semibold text-warning">{{ "${:,.2f}".format(due) }}</div>
-            {% endif %}
+            <div class="mono">${{ "%.2f"|format(inv.shop_supplies or 0) }}</div>
           </div>
         </div>
 
-        <hr class="my-3">
+        <hr class="my-4">
 
-        <!-- LABOR -->
-        <h3 class="h6 fw-bold mb-2">{{ labor_title }}</h3>
-        {% if inv.labor_items %}
-          <div class="table-responsive">
-            <table class="table table-sm">
-              <thead class="table-light">
-                <tr>
-                  <th>{{ labor_desc_label }}</th>
-                  <th class="text-end">{{ labor_time_label }}</th>
-                  <th class="text-end">{{ labor_total_label }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for li in inv.labor_items %}
-                  {% set t = li.labor_time_hours or 0 %}
-                  {% set lt = t * (inv.price_per_hour or 0) %}
-                  <tr>
-                    <td>{{ li.labor_desc }}</td>
-                    <td class="text-end">{{ t }}</td>
-                    <td class="text-end">{{ "${:,.2f}".format(lt) }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <div class="small-muted">No {{ labor_title|lower }} items.</div>
-        {% endif %}
+        <div class="row g-4">
 
-        <hr class="my-3">
-
-        <!-- PARTS -->
-        <h3 class="h6 fw-bold mb-2">{{ parts_title }}</h3>
-        {% if inv.parts %}
-          <div class="table-responsive">
-            <table class="table table-sm">
-              <thead class="table-light">
-                <tr>
-                  <th>{{ parts_name_label }}</th>
-                  <th class="text-end">{{ parts_price_label }}</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div class="col-12 col-lg-6">
+            <div class="fw-semibold mb-2">{{ parts_title }}</div>
+            {% if inv.parts and inv.parts|length > 0 %}
+              <ul class="list-group">
                 {% for p in inv.parts %}
-                  <tr>
-                    <td>{{ p.part_name }}</td>
-                    <td class="text-end">{{ "${:,.2f}".format(p.part_price or 0) }}</td>
-                  </tr>
+                  <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>{{ p.part_name }}</div>
+                    <div class="mono">${{ "%.2f"|format(p.part_price or 0) }}</div>
+                  </li>
                 {% endfor %}
-              </tbody>
-            </table>
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                  <div class="fw-semibold">Parts Total</div>
+                  <div class="mono fw-semibold">${{ "%.2f"|format(inv.parts_total()) }}</div>
+                </li>
+              </ul>
+            {% else %}
+              <div class="small-muted">No {{ parts_title|lower }}.</div>
+            {% endif %}
           </div>
-        {% else %}
-          <div class="small-muted">No {{ parts_title|lower }}.</div>
-        {% endif %}
 
-        <hr class="my-3">
+          <div class="col-12 col-lg-6">
+            <div class="fw-semibold mb-2">{{ labor_title }}</div>
+            {% if inv.labor_items and inv.labor_items|length > 0 %}
+              <ul class="list-group">
+                {% for li in inv.labor_items %}
+                  <li class="list-group-item">
+                    <div class="fw-semibold">{{ li.labor_desc }}</div>
+                    <div class="small-muted mono">{{ "%.2f"|format(li.labor_time_hours or 0) }} hrs</div>
+                  </li>
+                {% endfor %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                  <div class="fw-semibold">Labor Total</div>
+                  <div class="mono fw-semibold">${{ "%.2f"|format(inv.labor_total()) }}</div>
+                </li>
+              </ul>
+            {% else %}
+              <div class="small-muted">No {{ labor_title|lower }} items.</div>
+            {% endif %}
+          </div>
 
-        <!-- NOTES -->
-        <h3 class="h6 fw-bold mb-2">Notes</h3>
+        </div>
+
+        <hr class="my-4">
+
+        <div class="fw-semibold mb-2">Notes</div>
         {% if inv.notes %}
-          <pre class="bg-light border rounded p-2 mb-0" style="white-space: pre-wrap;">{{ inv.notes }}</pre>
+          <div class="border rounded p-3 bg-light" style="white-space: pre-wrap;">{{ inv.notes }}</div>
         {% else %}
           <div class="small-muted">No notes.</div>
         {% endif %}
-      </div>
-    </div>
-  </div>
 
-  <!-- RIGHT: SUMMARY + ACTIONS -->
-  <div class="col-12 col-lg-5">
-    <div class="card shadow-sm">
-      <div class="card-body">
+        <hr class="my-4">
 
-        <h2 class="h5 fw-bold mb-3">Summary</h2>
-
-        {% set parts_total = inv.parts_total() %}
-        {% set labor_total = inv.labor_total() %}
-        {% set total = inv.invoice_total() %}
-        {% set due = inv.amount_due() %}
-
-        <div class="d-flex justify-content-between">
-          <div class="small-muted">{{ parts_title }}</div>
-          <div class="fw-semibold">{{ "${:,.2f}".format(parts_total) }}</div>
-        </div>
-
-        <div class="d-flex justify-content-between">
-          <div class="small-muted">{{ labor_title }}</div>
-          <div class="fw-semibold">{{ "${:,.2f}".format(labor_total) }}</div>
-        </div>
-
-        <div class="d-flex justify-content-between">
-          <div class="small-muted">{{ shop_supplies_label }}</div>
-          <div class="fw-semibold">{{ "${:,.2f}".format(inv.shop_supplies or 0) }}</div>
-        </div>
-
-        <hr class="my-2">
-
-        <div class="d-flex justify-content-between">
-          <div class="fw-bold">Total</div>
-          <div class="fw-bold">{{ "${:,.2f}".format(total) }}</div>
-        </div>
-
-        <hr class="my-3">
-
-        <div class="d-flex flex-column gap-2">
-          {% if due > 0 %}
-            <form method="post"
-                  action="{{ url_for('invoice_mark_paid', invoice_id=inv.id) }}"
-                  onsubmit="return confirm('Mark this invoice as PAID?');">
-              <button class="btn btn-success w-100" type="submit">
-                Mark Paid
-              </button>
-            </form>
-          {% endif %}
-
+        <div class="d-flex flex-wrap gap-2">
           <form method="post" action="{{ url_for('invoice_pdf_generate', invoice_id=inv.id) }}">
-            <button class="btn btn-primary w-100" type="submit">
-              {% if inv.pdf_path %}Regenerate PDF{% else %}Generate PDF{% endif %}
-            </button>
+            <button class="btn btn-outline-primary" type="submit">Generate PDF</button>
           </form>
 
-          <a class="btn btn-outline-secondary w-100"
-             href="{{ url_for('invoice_pdf_download', invoice_id=inv.id) }}">
+          <a class="btn btn-outline-secondary" href="{{ url_for('invoice_pdf_download', invoice_id=inv.id) }}">
             Download PDF
           </a>
 
-          <!-- Email PDF to customer -->
-          <form method="post"
-                action="{{ url_for('invoice_send', invoice_id=inv.id) }}"
-                onsubmit="return confirmSendInvoiceEmail();">
-            {% if inv.customer_email %}
-              <button class="btn btn-outline-primary w-100" type="submit">
-                Email PDF to Customer
-              </button>
-            {% else %}
-              <button class="btn btn-outline-primary w-100" type="button" disabled>
-                Email PDF to Customer
-              </button>
-              <div class="small-muted mt-1">
-                Add a customer email on the <a href="{{ url_for('invoice_edit', invoice_id=inv.id) }}">edit</a> page first.
-              </div>
-            {% endif %}
+          <form method="post" action="{{ url_for('invoice_send', invoice_id=inv.id) }}">
+            <button class="btn btn-outline-success" type="submit">Email PDF</button>
           </form>
-        </div>
 
-        <hr class="my-3">
+          <form method="post" action="{{ url_for('invoice_mark_paid', invoice_id=inv.id) }}">
+            <button class="btn btn-outline-success" type="submit">Mark Paid</button>
+          </form>
 
-        <div class="small-muted">
-          {% if inv.pdf_path %}
-            PDF stored at:
-            <div class="mono small">{{ inv.pdf_path }}</div>
-            {% if inv.pdf_generated_at %}
-              <div>Generated: {{ inv.pdf_generated_at }}</div>
-            {% endif %}
-          {% else %}
-            No PDF saved yet.
-          {% endif %}
+          <form method="post" action="{{ url_for('invoice_delete', invoice_id=inv.id) }}"
+                onsubmit="return confirm('Delete this invoice? This cannot be undone.');">
+            <button class="btn btn-outline-danger" type="submit">Delete</button>
+          </form>
         </div>
 
       </div>
     </div>
   </div>
+
 </div>
 
-<script>
-  function confirmDeleteInvoice() {
-    const removePdf = confirm(
-      "Also delete the stored PDF file for this invoice?\n\n" +
-      "OK = Yes, delete PDF\nCancel = Keep PDF"
-    );
-    document.getElementById("delete_pdf_field").value = removePdf ? "1" : "0";
-    return confirm(
-      "Are you sure you want to delete this invoice?\n\nThis cannot be undone."
-    );
-  }
-
-  function confirmSendInvoiceEmail() {
-    return confirm("Send this invoice PDF to the customer email on file?");
-  }
-</script>
 {% endblock %}
+
 
 
 

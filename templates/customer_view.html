@@ -1,31 +1,32 @@
 {% extends "base.html" %}
-{% set title = "Invoices" %}
+{% set title = c.name %}
 
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-end mb-3">
   <div>
-    <h1 class="h3 fw-bold mb-1">Invoices</h1>
-    <div class="small-muted">All invoices (legacy list). For most workflow, use Customers.</div>
+    <h1 class="h3 fw-bold mb-1">{{ c.name }}</h1>
+    <div class="small-muted">
+      {% if c.email %}<span class="mono">{{ c.email }}</span>{% endif %}
+      {% if c.phone %}{% if c.email %} · {% endif %}<span class="mono">{{ c.phone }}</span>{% endif %}
+      {% if c.address %}<div class="mt-1">{{ c.address }}</div>{% endif %}
+    </div>
   </div>
+
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
-    <a class="btn btn-primary" href="{{ url_for('invoice_new') }}">New Invoice</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Back</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('customer_edit', customer_id=c.id) }}">Edit Customer</a>
+    <a class="btn btn-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">New Invoice</a>
   </div>
 </div>
 
-<form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('invoices') }}">
-  <div class="col-12 col-md-6">
-    <label class="form-label">Search</label>
-    <input class="form-control" name="q" value="{{ q or '' }}" placeholder="Search attn/contact or job…">
-  </div>
-
-  <div class="col-6 col-md-2">
+<form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('customer_view', customer_id=c.id) }}">
+  <div class="col-6 col-md-3">
     <label class="form-label">Year</label>
     <input class="form-control" name="year" value="{{ year or '' }}" placeholder="2026">
   </div>
 
-  <div class="col-6 col-md-2">
+  <div class="col-6 col-md-3">
     <label class="form-label">Status</label>
     <select class="form-select" name="status">
       <option value="all" {% if (status or 'all') == 'all' %}selected{% endif %}>All</option>
@@ -34,9 +35,9 @@
     </select>
   </div>
 
-  <div class="col-12 col-md-2 d-flex gap-2">
+  <div class="col-12 col-md-6 d-flex gap-2">
     <button class="btn btn-outline-primary flex-grow-1" type="submit">Apply</button>
-    <a class="btn btn-outline-secondary" href="{{ url_for('invoices') }}">Clear</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Clear</a>
   </div>
 </form>
 
@@ -47,11 +48,11 @@
         <thead class="table-light">
           <tr>
             <th style="min-width: 170px;">Invoice #</th>
-            <th style="min-width: 260px;">Customer</th>
+            <th style="min-width: 160px;">Date In</th>
             <th style="min-width: 240px;">Attn / Contact</th>
             <th style="min-width: 260px;">Job</th>
-            <th style="min-width: 140px;">Date In</th>
             <th style="width: 140px;">Total</th>
+            <th style="width: 140px;">Paid</th>
             <th style="width: 120px;"></th>
           </tr>
         </thead>
@@ -73,20 +74,11 @@
                   {% endif %}
                 </td>
 
-                <td>
-                  {% if inv.customer_id %}
-                    <a href="{{ url_for('customer_view', customer_id=inv.customer_id) }}" class="text-decoration-none">
-                      {{ customer_map.get(inv.customer_id, "Customer #" ~ inv.customer_id) }}
-                    </a>
-                  {% else %}
-                    <span class="text-muted">—</span>
-                  {% endif %}
-                </td>
-
+                <td class="mono">{{ inv.date_in }}</td>
                 <td>{{ inv.name or "" }}</td>
                 <td>{{ inv.vehicle }}</td>
-                <td class="mono">{{ inv.date_in }}</td>
                 <td class="mono">${{ "%.2f"|format(total) }}</td>
+                <td class="mono">${{ "%.2f"|format(inv.paid or 0) }}</td>
 
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=inv.id) }}">View</a>
@@ -97,9 +89,9 @@
             <tr>
               <td colspan="7" class="p-4">
                 <div class="text-center">
-                  <div class="fw-semibold mb-1">No invoices found.</div>
-                  <div class="small-muted mb-3">Try clearing filters or create a new invoice.</div>
-                  <a class="btn btn-primary" href="{{ url_for('invoice_new') }}">New Invoice</a>
+                  <div class="fw-semibold mb-1">No invoices found for this customer.</div>
+                  <div class="small-muted mb-3">Create an invoice to get started.</div>
+                  <a class="btn btn-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">New Invoice</a>
                 </div>
               </td>
             </tr>
@@ -111,6 +103,4 @@
 </div>
 
 {% endblock %}
-
-
 

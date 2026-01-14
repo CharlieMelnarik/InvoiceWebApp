@@ -9,7 +9,6 @@ from sqlalchemy import (
     Integer,
     Float,
     DateTime,
-    Boolean,
     ForeignKey,
     UniqueConstraint,
     select,
@@ -39,10 +38,10 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    # ✅ Email for password reset
+    # Email for password reset
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    # ✅ Invoice template / profession (user default for NEW invoices)
+    # Default invoice template for NEW invoices
     invoice_template: Mapped[str] = mapped_column(String(50), nullable=False, default="auto_repair")
 
     # Profile / business info (for PDF header)
@@ -50,9 +49,7 @@ class User(Base):
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
 
-    # -----------------------------
-    # ✅ Stripe billing fields
-    # -----------------------------
+    # Stripe billing fields
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
@@ -60,19 +57,23 @@ class User(Base):
     trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # ✅ one-trial-per-user flag
+    # one-trial-per-user flag
     trial_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # -----------------------------
-    # ✅ Login security fields
-    # -----------------------------
+    # Security (failed login lockout)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    password_reset_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    password_reset_required: Mapped[bool] = mapped_column(nullable=False, default=False)
     last_failed_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    customers: Mapped[list["Customer"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="Customer.name.asc()",
     )
 
     invoices: Mapped[list["Invoice"]] = relationship(
@@ -82,7 +83,45 @@ class User(Base):
 
 
 # -----------------------------
-# Tables
+# Customers (Option B)
+# -----------------------------
+class Customer(Base):
+    __tablename__ = "customers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_customers_user_id_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Name is mandatory
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+
+    # Optional fields
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="customers")
+
+    invoices: Mapped[list["Invoice"]] = relationship(
+        back_populates="customer",
+        order_by="Invoice.created_at.desc()",
+    )
+
+
+# -----------------------------
+# Invoice sequence
 # -----------------------------
 class InvoiceSequence(Base):
     __tablename__ = "invoice_sequences"
@@ -98,6 +137,9 @@ class InvoiceSequence(Base):
     )
 
 
+# -----------------------------
+# Invoices
+# -----------------------------
 class Invoice(Base):
     __tablename__ = "invoices"
 
@@ -109,21 +151,30 @@ class Invoice(Base):
         nullable=True,
     )
 
+    # ✅ New: invoice belongs to a customer (Option B)
+    customer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
     invoice_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
 
-    # ✅ Locks in the profession/template at the time the invoice was created
+    # Locks template at creation time
     invoice_template: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
-    # Customer contact
+    # Customer contact (can remain here; later you may auto-fill from Customer)
     customer_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     customer_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
-    # Core fields (labels change by template in UI/PDF)
-    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
-    vehicle: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # Core fields
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)       # customer display name (legacy/useful)
+    vehicle: Mapped[str] = mapped_column(String(200), nullable=False, index=True)   # job/vehicle field
+
     hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     price_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     shop_supplies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
     notes: Mapped[str] = mapped_column(String, nullable=False, default="")
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")
@@ -137,6 +188,7 @@ class Invoice(Base):
     )
 
     user: Mapped[Optional["User"]] = relationship(back_populates="invoices")
+    customer: Mapped[Optional["Customer"]] = relationship(back_populates="invoices")
 
     parts: Mapped[list["InvoicePart"]] = relationship(
         back_populates="invoice",
@@ -230,6 +282,7 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
+
 
 
 

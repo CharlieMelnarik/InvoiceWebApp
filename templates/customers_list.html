@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% set title = "Customers" %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Customers</h1>
+    <div class="small-muted">Select a customer to view invoices.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-primary" href="{{ url_for('customer_new') }}">New Customer</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('invoice_new') }}">New Invoice</a>
+  </div>
+</div>
+
+<form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('customers_list') }}">
+  <div class="col-12 col-md-8">
+    <label class="form-label">Search</label>
+    <input class="form-control" name="q" value="{{ q or '' }}" placeholder="Search name, email, or phone…">
+  </div>
+  <div class="col-12 col-md-4 d-flex gap-2">
+    <button class="btn btn-outline-primary flex-grow-1" type="submit">Search</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Clear</a>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="min-width: 260px;">Customer</th>
+            <th style="min-width: 220px;">Email</th>
+            <th style="min-width: 160px;">Phone</th>
+            <th>Address</th>
+            <th style="width: 160px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if customers and customers|length > 0 %}
+            {% for c in customers %}
+              <tr>
+                <td class="fw-semibold">
+                  <a href="{{ url_for('customer_view', customer_id=c.id) }}" class="text-decoration-none">
+                    {{ c.name }}
+                  </a>
+                </td>
+                <td class="mono">{{ c.email or "" }}</td>
+                <td class="mono">{{ c.phone or "" }}</td>
+                <td>{{ c.address or "" }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('customer_edit', customer_id=c.id) }}">
+                    Edit
+                  </a>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">
+                    New Invoice
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5" class="p-4">
+                <div class="text-center">
+                  <div class="fw-semibold mb-1">No customers yet.</div>
+                  <div class="small-muted mb-3">Create your first customer to start invoicing.</div>
+                  <a class="btn btn-primary" href="{{ url_for('customer_new') }}">Create Customer</a>
+                </div>
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+

@@ -26,7 +26,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from config import Config
 from models import (
     Base, make_engine, make_session_factory,
-    User, Invoice, InvoicePart, InvoiceLabor, next_invoice_number
+    User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number
 )
 from pdf_service import generate_and_store_pdf
 
@@ -95,6 +95,17 @@ def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
     if not inv:
         abort(404)
     return inv
+
+
+def _customer_owned_or_404(session, customer_id: int) -> Customer:
+    c = (
+        session.query(Customer)
+        .filter(Customer.id == customer_id, Customer.user_id == _current_user_id_int())
+        .first()
+    )
+    if not c:
+        abort(404)
+    return c
 
 
 def _normalize_email(email: str) -> str:
@@ -377,12 +388,6 @@ def _migrate_invoice_template(engine):
 
 
 def _migrate_user_billing_fields(engine):
-    """
-    Adds Stripe billing fields:
-      users.stripe_customer_id, users.stripe_subscription_id,
-      users.subscription_status, users.trial_ends_at, users.current_period_end,
-      users.trial_used_at
-    """
     if not _table_exists(engine, "users"):
         return
 
@@ -411,7 +416,8 @@ def _migrate_user_billing_fields(engine):
             conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_sub_idx ON users (stripe_subscription_id)"))
     except Exception:
         pass
-        
+
+
 def _migrate_user_security_fields(engine):
     if not _table_exists(engine, "users"):
         return
@@ -429,11 +435,31 @@ def _migrate_user_security_fields(engine):
             for st in stmts:
                 conn.execute(text(st))
 
-        # set defaults for existing rows
         with engine.begin() as conn:
             conn.execute(text("UPDATE users SET failed_login_attempts = 0 WHERE failed_login_attempts IS NULL"))
             conn.execute(text("UPDATE users SET password_reset_required = FALSE WHERE password_reset_required IS NULL"))
 
+
+def _migrate_customers(engine):
+    # customers table will be created by Base.metadata.create_all if models include Customer.
+    # Here we ensure invoices.customer_id exists for older DBs.
+    if not _table_exists(engine, "invoices"):
+        return
+
+    if not _column_exists(engine, "invoices", "customer_id"):
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS customer_id INTEGER"))
+            except Exception:
+                conn.execute(text("ALTER TABLE invoices ADD COLUMN customer_id INTEGER"))
+
+
+def _migrate_invoice_customer_id(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "customer_id"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN customer_id INTEGER"))
 
 
 # -----------------------------
@@ -458,16 +484,6 @@ def create_app():
     login_manager.init_app(app)
 
     engine = make_engine(Config.SQLALCHEMY_DATABASE_URI, echo=Config.SQLALCHEMY_ECHO)
-    
-    print("SQLALCHEMY_DATABASE_URI =", Config.SQLALCHEMY_DATABASE_URI, flush=True)
-    print("ENGINE URL =", str(engine.url), flush=True)
-
-    # If SQLite, print the resolved DB file path
-    try:
-        if engine.url.get_backend_name().startswith("sqlite") and engine.url.database:
-            print("SQLITE DB FILE =", os.path.abspath(engine.url.database), flush=True)
-    except Exception:
-        pass
 
     Base.metadata.create_all(bind=engine)
 
@@ -479,7 +495,8 @@ def create_app():
     _migrate_invoice_template(engine)
     _migrate_user_billing_fields(engine)
     _migrate_user_security_fields(engine)
-
+    _migrate_customers(engine)
+    _migrate_invoice_customer_id(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -547,6 +564,55 @@ def create_app():
 
     _bootstrap_first_user()
 
+    def _backfill_customers_from_invoices():
+        """
+        One-time-ish backfill:
+        For any invoice with customer_id NULL, create/find a Customer per user using old Invoice.name,
+        link invoice.customer_id to that customer.
+        """
+        with db_session() as s:
+            invs = (
+                s.query(Invoice)
+                .filter(Invoice.customer_id.is_(None))
+                .filter(Invoice.user_id.isnot(None))
+                .all()
+            )
+            if not invs:
+                return
+
+            cache = {}
+            changed = 0
+
+            for inv in invs:
+                user_id = inv.user_id
+                cname = (inv.name or "").strip()
+                if not cname:
+                    continue
+
+                key = (user_id, cname.lower())
+                cust = cache.get(key)
+                if not cust:
+                    cust = (
+                        s.query(Customer)
+                        .filter(Customer.user_id == user_id)
+                        .filter(text("lower(name) = :n")).params(n=cname.lower())
+                        .first()
+                    )
+                    if not cust:
+                        cust = Customer(user_id=user_id, name=cname)
+                        s.add(cust)
+                        s.flush()
+                    cache[key] = cust
+
+                inv.customer_id = cust.id
+                changed += 1
+
+            s.commit()
+            if changed:
+                print(f"[MIGRATE] Backfilled customers for {changed} invoices", flush=True)
+
+    _backfill_customers_from_invoices()
+
     # -----------------------------
     # Subscription gating
     # -----------------------------
@@ -584,7 +650,7 @@ def create_app():
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if current_user.is_authenticated:
-            return redirect(url_for("invoices"))
+            return redirect(url_for("customers_list"))
 
         if request.method == "POST":
             username = (request.form.get("username") or "").strip()
@@ -593,39 +659,32 @@ def create_app():
             with db_session() as s:
                 u = s.query(User).filter(User.username == username).first()
 
-                # Always use a generic error to avoid account enumeration
                 generic_fail_msg = "Invalid username or password."
 
                 if not u:
                     flash(generic_fail_msg, "error")
                     return render_template("login.html")
 
-                # If too many failures, force reset via email
                 if bool(getattr(u, "password_reset_required", False)):
                     flash("Too many failed login attempts. Please reset your password.", "error")
                     return redirect(url_for("forgot_password"))
 
-                # Correct password?
                 if check_password_hash(u.password_hash, password):
-                    # reset security counters
                     u.failed_login_attempts = 0
                     u.password_reset_required = False
                     u.last_failed_login = None
                     s.commit()
 
                     login_user(AppUser(u.id, u.username))
-                    return redirect(url_for("invoices"))
+                    return redirect(url_for("customers_list"))
 
-                # Wrong password → increment attempts
                 attempts = int(getattr(u, "failed_login_attempts", 0) or 0) + 1
                 u.failed_login_attempts = attempts
                 u.last_failed_login = datetime.utcnow()
 
-                # If hit limit, require password reset (no auto-email)
                 if attempts >= 6:
                     u.password_reset_required = True
                     s.commit()
-
                     flash("Too many failed login attempts. Please reset your password.", "error")
                     return redirect(url_for("forgot_password"))
 
@@ -633,16 +692,12 @@ def create_app():
                 flash(generic_fail_msg, "error")
                 return render_template("login.html")
 
-        # Always return something for GET
         return render_template("login.html")
-
-
-
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
         if current_user.is_authenticated:
-            return redirect(url_for("invoices"))
+            return redirect(url_for("customers_list"))
 
         if request.method == "POST":
             username = (request.form.get("username") or "").strip()
@@ -687,14 +742,14 @@ def create_app():
                 s.commit()
 
                 login_user(AppUser(u.id, u.username))
-                return redirect(url_for("invoices"))
+                return redirect(url_for("customers_list"))
 
         return render_template("register.html")
 
     @app.route("/forgot-password", methods=["GET", "POST"])
     def forgot_password():
         if current_user.is_authenticated:
-            return redirect(url_for("invoices"))
+            return redirect(url_for("customers_list"))
 
         if request.method == "POST":
             email = _normalize_email(request.form.get("email") or "")
@@ -719,9 +774,9 @@ def create_app():
 
                         try:
                             _send_reset_email(email, reset_url)
-                            print(f"[RESET] Sent reset email to {email}")
+                            print(f"[RESET] Sent reset email to {email}", flush=True)
                         except Exception as e:
-                            print(f"[RESET] SMTP ERROR for {email}: {repr(e)}")
+                            print(f"[RESET] SMTP ERROR for {email}: {repr(e)}", flush=True)
 
             return redirect(url_for("login"))
 
@@ -730,7 +785,7 @@ def create_app():
     @app.route("/reset-password/<token>", methods=["GET", "POST"])
     def reset_password(token: str):
         if current_user.is_authenticated:
-            return redirect(url_for("invoices"))
+            return redirect(url_for("customers_list"))
 
         max_age = int(current_app.config.get("PASSWORD_RESET_MAX_AGE_SECONDS", 3600))
         user_id = read_password_reset_token(token, max_age_seconds=max_age)
@@ -760,7 +815,6 @@ def create_app():
                 u.failed_login_attempts = 0
                 u.password_reset_required = False
                 u.last_failed_login = None
-
                 s.commit()
 
             flash("Password updated. Please log in.", "success")
@@ -832,6 +886,10 @@ def create_app():
     @app.route("/billing/checkout", methods=["POST"])
     @login_required
     def billing_checkout():
+        print("APP_BASE_URL env =", os.getenv("APP_BASE_URL"))
+        print("APP_BASE_URL cfg =", current_app.config.get("APP_BASE_URL"))
+        print("request.host_url  =", request.host_url)
+
         if not stripe.api_key or not STRIPE_PRICE_ID:
             abort(500)
 
@@ -845,12 +903,10 @@ def create_app():
 
             status = (getattr(u, "subscription_status", None) or "").lower().strip()
 
-            # If already subscribed, don't start checkout again
             if status in ("trialing", "active", "past_due"):
                 flash("You already have an active subscription. Manage billing below.", "info")
                 return redirect(url_for("billing"))
 
-            # ✅ Always reuse the same Stripe customer
             cust = (getattr(u, "stripe_customer_id", None) or "").strip()
             if not cust:
                 customer = stripe.Customer.create(
@@ -861,14 +917,13 @@ def create_app():
                 u.stripe_customer_id = cust
                 s.commit()
 
-            # ✅ One-trial-per-user: only include trial if never used
             subscription_data = {}
             if getattr(u, "trial_used_at", None) is None:
                 subscription_data["trial_period_days"] = 7
 
             cs = stripe.checkout.Session.create(
                 mode="subscription",
-                customer=cust,  # ✅ critical: prevents Stripe creating a new customer (and a new trial)
+                customer=cust,
                 line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
                 client_reference_id=str(uid),
                 subscription_data=subscription_data,
@@ -906,15 +961,8 @@ def create_app():
     # -----------------------------
     # Stripe Webhook
     # -----------------------------
-    
-    @app.before_request
-    def allow_stripe_webhook():
-        if request.path == "/stripe/webhook":
-            return None
-
     @app.route("/stripe/webhook", methods=["POST"])
     def stripe_webhook():
-        print("### STRIPE WEBHOOK HIT ###", datetime.utcnow().isoformat(), flush=True)
         if not STRIPE_WEBHOOK_SECRET:
             abort(500)
 
@@ -928,7 +976,7 @@ def create_app():
                 secret=STRIPE_WEBHOOK_SECRET,
             )
         except Exception as e:
-            print(f"[STRIPE] Webhook signature verification failed: {repr(e)}")
+            print(f"[STRIPE] Webhook signature verification failed: {repr(e)}", flush=True)
             return ("bad signature", 400)
 
         etype = event["type"]
@@ -947,7 +995,6 @@ def create_app():
                     if subscription_id:
                         u.stripe_subscription_id = subscription_id
 
-                    # Set status immediately (good UX) using a retrieve
                     try:
                         if subscription_id:
                             sub = stripe.Subscription.retrieve(subscription_id)
@@ -958,11 +1005,10 @@ def create_app():
                             u.trial_ends_at = datetime.utcfromtimestamp(trial_end) if trial_end else None
                             u.current_period_end = datetime.utcfromtimestamp(cpe) if cpe else None
 
-                            # ✅ mark trial used once, forever
                             if (u.subscription_status == "trialing") and (getattr(u, "trial_used_at", None) is None):
                                 u.trial_used_at = datetime.utcnow()
                     except Exception as e:
-                        print("[STRIPE] retrieve subscription failed:", repr(e))
+                        print("[STRIPE] retrieve subscription failed:", repr(e), flush=True)
 
                     s.commit()
 
@@ -995,7 +1041,6 @@ def create_app():
                     u.trial_ends_at = datetime.utcfromtimestamp(trial_end) if trial_end else None
                     u.current_period_end = datetime.utcfromtimestamp(cpe) if cpe else None
 
-                    # ✅ mark trial used once, forever
                     if status == "trialing" and getattr(u, "trial_used_at", None) is None:
                         u.trial_used_at = datetime.utcnow()
 
@@ -1015,10 +1060,132 @@ def create_app():
     # -----------------------------
     @app.route("/")
     def index():
-        return redirect(url_for("invoices" if current_user.is_authenticated else "login"))
+        return redirect(url_for("customers_list" if current_user.is_authenticated else "login"))
 
     # -----------------------------
-    # Invoice list (scoped)
+    # Customers
+    # -----------------------------
+    @app.route("/customers")
+    @login_required
+    @subscription_required
+    def customers_list():
+        uid = _current_user_id_int()
+        q = (request.args.get("q") or "").strip()
+
+        with db_session() as s:
+            cq = s.query(Customer).filter(Customer.user_id == uid)
+            if q:
+                like = f"%{q}%"
+                cq = cq.filter(
+                    Customer.name.ilike(like) |
+                    Customer.email.ilike(like) |
+                    Customer.phone.ilike(like)
+                )
+            customers = cq.order_by(Customer.name.asc()).all()
+
+        return render_template("customers_list.html", customers=customers, q=q)
+
+    @app.route("/customers/new", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def customer_new():
+        if request.method == "POST":
+            name = (request.form.get("name") or "").strip()
+            email = _normalize_email(request.form.get("email") or "").strip() or None
+            phone = (request.form.get("phone") or "").strip() or None
+            address = (request.form.get("address") or "").strip() or None
+
+            if not name:
+                flash("Customer name is required.", "error")
+                return render_template("customer_form.html", mode="new", form=request.form)
+
+            with db_session() as s:
+                c = Customer(
+                    user_id=_current_user_id_int(),
+                    name=name,
+                    email=(email if (email and _looks_like_email(email)) else (email or None)),
+                    phone=phone,
+                    address=address,
+                )
+                s.add(c)
+                s.commit()
+                return redirect(url_for("customer_view", customer_id=c.id))
+
+        return render_template("customer_form.html", mode="new")
+
+    @app.route("/customers/<int:customer_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def customer_edit(customer_id: int):
+        with db_session() as s:
+            c = _customer_owned_or_404(s, customer_id)
+
+            if request.method == "POST":
+                name = (request.form.get("name") or "").strip()
+                email = _normalize_email(request.form.get("email") or "").strip() or None
+                phone = (request.form.get("phone") or "").strip() or None
+                address = (request.form.get("address") or "").strip() or None
+
+                if not name:
+                    flash("Customer name is required.", "error")
+                    return render_template("customer_form.html", mode="edit", c=c)
+
+                c.name = name
+                c.email = (email if (email and _looks_like_email(email)) else (email or None))
+                c.phone = phone
+                c.address = address
+                s.commit()
+
+                flash("Customer updated.", "success")
+                return redirect(url_for("customer_view", customer_id=c.id))
+
+        return render_template("customer_form.html", mode="edit", c=c)
+
+    @app.route("/customers/<int:customer_id>")
+    @login_required
+    @subscription_required
+    def customer_view(customer_id: int):
+        uid = _current_user_id_int()
+        year = (request.args.get("year") or "").strip()
+        status = (request.args.get("status") or "").strip()
+
+        with db_session() as s:
+            c = _customer_owned_or_404(s, customer_id)
+
+            inv_q = (
+                s.query(Invoice)
+                .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                .filter(Invoice.user_id == uid)
+                .filter(Invoice.customer_id == c.id)
+                .order_by(Invoice.created_at.desc())
+            )
+
+            if year.isdigit() and len(year) == 4:
+                inv_q = inv_q.filter(Invoice.invoice_number.startswith(year))
+
+            invoices_list = inv_q.all()
+
+            if status in ("paid", "unpaid"):
+                EPS = 0.01
+                filtered = []
+                for inv in invoices_list:
+                    fully_paid = (inv.paid or 0) + EPS >= inv.invoice_total()
+                    if status == "paid" and fully_paid:
+                        filtered.append(inv)
+                    if status == "unpaid" and not fully_paid:
+                        filtered.append(inv)
+                invoices_list = filtered
+
+        return render_template(
+            "customer_view.html",
+            c=c,
+            invoices=invoices_list,
+            year=year,
+            status=status or "all"
+        )
+
+    # -----------------------------
+    # All invoices list (optional / legacy)
     # -----------------------------
     @app.route("/invoices")
     @login_required
@@ -1049,6 +1216,10 @@ def create_app():
 
             invoices_list = invoices_q.all()
 
+            # Build lookup of customer_id -> name (only for this user)
+            customers = s.query(Customer.id, Customer.name).filter(Customer.user_id == uid).all()
+            customer_map = {cid: (name or "").strip() for cid, name in customers}
+
             if status in ("paid", "unpaid"):
                 filtered = []
                 for inv in invoices_list:
@@ -1062,6 +1233,7 @@ def create_app():
         return render_template(
             "invoices_list.html",
             invoices=invoices_list,
+            customer_map=customer_map,
             q=q,
             year=year,
             status=status or "all"
@@ -1074,35 +1246,88 @@ def create_app():
     @login_required
     @subscription_required
     def invoice_new():
+        uid = _current_user_id_int()
+
+        # preselect via ?customer_id=
+        pre_customer_id = (request.args.get("customer_id") or "").strip()
+
+        with db_session() as s:
+            u = s.get(User, uid)
+            user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
+            tmpl = _template_config_for(user_template_key)
+
+            customers = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .order_by(Customer.name.asc())
+                .all()
+            )
+
+            # Used by autocomplete JS to map name->id
+            customers_for_js = [{"id": c.id, "name": (c.name or "").strip()} for c in customers]
+
+            pre_customer = None
+            if pre_customer_id.isdigit():
+                try:
+                    pre_customer = _customer_owned_or_404(s, int(pre_customer_id))
+                except Exception:
+                    pre_customer = None
+
         if request.method == "POST":
-            name = request.form.get("name", "").strip()
-            vehicle = request.form.get("vehicle", "").strip()
+            customer_id_raw = (request.form.get("customer_id") or "").strip()
+            customer_name_typed = (request.form.get("customer_name") or "").strip()
+            vehicle = (request.form.get("vehicle") or "").strip()
 
-            with db_session() as s:
-                u = s.get(User, _current_user_id_int())
-                user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
-                tmpl = _template_config_for(user_template_key)
+            # Must come from a real selection
+            if not customer_id_raw.isdigit():
+                flash("Please select a customer from the list.", "error")
+                return render_template(
+                    "invoice_form.html",
+                    mode="new",
+                    form=request.form,
+                    tmpl=tmpl,
+                    tmpl_key=user_template_key,
+                    customers=customers,
+                    customers_for_js=customers_for_js,
+                    pre_customer=pre_customer,
+                )
 
-            if not name:
-                flash("Name is required.", "error")
-                return render_template("invoice_form.html", mode="new", form=request.form, tmpl=tmpl)
+            customer_id = int(customer_id_raw)
 
             if user_template_key == "auto_repair" and not vehicle:
                 flash("Vehicle is required for Auto Repair invoices.", "error")
-                return render_template("invoice_form.html", mode="new", form=request.form, tmpl=tmpl)
+                return render_template(
+                    "invoice_form.html",
+                    mode="new",
+                    form=request.form,
+                    tmpl=tmpl,
+                    tmpl_key=user_template_key,
+                    customers=customers,
+                    customers_for_js=customers_for_js,
+                    pre_customer=pre_customer,
+                )
 
             with db_session() as s:
+                c = _customer_owned_or_404(s, customer_id)
+
                 year = int(datetime.now().strftime("%Y"))
                 inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
 
+                # ✅ remove Attn/Contact: invoice.name now mirrors customer name
                 inv = Invoice(
-                    user_id=_current_user_id_int(),
+                    user_id=uid,
+                    customer_id=c.id,
+
                     invoice_number=inv_no,
                     invoice_template=user_template_key,
+
                     customer_email=(request.form.get("customer_email") or "").strip() or None,
                     customer_phone=(request.form.get("customer_phone") or "").strip() or None,
-                    name=name,
+
+                    name=(c.name or "").strip(),
+
                     vehicle=vehicle,
+
                     hours=_to_float(request.form.get("hours")),
                     price_per_hour=_to_float(request.form.get("price_per_hour")),
                     shop_supplies=_to_float(request.form.get("shop_supplies")),
@@ -1128,15 +1353,16 @@ def create_app():
 
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
 
-        with db_session() as s:
-            u = s.get(User, _current_user_id_int())
-            tmpl = _template_config_for(getattr(u, "invoice_template", None) if u else None)
-
+        # GET
         return render_template(
             "invoice_form.html",
             mode="new",
             default_date=datetime.now().strftime("%m/%d/%Y"),
-            tmpl=tmpl
+            tmpl=tmpl,
+            tmpl_key=user_template_key,
+            customers=customers,
+            customers_for_js=customers_for_js,
+            pre_customer=pre_customer,
         )
 
     # -----------------------------
@@ -1148,7 +1374,9 @@ def create_app():
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
             tmpl = _template_config_for(inv.invoice_template)
-        return render_template("invoice_view.html", inv=inv, tmpl=tmpl)
+            c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+
+        return render_template("invoice_view.html", inv=inv, tmpl=tmpl, customer=c)
 
     # -----------------------------
     # Edit invoice — GATED
@@ -1157,20 +1385,68 @@ def create_app():
     @login_required
     @subscription_required
     def invoice_edit(invoice_id):
+        uid = _current_user_id_int()
+
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
 
+            customers = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .order_by(Customer.name.asc())
+                .all()
+            )
+            customers_for_js = [{"id": c.id, "name": (c.name or "").strip()} for c in customers]
+
+            tmpl_key = _template_key_fallback(inv.invoice_template)
+            tmpl = _template_config_for(tmpl_key)
+
             if request.method == "POST":
-                inv.name = request.form.get("name", "").strip()
-                inv.vehicle = request.form.get("vehicle", "").strip()
+                customer_id_raw = (request.form.get("customer_id") or "").strip()
+                if not customer_id_raw.isdigit():
+                    flash("Please select a customer from the list.", "error")
+                    return render_template(
+                        "invoice_form.html",
+                        mode="edit",
+                        inv=inv,
+                        form=request.form,
+                        tmpl=tmpl,
+                        tmpl_key=tmpl_key,
+                        customers=customers,
+                        customers_for_js=customers_for_js,
+                    )
+
+                customer_id = int(customer_id_raw)
+                c = _customer_owned_or_404(s, customer_id)  # validate + load
+
+                inv.customer_id = customer_id
+
+                # ✅ remove Attn/Contact: keep invoice.name == customer name
+                inv.name = (c.name or "").strip()
+
+                inv.vehicle = (request.form.get("vehicle") or "").strip()
                 inv.hours = _to_float(request.form.get("hours"))
                 inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
                 inv.paid = _to_float(request.form.get("paid"))
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = request.form.get("notes", "").rstrip()
+
                 inv.customer_email = (request.form.get("customer_email") or "").strip() or None
                 inv.customer_phone = (request.form.get("customer_phone") or "").strip() or None
+
+                if tmpl_key == "auto_repair" and not inv.vehicle:
+                    flash("Vehicle is required for Auto Repair invoices.", "error")
+                    return render_template(
+                        "invoice_form.html",
+                        mode="edit",
+                        inv=inv,
+                        form=request.form,
+                        tmpl=tmpl,
+                        tmpl_key=tmpl_key,
+                        customers=customers,
+                        customers_for_js=customers_for_js,
+                    )
 
                 inv.parts.clear()
                 inv.labor_items.clear()
@@ -1190,8 +1466,15 @@ def create_app():
                 s.commit()
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
 
-        tmpl = _template_config_for(inv.invoice_template)
-        return render_template("invoice_form.html", mode="edit", inv=inv, tmpl=tmpl)
+        return render_template(
+            "invoice_form.html",
+            mode="edit",
+            inv=inv,
+            tmpl=tmpl,
+            tmpl_key=tmpl_key,
+            customers=customers,
+            customers_for_js=customers_for_js,
+        )
 
     # -----------------------------
     # Year Summary — GATED
@@ -1326,7 +1609,7 @@ def create_app():
                 pass
 
         flash("Invoice deleted.", "success")
-        return redirect(url_for("invoices"))
+        return redirect(url_for("customers_list"))
 
     # -----------------------------
     # Mark invoice as paid — GATED
@@ -1379,9 +1662,12 @@ def create_app():
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
 
-            to_email = (inv.customer_email or "").strip().lower()
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            customer_name = (customer.name if customer else "").strip()
+
+            to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
             if not to_email or "@" not in to_email:
-                flash("Customer email is missing. Add it on the invoice edit page first.", "error")
+                flash("Customer email is missing. Add it on the invoice edit page (or customer profile).", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
             if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
@@ -1390,7 +1676,7 @@ def create_app():
 
             subject = f"Invoice {inv.invoice_number}"
             body = (
-                f"Hello {inv.name},\n\n"
+                f"Hello {customer_name or 'there'},\n\n"
                 f"Attached is your invoice {inv.invoice_number}.\n"
                 f"Details: {inv.vehicle}\n"
                 f"Total: ${inv.invoice_total():,.2f}\n\n"
@@ -1405,7 +1691,7 @@ def create_app():
                     pdf_path=inv.pdf_path,
                 )
             except Exception as e:
-                print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={inv.invoice_number}: {repr(e)}")
+                print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={inv.invoice_number}: {repr(e)}", flush=True)
                 flash("Could not send email (SMTP / sender config issue). Check Render logs.", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
@@ -1444,4 +1730,7 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True, port=5001)
+
+
+
 

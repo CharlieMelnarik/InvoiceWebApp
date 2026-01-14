@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% set title = "New Customer" if mode == "new" else "Edit Customer" %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">
+      {% if mode == "new" %}New Customer{% else %}Edit Customer{% endif %}
+    </h1>
+    <div class="small-muted">
+      Name is required. Everything else is optional.
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Back to Customers</a>
+  </div>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="row g-3">
+      <div class="col-12">
+        <label class="form-label req">Name</label>
+        <input class="form-control" name="name" required
+          value="{% if mode=='edit' %}{{ c.name }}{% else %}{{ (form.name if form else '') }}{% endif %}"
+          placeholder="Customer name">
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label">Email</label>
+        <input class="form-control" type="email" name="email"
+          value="{% if mode=='edit' %}{{ c.email or '' }}{% else %}{{ (form.email if form else '') }}{% endif %}"
+          placeholder="customer@example.com">
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label">Phone</label>
+        <input class="form-control" name="phone"
+          value="{% if mode=='edit' %}{{ c.phone or '' }}{% else %}{{ (form.phone if form else '') }}{% endif %}"
+          placeholder="(406) 555-1234">
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">Address</label>
+        <textarea class="form-control" name="address" rows="3"
+          placeholder="Street, City, State, ZIP">{% if mode=='edit' %}{{ c.address or '' }}{% else %}{{ (form.address if form else '') }}{% endif %}</textarea>
+      </div>
+    </div>
+
+    <hr class="my-4">
+
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary" type="submit">
+        {% if mode == "new" %}Create Customer{% else %}Save Changes{% endif %}
+      </button>
+
+      {% if mode == "edit" %}
+        <a class="btn btn-outline-primary" href="{{ url_for('customer_view', customer_id=c.id) }}">View</a>
+      {% endif %}
+
+      <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Cancel</a>
+    </div>
+
+  </div>
+</form>
+
+{% endblock %}
+
