@@ -270,31 +270,33 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf.setFont("Helvetica-Bold", 20)
     pdf.drawString(M, PAGE_H - 0.75 * inch, "INVOICE")
 
-    # Optional logo to the right of "INVOICE"
+    # Optional logo on far left
+    logo_w = 0
     if owner_logo_abs and os.path.exists(owner_logo_abs):
         try:
             img = ImageReader(owner_logo_abs)
             iw, ih = img.getSize()
 
-            # max logo box (tweak as desired)
-            max_h = 0.65 * inch
-            max_w = 1.75 * inch
+            max_h = 0.4 * inch
+            max_w = 1.05 * inch
 
-            # scale to fit preserving aspect ratio
             scale = min(max_w / float(iw), max_h / float(ih))
             w = float(iw) * scale
             h = float(ih) * scale
 
-            # place to the right of "INVOICE" text
-            x = M + 1.25 * inch
-            y = (PAGE_H - 0.75 * inch) - (h * 0.35)
+            x = M
+            y = (PAGE_H - .81 * inch) - h
 
             pdf.drawImage(img, x, y, width=w, height=h, mask="auto")
+            logo_w = w + 10  # spacing after logo
         except Exception:
-            pass
+            logo_w = 0
+
 
     # Business info (left)
     pdf.setFont("Helvetica", 10)
+    business_x = M + logo_w
+
 
     left_lines = []
     if header_name:
@@ -311,7 +313,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     y_positions = [PAGE_H - 0.98 * inch, PAGE_H - 1.12 * inch, PAGE_H - 1.26 * inch]
     for i, y in enumerate(y_positions):
         if i < len(left_lines):
-            pdf.drawString(M, y, left_lines[i])
+            pdf.drawString(business_x, y, left_lines[i])
+
 
     # Meta (right)
     meta_x = PAGE_W - M
