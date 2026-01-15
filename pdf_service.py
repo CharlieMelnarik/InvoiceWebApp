@@ -378,19 +378,36 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             pdf.drawString(right_x, y_right, ln)
             y_right -= line_step
 
-    # Job Details
+    
+    # Job Details (wrapped job/address line)
     x2 = M + box_w + 0.35 * inch
     pdf.roundRect(x2, top_y - box_h, box_w, box_h, 8, stroke=1, fill=0)
+
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawString(x2 + 10, top_y - 18, cfg.get("job_box_title", "JOB DETAILS"))
+
     pdf.setFont("Helvetica", 10)
-    pdf.drawString(x2 + 10, top_y - 38, f"{cfg['job_label']}: {inv.vehicle}")
-    pdf.drawString(x2 + 10, top_y - 56, f"{cfg['job_rate_label']}: {_money(inv.price_per_hour)}")
+
+    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}"
+    max_job_w = box_w - 20
+    job_lines = _wrap_text(job_text, "Helvetica", 10, max_job_w)
+
+    y_job = top_y - 32
+    line_step = 14
+
+    for ln in job_lines[:2]:  # limit so rate/hours still fit
+        pdf.drawString(x2 + 10, y_job, ln)
+        y_job -= line_step
+
+    pdf.drawString(x2 + 10, y_job, f"{cfg['job_rate_label']}: {_money(inv.price_per_hour)}")
+    y_job -= line_step
+
     pdf.drawString(
         x2 + 10,
-        top_y - 74,
+        y_job,
         f"{cfg['job_hours_label']}: {inv.hours} {cfg.get('hours_suffix', 'hrs')}"
     )
+
 
     # -----------------------------
     # Table drawer (wrap + dynamic row heights)
