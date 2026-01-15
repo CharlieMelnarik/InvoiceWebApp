@@ -156,6 +156,16 @@ INVOICE_TEMPLATES = {
         "parts_name_label": "Expense",
         "shop_supplies_label": "Admin / Filing Fees",
     },
+    "lawn_care": {
+        "label": "Lawn Care / Landscaping",
+        "job_label": "Service Address",
+        "labor_title": "Services",
+        "labor_desc_label": "Service Description",
+        "parts_title": "Materials",
+        "parts_name_label": "Material",
+        "shop_supplies_label": "Disposal / Trip Fees",
+    },
+
 }
 
 
@@ -1511,7 +1521,7 @@ def create_app():
 
             customer_id = int(customer_id_raw)
 
-            if user_template_key == "auto_repair" and not vehicle:
+            if user_template_key in ("auto_repair", "lawn_care") and not vehicle:
                 flash("Vehicle is required for Auto Repair invoices.", "error")
                 return render_template(
                     "invoice_form.html",
@@ -1710,7 +1720,7 @@ def create_app():
                 inv.customer_email = cust_email_override or (c.email or None)
                 inv.customer_phone = cust_phone_override or (c.phone or None)
 
-                if tmpl_key == "auto_repair" and not inv.vehicle:
+                if tmpl_key in ("auto_repair", "lawn_care") and not inv.vehicle:
                     flash("Vehicle is required for Auto Repair invoices.", "error")
                     return render_template(
                         "invoice_form.html",

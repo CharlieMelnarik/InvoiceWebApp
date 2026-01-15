@@ -162,6 +162,24 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
             "shop_supplies_label": "Admin Fees",
         },
+        "lawn_care": {
+            "job_label": "Service Address",
+            "job_box_title": "PROPERTY DETAILS",
+            "job_rate_label": "Rate",
+            "job_hours_label": "Units / Hours",
+            "hours_suffix": "hrs",
+
+            "labor_title": "Services",
+            "labor_desc_label": "Service Description",
+            "labor_time_label": "Qty / Time",
+            "labor_total_label": "Line Total",
+
+            "parts_title": "Materials",
+            "parts_name_label": "Material",
+            "parts_price_label": "Amount",
+
+            "shop_supplies_label": "Disposal / Trip Fees",
+        },
     }
 
     template_key = (getattr(inv, "invoice_template", None) or "").strip() or (
@@ -224,6 +242,12 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         pdf.setFont(*value_font)
         pdf.drawString(x + 70, y, str(value))
 
+    # ✅ NEW: label on left, value right-aligned to a right edge
+    def label_right_value(x_left, x_right, y, label, value, label_font=("Helvetica-Bold", 9), value_font=("Helvetica", 10)):
+        pdf.setFont(*label_font)
+        pdf.drawString(x_left, y, label)
+        right_text(x_right, y, str(value), value_font[0], value_font[1])
+
     def start_new_page_with_header():
         pdf.showPage()
         pdf.setFillColorRGB(0, 0, 0)
@@ -242,49 +266,32 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf.setLineWidth(1)
     pdf.line(M, PAGE_H - 1.30 * inch, PAGE_W - M, PAGE_H - 1.30 * inch)
 
-    # ---- Header Title Area: [LOGO] INVOICE ----
-    header_title_y = PAGE_H - 0.75 * inch
-    invoice_font = ("Helvetica-Bold", 20)
+    pdf.setFillColorRGB(0, 0, 0)
+    pdf.setFont("Helvetica-Bold", 20)
+    pdf.drawString(M, PAGE_H - 0.75 * inch, "INVOICE")
 
-    # Default: no logo -> INVOICE starts at M
-    invoice_x = M
-
-    # If logo exists, draw it first at M, then move INVOICE to the right of it.
+    # Optional logo to the right of "INVOICE"
     if owner_logo_abs and os.path.exists(owner_logo_abs):
         try:
             img = ImageReader(owner_logo_abs)
             iw, ih = img.getSize()
 
-            # max logo box
-            max_h = 0.45 * inch
-            max_w = 1.55 * inch
+            # max logo box (tweak as desired)
+            max_h = 0.65 * inch
+            max_w = 1.75 * inch
 
             # scale to fit preserving aspect ratio
             scale = min(max_w / float(iw), max_h / float(ih))
             w = float(iw) * scale
             h = float(ih) * scale
 
-            # place logo BEFORE the word INVOICE
-            logo_x = M
-            # Align logo bottom to the bottom of the INVOICE glyphs (not the baseline)
-            invoice_font_size = 20
-            descent = invoice_font_size * 0.28  # empirical for Helvetica-Bold
-            text_bottom_y = header_title_y - descent
-            logo_y = text_bottom_y
+            # place to the right of "INVOICE" text
+            x = M + 1.25 * inch
+            y = (PAGE_H - 0.75 * inch) - (h * 0.35)
 
-
-            pdf.drawImage(img, logo_x, logo_y, width=w, height=h, mask="auto")
-
-            gap = 10  # small spacing between logo and text
-            invoice_x = logo_x + w + gap
-
+            pdf.drawImage(img, x, y, width=w, height=h, mask="auto")
         except Exception:
-            # if image fails, fall back to plain text at M
-            invoice_x = M
-
-    pdf.setFillColorRGB(0, 0, 0)
-    pdf.setFont(*invoice_font)
-    pdf.drawString(invoice_x, header_title_y, "INVOICE")
+            pass
 
     # Business info (left)
     pdf.setFont("Helvetica", 10)
@@ -558,19 +565,21 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     total_price = inv.invoice_total()
     price_owed = inv.amount_due()
 
+    # ✅ Right-align all $ values to the right edge of the summary box
+    right_edge = sum_x + sum_w - 12
     y = notes_y_top - 42
-    pdf.setFont("Helvetica", 10)
-    label_value(sum_x + 10, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
-    label_value(sum_x + 10, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
-    label_value(sum_x + 10, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
+
+    label_right_value(sum_x + 10, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
+    label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
+    label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
 
     pdf.setStrokeColor(colors.HexColor("#DDDDDD"))
     pdf.line(sum_x + 10, y + 4, sum_x + sum_w - 10, y + 4)
     pdf.setStrokeColor(colors.black)
     y -= 10
 
-    label_value(sum_x + 10, y, "Total:", _money(total_price)); y -= 18
-    label_value(sum_x + 10, y, "Paid:", _money(inv.paid)); y -= 18
+    label_right_value(sum_x + 10, right_edge, y, "Total:", _money(total_price)); y -= 18
+    label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(inv.paid)); y -= 18
 
     # Amount Due / Profit below the box
     pdf.setFont("Helvetica-Bold", 13)
@@ -634,5 +643,4 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     session.commit()
 
     return pdf_path
-
 
