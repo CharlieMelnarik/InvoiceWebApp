@@ -78,6 +78,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     if not inv:
         raise ValueError(f"Invoice not found: id={invoice_id}")
 
+    is_estimate = bool(getattr(inv, "is_estimate", False))
+
     # Pull the invoice owner's profile (business header fields)
     owner = None
     try:
@@ -225,8 +227,9 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf_filename = f"{_safe_filename(inv.invoice_number)}.pdf"
     pdf_path = os.path.abspath(os.path.join(year_dir, pdf_filename))
 
+    doc_label = "ESTIMATE" if is_estimate else "INVOICE"
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
-    pdf.setTitle(f"Invoice - {inv.invoice_number}")
+    pdf.setTitle(f"{doc_label.title()} - {inv.invoice_number}")
 
     # -----------------------------
     # Helpers bound to this canvas
@@ -252,7 +255,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         pdf.showPage()
         pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont("Helvetica-Bold", 14)
-        pdf.drawString(M, PAGE_H - M, "INVOICE (cont.)")
+        pdf.drawString(M, PAGE_H - M, f"{doc_label} (cont.)")
         pdf.setFont("Helvetica", 10)
         pdf.drawString(M, PAGE_H - M - 16, f"{inv.invoice_number}  •  Generated: {generated_str}")
 
@@ -268,7 +271,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
     pdf.setFillColorRGB(0, 0, 0)
     pdf.setFont("Helvetica-Bold", 20)
-    pdf.drawString(M, PAGE_H - 0.75 * inch, "INVOICE")
+    pdf.drawString(M, PAGE_H - 0.75 * inch, doc_label)
 
     # Optional logo on far left
     logo_w = 0
@@ -319,8 +322,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # Meta (right)
     meta_x = PAGE_W - M
     meta_y = PAGE_H - 0.78 * inch
-    right_text(meta_x, meta_y, f"Invoice #: {inv.invoice_number}", "Helvetica", 10)
-    right_text(meta_x, meta_y - 14, f"Date: {generated_str}", "Helvetica", 10)
+    right_text(meta_x, meta_y, f"{doc_label.title()} #: {inv.invoice_number}", "Helvetica", 10)
+    right_text(meta_x, meta_y - 14, f"{doc_label.title()} Date: {generated_str}", "Helvetica", 10)
     right_text(meta_x, meta_y - 28, f"Date In: {inv.date_in}", "Helvetica", 10)
 
     # -----------------------------
@@ -598,12 +601,18 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf.setStrokeColor(colors.black)
     y -= 10
 
-    label_right_value(sum_x + 10, right_edge, y, "Total:", _money(total_price)); y -= 18
-    label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(inv.paid)); y -= 18
+    label = "Estimated Total:" if is_estimate else "Total:"
+    label_right_value(sum_x + 10, right_edge, y, label, _money(total_price)); y -= 18
+
+    if not is_estimate:
+        label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(inv.paid)); y -= 18
 
     # Amount Due / Profit below the box
     pdf.setFont("Helvetica-Bold", 13)
-    if price_owed < 0:
+    if is_estimate:
+        pdf.setFillColorRGB(0, 0, 0)
+        right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 28, f"ESTIMATED TOTAL: {_money(total_price)}", "Helvetica-Bold", 13)
+    elif price_owed < 0:
         profit = abs(price_owed)
         pdf.setFillColorRGB(0.10, 0.55, 0.25)
         right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 28, f"PROFIT: {_money(profit)}", "Helvetica-Bold", 13)
@@ -663,4 +672,3 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     session.commit()
 
     return pdf_path
-

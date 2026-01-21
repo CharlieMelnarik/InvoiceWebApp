@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% set title = "Estimate " ~ inv.invoice_number %}
+
+{% block content %}
+
+{# profession-aware labels #}
+{% set _tmpl = tmpl if tmpl is defined and tmpl else {} %}
+{% set job_label = _tmpl.get('job_label', 'Vehicle') %}
+{% set labor_title = _tmpl.get('labor_title', 'Labor') %}
+{% set labor_desc_label = _tmpl.get('labor_desc_label', 'Labor Description') %}
+{% set parts_title = _tmpl.get('parts_title', 'Parts') %}
+{% set parts_name_label = _tmpl.get('parts_name_label', 'Part Name') %}
+{% set shop_supplies_label = _tmpl.get('shop_supplies_label', 'Shop Supplies') %}
+
+{% set total = inv.invoice_total() %}
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">
+      Estimate <span class="mono">{{ inv.invoice_number }}</span>
+    </h1>
+
+    <div class="small-muted">
+      {% if customer %}
+        Customer:
+        <a href="{{ url_for('customer_view', customer_id=customer.id) }}" class="text-decoration-none fw-semibold">
+          {{ customer.name }}
+        </a>
+      {% else %}
+        Customer: <span class="text-danger">Missing</span>
+      {% endif %}
+      {% if inv.date_in %} · Date In: <span class="mono">{{ inv.date_in }}</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
+    {% if customer %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=customer.id) }}">Back to Customer</a>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('estimate_convert', estimate_id=inv.id) }}">
+      <button class="btn btn-outline-primary" type="submit">Convert to Invoice</button>
+    </form>
+
+    <a class="btn btn-outline-primary" href="{{ url_for('estimate_edit', estimate_id=inv.id) }}">Edit</a>
+  </div>
+</div>
+
+<div class="row g-3">
+
+  <div class="col-12 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="fw-semibold mb-2">Summary</div>
+
+        <div class="mb-2">
+          <div class="small-muted">{{ job_label }}</div>
+          <div>{{ inv.vehicle }}</div>
+        </div>
+
+        <div class="mb-0">
+          <div class="small-muted">Estimated Total</div>
+          <div class="mono fw-semibold">${{ "%.2f"|format(total) }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="fw-semibold">Customer Contact</div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-12 col-md-6">
+            <div class="small-muted">Email (estimate override)</div>
+            <div class="mono">{{ inv.customer_email or "" }}</div>
+          </div>
+          <div class="col-12 col-md-6">
+            <div class="small-muted">Phone (estimate override)</div>
+            <div class="mono">{{ inv.customer_phone or "" }}</div>
+          </div>
+
+          {% if customer %}
+            <div class="col-12 col-md-6">
+              <div class="small-muted">Email (customer)</div>
+              <div class="mono">{{ customer.email or "" }}</div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="small-muted">Phone (customer)</div>
+              <div class="mono">{{ customer.phone or "" }}</div>
+            </div>
+          {% endif %}
+        </div>
+
+        <hr class="my-4">
+
+        <div class="row g-3">
+          <div class="col-12 col-md-4">
+            <div class="small-muted">Hours</div>
+            <div class="mono">{{ "%.2f"|format(inv.hours or 0) }}</div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="small-muted">Rate / Hour</div>
+            <div class="mono">${{ "%.2f"|format(inv.price_per_hour or 0) }}</div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="small-muted">{{ shop_supplies_label }}</div>
+            <div class="mono">${{ "%.2f"|format(inv.shop_supplies or 0) }}</div>
+          </div>
+        </div>
+
+        <hr class="my-4">
+
+        <div class="row g-4">
+
+          <div class="col-12 col-lg-6">
+            <div class="fw-semibold mb-2">{{ parts_title }}</div>
+            {% if inv.parts and inv.parts|length > 0 %}
+              <ul class="list-group">
+                {% for p in inv.parts %}
+                  <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>{{ p.part_name }}</div>
+                    <div class="mono">${{ "%.2f"|format(p.part_price or 0) }}</div>
+                  </li>
+                {% endfor %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                  <div class="fw-semibold">Parts Total</div>
+                  <div class="mono fw-semibold">${{ "%.2f"|format(inv.parts_total()) }}</div>
+                </li>
+              </ul>
+            {% else %}
+              <div class="small-muted">No {{ parts_title|lower }}.</div>
+            {% endif %}
+          </div>
+
+          <div class="col-12 col-lg-6">
+            <div class="fw-semibold mb-2">{{ labor_title }}</div>
+            {% if inv.labor_items and inv.labor_items|length > 0 %}
+              <ul class="list-group">
+                {% for li in inv.labor_items %}
+                  <li class="list-group-item">
+                    <div class="fw-semibold">{{ li.labor_desc }}</div>
+                    <div class="small-muted mono">{{ "%.2f"|format(li.labor_time_hours or 0) }} hrs</div>
+                  </li>
+                {% endfor %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                  <div class="fw-semibold">Labor Total</div>
+                  <div class="mono fw-semibold">${{ "%.2f"|format(inv.labor_total()) }}</div>
+                </li>
+              </ul>
+            {% else %}
+              <div class="small-muted">No {{ labor_title|lower }} items.</div>
+            {% endif %}
+          </div>
+
+        </div>
+
+        <hr class="my-4">
+
+        <div class="fw-semibold mb-2">Notes</div>
+        {% if inv.notes %}
+          <div class="border rounded p-3 bg-light" style="white-space: pre-wrap;">{{ inv.notes }}</div>
+        {% else %}
+          <div class="small-muted">No notes.</div>
+        {% endif %}
+
+        <hr class="my-4">
+
+        <div class="d-flex flex-wrap gap-2">
+          <form method="post" action="{{ url_for('estimate_pdf_generate', estimate_id=inv.id) }}">
+            <button class="btn btn-outline-primary" type="submit">Generate PDF</button>
+          </form>
+
+          <a class="btn btn-outline-secondary" href="{{ url_for('estimate_pdf_download', estimate_id=inv.id) }}">
+            Download PDF
+          </a>
+
+          <form method="post" action="{{ url_for('estimate_send', estimate_id=inv.id) }}">
+            <button class="btn btn-outline-success" type="submit">Email PDF</button>
+          </form>
+
+          <form method="post" action="{{ url_for('estimate_convert', estimate_id=inv.id) }}">
+            <button class="btn btn-outline-primary" type="submit">Convert to Invoice</button>
+          </form>
+
+          <form method="post" action="{{ url_for('estimate_delete', estimate_id=inv.id) }}"
+                onsubmit="return confirm('Delete this estimate? This cannot be undone.');">
+            <button class="btn btn-outline-danger" type="submit">Delete</button>
+          </form>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}
