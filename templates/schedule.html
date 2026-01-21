@@ -163,6 +163,15 @@
       .replaceAll("'","&#039;");
   }
 
+  function eventDisplayLabel(e){
+    const baseTitle = (e.title || "Appointment").trim();
+    const customerName = (e.customer_name || "").trim();
+    if (!customerName) return baseTitle || "Appointment";
+    if (!baseTitle) return customerName;
+    if (baseTitle.toLowerCase() === customerName.toLowerCase()) return baseTitle;
+    return `${baseTitle} - ${customerName}`;
+  }
+
   async function loadEvents(rangeStart, rangeEnd){
     const qs = new URLSearchParams({ start: toISODate(rangeStart), end: toISODate(rangeEnd) });
     const res = await fetch(`/api/schedule/events?${qs.toString()}`);
@@ -214,7 +223,8 @@
 
       evts.forEach(e => {
         const cls = e.status === "cancelled" ? "evt-pill cancelled" : "evt-pill";
-        const safeTitle = escapeHTML(e.title || "Appointment");
+        const label = eventDisplayLabel(e);
+        const safeTitle = escapeHTML(label);
         html += `<span class="${cls}" title="${safeTitle}">${safeTitle}</span>`;
       });
 
@@ -617,7 +627,6 @@
   })();
 </script>
 {% endblock %}
-
 
 
 
