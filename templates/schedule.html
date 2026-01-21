@@ -5,6 +5,7 @@
 <style>
   .cal-toolbar { display:flex; gap:.5rem; align-items:center; justify-content:space-between; flex-wrap:wrap; }
   .cal-grid { background:#fff; border-radius:12px; padding:12px; box-shadow:0 1px 6px rgba(0,0,0,.06); }
+  .month-scroll { overflow-x:auto; }
   .month-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:8px; }
   .dow { font-weight:600; color:#6c757d; font-size:.85rem; padding:4px 6px; }
   .day-cell { border:1px solid #e6e8ec; border-radius:10px; padding:8px; min-height:110px; cursor:pointer; background:#fff; }
@@ -36,6 +37,13 @@
     .day-wrap { flex-direction:column; }
     .time-col { width:100%; display:flex; flex-wrap:wrap; gap:10px; }
     .time-row { height:auto; }
+  }
+
+  @media (max-width: 768px) {
+    .month-scroll { margin: 0 -12px; padding: 0 12px; }
+    .month-grid { min-width: 980px; }
+    .evt-pill { white-space:normal; line-height:1.2; }
+    .day-cell { min-height:90px; }
   }
 </style>
 
@@ -198,7 +206,7 @@
     gridStart.setDate(base.getDate() - base.getDay()); // back to Sunday
 
     // header row
-    let html = `<div class="month-grid mb-2">`;
+    let html = `<div class="month-scroll"><div class="month-grid mb-2">`;
     for (const h of DOW){
       html += `<div class="dow">${h}</div>`;
     }
@@ -235,7 +243,7 @@
 
       html += `</div>`;
     }
-    html += `</div>`;
+    html += `</div></div>`;
 
     elMonth.innerHTML = html;
 
@@ -627,6 +635,3 @@
   })();
 </script>
 {% endblock %}
-
-
-
