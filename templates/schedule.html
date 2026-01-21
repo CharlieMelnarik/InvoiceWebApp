@@ -1,0 +1,623 @@
+{% extends "base.html" %}
+{% set title = "Scheduler" %}
+
+{% block content %}
+<style>
+  .cal-toolbar { display:flex; gap:.5rem; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+  .cal-grid { background:#fff; border-radius:12px; padding:12px; box-shadow:0 1px 6px rgba(0,0,0,.06); }
+  .month-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:8px; }
+  .dow { font-weight:600; color:#6c757d; font-size:.85rem; padding:4px 6px; }
+  .day-cell { border:1px solid #e6e8ec; border-radius:10px; padding:8px; min-height:110px; cursor:pointer; background:#fff; }
+  .day-cell.muted { background:#fafbfc; color:#9aa0a6; }
+  .day-num { font-weight:700; font-size:.9rem; }
+  .evt-pill { display:block; font-size:.8rem; margin-top:6px; padding:4px 6px; border-radius:8px; background:#f1f3f5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .evt-pill.cancelled { opacity:.5; text-decoration:line-through; }
+
+  .day-wrap { display:flex; gap:16px; }
+  .time-col { width:70px; color:#6c757d; font-size:.85rem; }
+  .time-row { height:48px; display:flex; align-items:flex-start; justify-content:flex-end; padding-top:2px; }
+  .timeline { position:relative; flex:1; border-left:1px solid #e6e8ec; }
+  .slot { height:48px; border-bottom:1px solid #f0f1f3; }
+  .event-block {
+    position:absolute;
+    left:10px;
+    right:10px;
+    border-radius:10px;
+    padding:8px;
+    background:#0d6efd14;
+    border:1px solid #0d6efd33;
+    overflow:hidden;
+    cursor:pointer;
+  }
+  .event-title { font-weight:700; font-size:.9rem; }
+  .event-sub { font-size:.8rem; color:#6c757d; }
+
+  @media (max-width: 992px) {
+    .day-wrap { flex-direction:column; }
+    .time-col { width:100%; display:flex; flex-wrap:wrap; gap:10px; }
+    .time-row { height:auto; }
+  }
+</style>
+
+<div class="cal-toolbar mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <button class="btn btn-outline-secondary btn-sm" id="btnPrev">‹</button>
+    <button class="btn btn-outline-secondary btn-sm" id="btnToday">Today</button>
+    <button class="btn btn-outline-secondary btn-sm" id="btnNext">›</button>
+    <span class="ms-2 fw-bold" id="labelRange"></span>
+  </div>
+
+  <div class="d-flex align-items-center gap-2">
+    <button class="btn btn-dark btn-sm" id="btnMonth">Month</button>
+    <button class="btn btn-outline-dark btn-sm" id="btnDay">Day</button>
+    <button class="btn btn-primary btn-sm" id="btnNew">+ Appointment</button>
+  </div>
+</div>
+
+<div class="cal-grid">
+  <div id="viewMonth"></div>
+  <div id="viewDay" style="display:none;"></div>
+</div>
+
+<!-- Modal -->
+<div class="modal fade" id="eventModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalTitle">Appointment</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+
+        <div class="mb-2">
+          <label class="form-label">Customer</label>
+          <input class="form-control" id="custSearch" placeholder="Type a customer name..." autocomplete="off">
+          <div class="list-group mt-1" id="custResults" style="max-height:180px; overflow:auto; display:none;"></div>
+          <input type="hidden" id="customerId">
+          <div class="small-muted mt-1" id="custHint" style="display:none;">
+            Tip: press <span class="mono">Enter</span> to pick the first match.
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <label class="form-label">Title (optional)</label>
+          <input class="form-control" id="title">
+        </div>
+
+        <div class="row g-2 mb-2">
+          <div class="col-6">
+            <label class="form-label">Start</label>
+            <input class="form-control" id="start" type="datetime-local">
+          </div>
+          <div class="col-6">
+            <label class="form-label">End</label>
+            <input class="form-control" id="end" type="datetime-local">
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <label class="form-label">Notes</label>
+          <textarea class="form-control" id="notes" rows="3"></textarea>
+        </div>
+
+        <div class="small-muted" id="modalHint"></div>
+        <input type="hidden" id="eventId">
+
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline-danger" id="btnDelete" style="display:none;">Delete</button>
+        <button class="btn btn-primary" id="btnSave">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  const state = {
+    view: "month",
+    cursor: new Date(),   // current month/day pointer
+    events: [],
+    selectedDay: null,
+  };
+
+  const elMonth = document.getElementById("viewMonth");
+  const elDay = document.getElementById("viewDay");
+  const labelRange = document.getElementById("labelRange");
+
+  const modalEl = document.getElementById("eventModal");
+  const modal = new bootstrap.Modal(modalEl);
+
+  // URL deep-links (optional):
+  //   /schedule?customer_id=123&date=2026-01-20
+  const URLP = new URLSearchParams(window.location.search);
+  const PRESELECT_CUSTOMER_ID = (URLP.get("customer_id") || "").trim();
+  const PRESELECT_DATE = (URLP.get("date") || "").trim(); // YYYY-MM-DD
+
+  function pad2(n){ return String(n).padStart(2,"0"); }
+  function toISODate(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+
+  function toLocalInputValue(d){
+    return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+
+  function parseISO(s){ return new Date(s); }
+
+  function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+  function endOfMonth(d){ return new Date(d.getFullYear(), d.getMonth()+1, 1); }
+
+  function startOfDay(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function endOfDay(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()+1); }
+
+  function escapeHTML(str){
+    return String(str ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
+  }
+
+  async function loadEvents(rangeStart, rangeEnd){
+    const qs = new URLSearchParams({ start: toISODate(rangeStart), end: toISODate(rangeEnd) });
+    const res = await fetch(`/api/schedule/events?${qs.toString()}`);
+    state.events = await res.json();
+  }
+
+  function setLabel(){
+    if (state.view === "month"){
+      const d = state.cursor;
+      labelRange.textContent = d.toLocaleString(undefined, { month:"long", year:"numeric" });
+    } else {
+      const d = state.selectedDay || state.cursor;
+      labelRange.textContent = d.toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric", year:"numeric" });
+    }
+  }
+
+  function renderMonth(){
+    setLabel();
+    elMonth.style.display = "";
+    elDay.style.display = "none";
+
+    const base = startOfMonth(state.cursor);
+    const gridStart = new Date(base);
+    gridStart.setDate(base.getDate() - base.getDay()); // back to Sunday
+
+    // header row
+    let html = `<div class="month-grid mb-2">`;
+    for (const h of DOW){
+      html += `<div class="dow">${h}</div>`;
+    }
+    html += `</div>`;
+
+    // 6 weeks grid
+    html += `<div class="month-grid">`;
+    for (let i=0;i<42;i++){
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + i);
+
+      const inMonth = d.getMonth() === state.cursor.getMonth();
+      const iso = toISODate(d);
+
+      // events that touch this day
+      const evts = state.events
+        .filter(e => e.start.slice(0,10) <= iso && e.end.slice(0,10) >= iso)
+        .slice(0,3);
+
+      html += `<div class="day-cell ${inMonth ? "" : "muted"}" data-day="${iso}">
+        <div class="day-num">${d.getDate()}</div>`;
+
+      evts.forEach(e => {
+        const cls = e.status === "cancelled" ? "evt-pill cancelled" : "evt-pill";
+        const safeTitle = escapeHTML(e.title || "Appointment");
+        html += `<span class="${cls}" title="${safeTitle}">${safeTitle}</span>`;
+      });
+
+      const startsCount = state.events.filter(e => e.start.slice(0,10) === iso).length;
+      if (startsCount > 3){
+        html += `<div class="small-muted mt-1">+ more</div>`;
+      }
+
+      html += `</div>`;
+    }
+    html += `</div>`;
+
+    elMonth.innerHTML = html;
+
+    elMonth.querySelectorAll(".day-cell").forEach(cell => {
+      cell.addEventListener("click", () => {
+        const iso = cell.getAttribute("data-day");
+        const [y,m,dd] = iso.split("-").map(Number);
+        state.selectedDay = new Date(y, m-1, dd);
+        state.view = "day";
+        renderDay();
+      });
+    });
+  }
+
+  function renderDay(){
+    setLabel();
+    elMonth.style.display = "none";
+    elDay.style.display = "";
+
+    const day = state.selectedDay || state.cursor;
+    const dayStart = startOfDay(day);
+
+    // hours shown
+    const hourStart = 6;   // 6am
+    const hourEnd = 20;    // 8pm
+    const pxPerMin = 48 / 60; // 48px per hour
+
+    // left column times + timeline slots
+    let times = "";
+    let slots = "";
+    for (let h=hourStart; h<=hourEnd; h++){
+      const label = new Date(dayStart);
+      label.setHours(h,0,0,0);
+      times += `<div class="time-row">${label.toLocaleTimeString([], {hour:"numeric"})}</div>`;
+      slots += `<div class="slot" data-hour="${h}"></div>`;
+    }
+
+    elDay.innerHTML = `
+      <div class="day-wrap">
+        <div class="time-col">${times}</div>
+        <div class="timeline" id="timeline">
+          ${slots}
+        </div>
+      </div>
+    `;
+
+    const timeline = document.getElementById("timeline");
+
+    // events on this day
+    const isoDay = toISODate(dayStart);
+    const dayEvents = state.events.filter(e => e.start.slice(0,10) === isoDay);
+
+    dayEvents.forEach(e => {
+      const s = parseISO(e.start);
+      const en = parseISO(e.end);
+
+      const minutesFromStart = (s.getHours() - hourStart) * 60 + s.getMinutes();
+      const durMin = Math.max(15, (en - s) / 60000);
+
+      const top = Math.max(0, minutesFromStart * pxPerMin);
+      const height = Math.max(18, durMin * pxPerMin);
+
+      const block = document.createElement("div");
+      block.className = "event-block";
+      block.style.top = `${top}px`;
+      block.style.height = `${height}px`;
+      block.dataset.id = e.id;
+
+      block.innerHTML = `
+        <div class="event-title">${escapeHTML(e.title || "Appointment")}</div>
+        <div class="event-sub">${s.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} - ${en.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</div>
+      `;
+
+      block.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openModalForEdit(e);
+      });
+
+      timeline.appendChild(block);
+    });
+
+    // click on timeline to create an event
+    timeline.addEventListener("click", (ev) => {
+      const rect = timeline.getBoundingClientRect();
+      const y = ev.clientY - rect.top;
+      const mins = Math.max(0, Math.round(y / pxPerMin / 15) * 15); // snap 15 mins
+      const start = new Date(dayStart);
+      start.setHours(hourStart, 0, 0, 0);
+      start.setMinutes(start.getMinutes() + mins);
+
+      const end = new Date(start);
+      end.setMinutes(end.getMinutes() + 60);
+
+      openModalForCreate(start, end);
+    });
+  }
+
+  function _applyPreselectedCustomerIfAny(){
+    // If we have a customer_id in the URL, set it so saves link correctly.
+    // NOTE: To also auto-fill the name, you'd pass pre_customer_name from app.py,
+    // or add a /api/customers/<id> endpoint. This keeps it safe without needing new routes.
+    if (PRESELECT_CUSTOMER_ID && /^\d+$/.test(PRESELECT_CUSTOMER_ID)){
+      document.getElementById("customerId").value = PRESELECT_CUSTOMER_ID;
+      // If user starts typing and selects someone else, this will be replaced.
+    }
+  }
+
+  function openModalForCreate(start, end){
+    document.getElementById("modalTitle").textContent = "New Appointment";
+    document.getElementById("eventId").value = "";
+    document.getElementById("btnDelete").style.display = "none";
+
+    document.getElementById("customerId").value = "";
+    document.getElementById("custSearch").value = "";
+    document.getElementById("title").value = "";
+    document.getElementById("notes").value = "";
+
+    document.getElementById("start").value = toLocalInputValue(start);
+    document.getElementById("end").value = toLocalInputValue(end);
+    document.getElementById("modalHint").textContent = "Tip: click a time slot in Day view to auto-fill start/end.";
+
+    custResults.style.display = "none";
+    custHint.style.display = "none";
+    custActiveIndex = -1;
+
+    _applyPreselectedCustomerIfAny();
+    modal.show();
+
+    // if a customer_id was deep-linked, keep title blank unless user fills it
+    // (optional: you can set title to customer name once you add a customer lookup endpoint)
+  }
+
+  function openModalForEdit(e){
+    document.getElementById("modalTitle").textContent = "Edit Appointment";
+    document.getElementById("eventId").value = e.id;
+    document.getElementById("btnDelete").style.display = "";
+
+    document.getElementById("customerId").value = e.customer_id || "";
+    document.getElementById("custSearch").value = e.customer_name || "";
+
+    document.getElementById("title").value = e.title || "";
+    document.getElementById("notes").value = e.notes || "";
+    document.getElementById("start").value = toLocalInputValue(parseISO(e.start));
+    document.getElementById("end").value = toLocalInputValue(parseISO(e.end));
+    document.getElementById("modalHint").textContent = "";
+
+    custResults.style.display = "none";
+    custHint.style.display = "none";
+    custActiveIndex = -1;
+
+    modal.show();
+  }
+
+  async function refresh(){
+    if (state.view === "month"){
+      const a = startOfMonth(state.cursor);
+      const b = endOfMonth(state.cursor);
+      await loadEvents(a, b);
+      renderMonth();
+    } else {
+      const d = state.selectedDay || state.cursor;
+      const a = startOfDay(d);
+      const b = endOfDay(d);
+      await loadEvents(a, b);
+      renderDay();
+    }
+  }
+
+  // Toolbar buttons
+  document.getElementById("btnMonth").addEventListener("click", async () => {
+    state.view = "month";
+    await refresh();
+    document.getElementById("btnMonth").className = "btn btn-dark btn-sm";
+    document.getElementById("btnDay").className = "btn btn-outline-dark btn-sm";
+  });
+
+  document.getElementById("btnDay").addEventListener("click", async () => {
+    state.view = "day";
+    state.selectedDay = state.selectedDay || new Date(state.cursor);
+    await refresh();
+    document.getElementById("btnDay").className = "btn btn-dark btn-sm";
+    document.getElementById("btnMonth").className = "btn btn-outline-dark btn-sm";
+  });
+
+  document.getElementById("btnPrev").addEventListener("click", async () => {
+    if (state.view === "month"){
+      state.cursor = new Date(state.cursor.getFullYear(), state.cursor.getMonth()-1, 1);
+    } else {
+      state.selectedDay = new Date((state.selectedDay || state.cursor).getTime() - 86400000);
+    }
+    await refresh();
+  });
+
+  document.getElementById("btnNext").addEventListener("click", async () => {
+    if (state.view === "month"){
+      state.cursor = new Date(state.cursor.getFullYear(), state.cursor.getMonth()+1, 1);
+    } else {
+      state.selectedDay = new Date((state.selectedDay || state.cursor).getTime() + 86400000);
+    }
+    await refresh();
+  });
+
+  document.getElementById("btnToday").addEventListener("click", async () => {
+    state.cursor = new Date();
+    state.selectedDay = new Date();
+    await refresh();
+  });
+
+  document.getElementById("btnNew").addEventListener("click", () => {
+    const now = new Date();
+    const end = new Date(now); end.setMinutes(end.getMinutes()+60);
+    openModalForCreate(now, end);
+  });
+
+  // Save/Delete
+  document.getElementById("btnSave").addEventListener("click", async () => {
+    const id = document.getElementById("eventId").value;
+    const payload = {
+      customer_id: document.getElementById("customerId").value || null,
+      title: document.getElementById("title").value,
+      notes: document.getElementById("notes").value,
+      start: document.getElementById("start").value,
+      end: document.getElementById("end").value,
+    };
+
+    const res = await fetch(id ? `/api/schedule/events/${id}` : "/api/schedule/events", {
+      method: id ? "PUT" : "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok){
+      const j = await res.json().catch(() => ({}));
+      alert(j.error || "Error saving event");
+      return;
+    }
+
+    modal.hide();
+    await refresh();
+  });
+
+  document.getElementById("btnDelete").addEventListener("click", async () => {
+    const id = document.getElementById("eventId").value;
+    if (!id) return;
+    if (!confirm("Delete this appointment?")) return;
+
+    const res = await fetch(`/api/schedule/events/${id}`, { method:"DELETE" });
+    if (!res.ok){
+      const j = await res.json().catch(() => ({}));
+      alert(j.error || "Error deleting event");
+      return;
+    }
+    modal.hide();
+    await refresh();
+  });
+
+  // -----------------------------
+  // Customer typeahead (with Enter + arrow nav)
+  // -----------------------------
+  const custSearch = document.getElementById("custSearch");
+  const custResults = document.getElementById("custResults");
+  const custHint = document.getElementById("custHint");
+
+  let custTimer = null;
+  let custRowsCache = [];
+  let custActiveIndex = -1;
+
+  function hideCustResults(){
+    custResults.style.display = "none";
+    custHint.style.display = "none";
+    custActiveIndex = -1;
+    custRowsCache = [];
+  }
+
+  function setActive(index){
+    custActiveIndex = index;
+    const btns = [...custResults.querySelectorAll("button")];
+    btns.forEach((b, i) => {
+      if (i === custActiveIndex) {
+        b.classList.add("active");
+        b.scrollIntoView({ block: "nearest" });
+      } else {
+        b.classList.remove("active");
+      }
+    });
+  }
+
+  function pickCustomerByIndex(index){
+    const row = custRowsCache[index];
+    if (!row) return false;
+
+    document.getElementById("customerId").value = row.id;
+    custSearch.value = row.name;
+    hideCustResults();
+
+    // If title is blank, default it to customer name
+    const t = document.getElementById("title");
+    if (t && !(t.value || "").trim()){
+      t.value = row.name;
+    }
+    return true;
+  }
+
+  custSearch.addEventListener("input", () => {
+    const q = custSearch.value.trim();
+
+    // whenever user types, clear selected id until they pick
+    document.getElementById("customerId").value = "";
+    if (custTimer) clearTimeout(custTimer);
+
+    if (!q){
+      hideCustResults();
+      return;
+    }
+
+    custTimer = setTimeout(async () => {
+      const res = await fetch(`/api/customers/search?q=${encodeURIComponent(q)}`);
+      const rows = await res.json();
+      custRowsCache = Array.isArray(rows) ? rows : [];
+      custActiveIndex = -1;
+
+      custResults.innerHTML = custRowsCache.map((r, idx) => `
+        <button type="button" class="list-group-item list-group-item-action" data-idx="${idx}">
+          <div class="fw-bold">${escapeHTML(r.name)}</div>
+          <div class="small-muted">${escapeHTML([r.phone, r.email].filter(Boolean).join(" • "))}</div>
+        </button>
+      `).join("");
+
+      if (custRowsCache.length){
+        custResults.style.display = "";
+        custHint.style.display = "";
+        custResults.querySelectorAll("button").forEach(btn => {
+          btn.addEventListener("click", () => {
+            const idx = parseInt(btn.dataset.idx, 10);
+            pickCustomerByIndex(idx);
+          });
+        });
+      } else {
+        hideCustResults();
+      }
+    }, 200);
+  });
+
+  custSearch.addEventListener("keydown", (e) => {
+    if (custResults.style.display === "none") return;
+
+    const count = custRowsCache.length;
+    if (!count) return;
+
+    if (e.key === "ArrowDown"){
+      e.preventDefault();
+      const next = Math.min(count - 1, custActiveIndex + 1);
+      setActive(next);
+    } else if (e.key === "ArrowUp"){
+      e.preventDefault();
+      const prev = Math.max(0, custActiveIndex - 1);
+      setActive(prev);
+    } else if (e.key === "Enter"){
+      // Press Enter to choose highlighted; if none highlighted, choose first
+      e.preventDefault();
+      const idx = (custActiveIndex >= 0 ? custActiveIndex : 0);
+      pickCustomerByIndex(idx);
+    } else if (e.key === "Escape"){
+      hideCustResults();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!custResults.contains(e.target) && e.target !== custSearch){
+      hideCustResults();
+    }
+  });
+
+  // -----------------------------
+  // Initial load:
+  // If a date=YYYY-MM-DD is provided, jump to that day in Day view.
+  // -----------------------------
+  (async () => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(PRESELECT_DATE)){
+      const [y,m,d] = PRESELECT_DATE.split("-").map(Number);
+      const dt = new Date(y, m-1, d);
+      state.cursor = dt;
+      state.selectedDay = dt;
+      state.view = "day";
+      document.getElementById("btnDay").className = "btn btn-dark btn-sm";
+      document.getElementById("btnMonth").className = "btn btn-outline-dark btn-sm";
+    }
+    await refresh();
+  })();
+</script>
+{% endblock %}
+
+
+
+

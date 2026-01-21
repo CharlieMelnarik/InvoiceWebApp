@@ -1,20 +1,21 @@
+# =========================
 # app.py
+# =========================
 import os
 import re
 import io
 import zipfile
 import smtplib
 from email.message import EmailMessage
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from functools import wraps
 from werkzeug.utils import secure_filename
 
-
 import stripe
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, send_file, abort, current_app
+    flash, send_file, abort, current_app, jsonify
 )
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -29,7 +30,8 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from config import Config
 from models import (
     Base, make_engine, make_session_factory,
-    User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number
+    User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number,
+    ScheduleEvent,
 )
 from pdf_service import generate_and_store_pdf
 
@@ -79,7 +81,8 @@ def _parse_repeating_fields(names, prices):
 def _ensure_dirs():
     Path("instance").mkdir(parents=True, exist_ok=True)
     Path(Config.EXPORTS_DIR).mkdir(parents=True, exist_ok=True)
-    
+
+
 def _logo_upload_dir() -> Path:
     d = Path("instance") / "uploads" / "logos"
     d.mkdir(parents=True, exist_ok=True)
@@ -125,6 +128,34 @@ def _looks_like_email(email: str) -> bool:
     return bool(e) and ("@" in e) and ("." in e.split("@")[-1])
 
 
+def _parse_iso_dt(s: str) -> datetime:
+    """
+    Accepts:
+      - 'YYYY-MM-DDTHH:MM'
+      - 'YYYY-MM-DD HH:MM'
+      - with optional seconds
+    """
+    s = (s or "").strip()
+    if not s:
+        raise ValueError("Missing datetime")
+    s = s.replace(" ", "T")
+    return datetime.fromisoformat(s)
+
+
+def _parse_dt_local(s: str) -> datetime | None:
+    """
+    For <input type="datetime-local"> values (YYYY-MM-DDTHH:MM).
+    Returns naive datetime or None.
+    """
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
 # -----------------------------
 # Invoice template / profession config
 # -----------------------------
@@ -165,7 +196,6 @@ INVOICE_TEMPLATES = {
         "parts_name_label": "Material",
         "shop_supplies_label": "Disposal / Trip Fees",
     },
-
 }
 
 
@@ -494,7 +524,8 @@ def _migrate_customers_unique_name_ci(engine):
             """))
     except Exception:
         pass
-        
+
+
 def _migrate_user_logo(engine):
     if not _table_exists(engine, "users"):
         return
@@ -502,6 +533,82 @@ def _migrate_user_logo(engine):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE users ADD COLUMN logo_path VARCHAR(300)"))
 
+
+def _migrate_schedule_events(engine):
+    # create_all handles it once ScheduleEvent exists in models.py
+    return
+
+
+def _migrate_schedule_event_auto_fields(engine):
+    """
+    Adds fields so we can distinguish auto-generated recurring events from manual appointments.
+    """
+    if not _table_exists(engine, "schedule_events"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "schedule_events", "is_auto"):
+        stmts.append("ALTER TABLE schedule_events ADD COLUMN is_auto BOOLEAN")
+    if not _column_exists(engine, "schedule_events", "recurring_token"):
+        stmts.append("ALTER TABLE schedule_events ADD COLUMN recurring_token VARCHAR(100)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    # backfill default
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE schedule_events SET is_auto = FALSE WHERE is_auto IS NULL"))
+    except Exception:
+        pass
+
+    # best-effort indexes
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS schedule_events_is_auto_idx ON schedule_events (is_auto)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS schedule_events_recurring_token_idx ON schedule_events (recurring_token)"
+            ))
+    except Exception:
+        pass
+
+
+def _migrate_customer_schedule_fields(engine):
+    """
+    Adds recurring service fields onto customers.
+    """
+    if not _table_exists(engine, "customers"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "customers", "next_service_dt"):
+        stmts.append("ALTER TABLE customers ADD COLUMN next_service_dt TIMESTAMP NULL")
+    if not _column_exists(engine, "customers", "service_interval_days"):
+        stmts.append("ALTER TABLE customers ADD COLUMN service_interval_days INTEGER")
+    if not _column_exists(engine, "customers", "default_service_minutes"):
+        stmts.append("ALTER TABLE customers ADD COLUMN default_service_minutes INTEGER")
+    if not _column_exists(engine, "customers", "service_title"):
+        stmts.append("ALTER TABLE customers ADD COLUMN service_title VARCHAR(200)")
+    if not _column_exists(engine, "customers", "service_notes"):
+        stmts.append("ALTER TABLE customers ADD COLUMN service_notes VARCHAR(1000)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    # backfill default duration
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE customers SET default_service_minutes = 60 WHERE default_service_minutes IS NULL"
+            ))
+    except Exception:
+        pass
 
 
 # -----------------------------
@@ -541,7 +648,9 @@ def create_app():
     _migrate_customers_unique_name_ci(engine)
     _migrate_invoice_customer_id(engine)
     _migrate_user_logo(engine)
-
+    _migrate_schedule_events(engine)
+    _migrate_schedule_event_auto_fields(engine)   # <-- schedule is_auto/recurring_token
+    _migrate_customer_schedule_fields(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -557,11 +666,12 @@ def create_app():
             u = s.get(User, _current_user_id_int())
             status = (getattr(u, "subscription_status", None) or "").strip().lower()
             is_sub = status in ("trialing", "active")
+            trial_used = bool(getattr(u, "trial_used_at", None)) if u else False
 
         return {
             "billing_status": status or None,
             "is_subscribed": is_sub,
-            "trial_used": bool(getattr(u, "trial_used_at", None)),
+            "trial_used": trial_used,
         }
 
     @login_manager.user_loader
@@ -676,7 +786,6 @@ def create_app():
         if source.user_id != target.user_id:
             raise ValueError("Cannot merge across users")
 
-        # Fill missing target fields from source (only if target is empty)
         for field in ("email", "phone", "address"):
             tv = (getattr(target, field, None) or "").strip()
             sv = (getattr(source, field, None) or "").strip()
@@ -713,6 +822,115 @@ def create_app():
                     return redirect(url_for("billing"))
             return view_fn(*args, **kwargs)
         return wrapper
+
+    # -----------------------------
+    # Recurring scheduler helpers
+    # -----------------------------
+    def _delete_future_recurring_events(session, customer: Customer, from_dt: datetime | None = None) -> int:
+        """
+        Delete future auto-generated recurring events for a specific customer.
+        Manual events are not touched (is_auto=False).
+        """
+        if not customer:
+            return 0
+        if from_dt is None:
+            from_dt = datetime.utcnow()
+
+        token = f"cust:{customer.id}"
+
+        q = (
+            session.query(ScheduleEvent)
+            .filter(ScheduleEvent.user_id == customer.user_id)
+            .filter(ScheduleEvent.customer_id == customer.id)
+            .filter(ScheduleEvent.is_auto.is_(True))
+            .filter(ScheduleEvent.recurring_token == token)
+            .filter(ScheduleEvent.start_dt >= from_dt)
+        )
+
+        count = q.count()
+        q.delete(synchronize_session=False)
+        return count
+
+    def _delete_all_recurring_events(session, customer: Customer) -> int:
+        """
+        Delete ALL auto-generated recurring events for this customer (past + future).
+        This is used when user clicks the "Discontinue Recurring" button.
+        """
+        if not customer:
+            return 0
+
+        token = f"cust:{customer.id}"
+
+        q = (
+            session.query(ScheduleEvent)
+            .filter(ScheduleEvent.user_id == customer.user_id)
+            .filter(ScheduleEvent.customer_id == customer.id)
+            .filter(ScheduleEvent.is_auto.is_(True))
+            .filter(ScheduleEvent.recurring_token == token)
+        )
+
+        count = q.count()
+        q.delete(synchronize_session=False)
+        return count
+
+    def _ensure_recurring_events(session, customer: Customer, horizon_days: int = 90) -> int:
+        """
+        Creates future ScheduleEvent rows up to horizon_days.
+        Uses customer.next_service_dt as the next occurrence to generate.
+        Advances next_service_dt forward as events are created.
+
+        NOTE: Only auto-generated events are marked is_auto=True + recurring_token.
+        """
+        if not customer:
+            return 0
+
+        next_dt = getattr(customer, "next_service_dt", None)
+        interval = getattr(customer, "service_interval_days", None)
+
+        if not next_dt or not interval or int(interval) < 1:
+            return 0
+
+        minutes = int(getattr(customer, "default_service_minutes", 60) or 60)
+        title_default = (getattr(customer, "service_title", None) or "").strip() or None
+        notes_default = (getattr(customer, "service_notes", None) or "").strip() or None
+
+        created = 0
+        horizon_end = datetime.utcnow() + timedelta(days=horizon_days)
+
+        token = f"cust:{customer.id}"
+
+        # generate until beyond horizon
+        while next_dt <= horizon_end:
+            exists = (
+                session.query(ScheduleEvent)
+                .filter(ScheduleEvent.user_id == customer.user_id)
+                .filter(ScheduleEvent.customer_id == customer.id)
+                .filter(ScheduleEvent.start_dt == next_dt)
+                .filter(ScheduleEvent.is_auto.is_(True))
+                .filter(ScheduleEvent.recurring_token == token)
+                .first()
+            )
+            if not exists:
+                end_dt = next_dt + timedelta(minutes=minutes)
+                ev = ScheduleEvent(
+                    user_id=customer.user_id,
+                    customer_id=customer.id,
+                    title=title_default or customer.name,
+                    notes=notes_default or None,
+                    start_dt=next_dt,
+                    end_dt=end_dt,
+
+                    is_auto=True,
+                    recurring_token=token,
+                )
+                session.add(ev)
+                created += 1
+
+            # advance pointer
+            next_dt = next_dt + timedelta(days=int(interval))
+            customer.next_service_dt = next_dt
+
+        return created
 
     # -----------------------------
     # Stripe Billing
@@ -939,15 +1157,12 @@ def create_app():
                         return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
                     u.email = new_email
-                
-                # -----------------------------
+
                 # Logo upload / remove
-                # -----------------------------
                 remove_logo = (request.form.get("remove_logo") or "").strip() == "1"
                 logo_file = request.files.get("logo")
 
                 if remove_logo:
-                    # delete existing logo file if present
                     old_rel = (getattr(u, "logo_path", None) or "").strip()
                     if old_rel:
                         old_abs = (Path("instance") / old_rel).resolve()
@@ -966,12 +1181,10 @@ def create_app():
                         flash("Logo must be a .png, .jpg, or .jpeg file.", "error")
                         return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
-                    # store under instance/uploads/logos/
                     d = _logo_upload_dir()
                     out_name = f"user_{u.id}{ext}"
                     out_path = (d / out_name).resolve()
 
-                    # delete old if different extension/name
                     old_rel = (getattr(u, "logo_path", None) or "").strip()
                     if old_rel:
                         old_abs = (Path("instance") / old_rel).resolve()
@@ -982,10 +1195,7 @@ def create_app():
                             pass
 
                     logo_file.save(out_path)
-
-                    # store relative-to-instance path (portable)
                     u.logo_path = str(Path("uploads") / "logos" / out_name)
-
 
                 tmpl = (request.form.get("invoice_template") or "").strip()
                 tmpl = _template_key_fallback(tmpl)
@@ -1009,7 +1219,7 @@ def create_app():
     def billing():
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
-            status = (getattr(u, "subscription_status", None) or "none")
+            status = (getattr(u, "subscription_status", None) or "none") if u else "none"
         return render_template("billing.html", status=status, publishable_key=STRIPE_PUBLISHABLE_KEY)
 
     @app.route("/billing/checkout", methods=["POST"])
@@ -1072,7 +1282,7 @@ def create_app():
         base = _base_url()
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
-            cust = (getattr(u, "stripe_customer_id", None) or "").strip()
+            cust = (getattr(u, "stripe_customer_id", None) or "").strip() if u else ""
             if not cust:
                 flash("No billing profile yet. Start your trial first.", "error")
                 return redirect(url_for("billing"))
@@ -1088,8 +1298,8 @@ def create_app():
     # -----------------------------
     @app.route("/stripe/webhook", methods=["POST"])
     def stripe_webhook():
-        STRIPE_WEBHOOK_SECRET = app.config.get("STRIPE_WEBHOOK_SECRET") or os.getenv("STRIPE_WEBHOOK_SECRET")
-        if not STRIPE_WEBHOOK_SECRET:
+        webhook_secret = app.config.get("STRIPE_WEBHOOK_SECRET") or os.getenv("STRIPE_WEBHOOK_SECRET")
+        if not webhook_secret:
             abort(500)
 
         payload = request.get_data(as_text=False)
@@ -1099,7 +1309,7 @@ def create_app():
             event = stripe.Webhook.construct_event(
                 payload=payload,
                 sig_header=sig_header,
-                secret=STRIPE_WEBHOOK_SECRET,
+                secret=webhook_secret,
             )
         except Exception as e:
             print(f"[STRIPE] Webhook signature verification failed: {repr(e)}", flush=True)
@@ -1189,6 +1399,225 @@ def create_app():
         return redirect(url_for("customers_list" if current_user.is_authenticated else "login"))
 
     # -----------------------------
+    # Scheduler
+    # -----------------------------
+    @app.route("/schedule")
+    @login_required
+    @subscription_required
+    def schedule():
+        # optional deep-link for preselecting a customer on the front-end (JS can read URL param)
+        return render_template("schedule.html", title="Scheduler")
+
+    @app.get("/api/customers/search")
+    @login_required
+    @subscription_required
+    def api_customers_search():
+        uid = _current_user_id_int()
+        q = (request.args.get("q") or "").strip()
+        if not q:
+            return jsonify([])
+
+        with db_session() as s:
+            like = f"%{q}%"
+            rows = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .filter(Customer.name.ilike(like))
+                .order_by(Customer.name.asc())
+                .limit(20)
+                .all()
+            )
+            return jsonify([
+                {"id": c.id, "name": c.name, "phone": c.phone or "", "email": c.email or "", "address": c.address or ""}
+                for c in rows
+            ])
+
+    @app.get("/api/schedule/events")
+    @login_required
+    @subscription_required
+    def api_schedule_events():
+        uid = _current_user_id_int()
+        start = (request.args.get("start") or "").strip()  # YYYY-MM-DD
+        end = (request.args.get("end") or "").strip()      # YYYY-MM-DD
+
+        if not start or not end:
+            return jsonify({"error": "start and end required"}), 400
+
+        # If you pass YYYY-MM-DD only, treat as date boundaries
+        if len(start) == 10:
+            start_dt = datetime.fromisoformat(start + "T00:00:00")
+        else:
+            try:
+                start_dt = datetime.fromisoformat(start)
+            except Exception:
+                return jsonify({"error": "Invalid date format. Use YYYY-MM-DD (or ISO)."}), 400
+
+        if len(end) == 10:
+            end_dt = datetime.fromisoformat(end + "T00:00:00")
+        else:
+            try:
+                end_dt = datetime.fromisoformat(end)
+            except Exception:
+                return jsonify({"error": "Invalid date format. Use YYYY-MM-DD (or ISO)."}), 400
+
+        with db_session() as s:
+            # auto-generate recurring events up to 90 days out
+            try:
+                customers = (
+                    s.query(Customer)
+                    .filter(Customer.user_id == uid)
+                    .filter(Customer.next_service_dt.isnot(None))
+                    .filter(Customer.service_interval_days.isnot(None))
+                    .all()
+                )
+                any_created = 0
+                for cust in customers:
+                    any_created += _ensure_recurring_events(s, cust, horizon_days=90)
+                if any_created:
+                    s.commit()
+            except Exception as e:
+                # don't break calendar if recurring generation fails
+                print("[SCHEDULE] recurring generation error:", repr(e), flush=True)
+                s.rollback()
+
+            evs = (
+                s.query(ScheduleEvent)
+                .filter(ScheduleEvent.user_id == uid)
+                .filter(ScheduleEvent.start_dt < end_dt)
+                .filter(ScheduleEvent.end_dt > start_dt)
+                .order_by(ScheduleEvent.start_dt.asc())
+                .all()
+            )
+
+            out = []
+            for e in evs:
+                cust = s.get(Customer, e.customer_id) if getattr(e, "customer_id", None) else None
+                out.append({
+                    "id": e.id,
+                    "customer_id": e.customer_id,
+                    "customer_name": (cust.name if cust else ""),
+                    "title": (e.title or "").strip() or (cust.name if cust else "Appointment"),
+                    "start": e.start_dt.isoformat(timespec="minutes"),
+                    "end": e.end_dt.isoformat(timespec="minutes"),
+                    "notes": (e.notes or "").strip(),
+                    "status": (getattr(e, "status", None) or "scheduled"),
+                })
+
+            return jsonify(out)
+
+    @app.post("/api/schedule/events")
+    @login_required
+    @subscription_required
+    def api_schedule_create():
+        uid = _current_user_id_int()
+        data = request.get_json(silent=True) or {}
+
+        try:
+            start_dt = _parse_iso_dt(data.get("start") or "")
+            end_dt = _parse_iso_dt(data.get("end") or "")
+        except Exception:
+            return jsonify({"error": "Invalid start/end datetime"}), 400
+
+        if end_dt <= start_dt:
+            return jsonify({"error": "End must be after start"}), 400
+
+        customer_id = data.get("customer_id")
+        title = (data.get("title") or "").strip()
+        notes = (data.get("notes") or "").strip()
+
+        with db_session() as s:
+            cust_id_int = None
+            if customer_id is not None and str(customer_id).strip() != "":
+                try:
+                    cust_id_int = int(customer_id)
+                except Exception:
+                    return jsonify({"error": "customer_id must be an integer"}), 400
+                _customer_owned_or_404(s, cust_id_int)
+
+            ev = ScheduleEvent(
+                user_id=uid,
+                customer_id=cust_id_int,
+                title=title or None,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                notes=notes or None,
+                # is_auto defaults False for manual events
+            )
+            s.add(ev)
+            s.commit()
+
+            return jsonify({"ok": True, "id": ev.id})
+
+    @app.put("/api/schedule/events/<int:event_id>")
+    @login_required
+    @subscription_required
+    def api_schedule_update(event_id: int):
+        uid = _current_user_id_int()
+        data = request.get_json(silent=True) or {}
+
+        with db_session() as s:
+            ev = (
+                s.query(ScheduleEvent)
+                .filter(ScheduleEvent.id == event_id, ScheduleEvent.user_id == uid)
+                .first()
+            )
+            if not ev:
+                abort(404)
+
+            if "start" in data:
+                ev.start_dt = _parse_iso_dt(data.get("start") or "")
+            if "end" in data:
+                ev.end_dt = _parse_iso_dt(data.get("end") or "")
+
+            if getattr(ev, "end_dt", None) and getattr(ev, "start_dt", None) and ev.end_dt <= ev.start_dt:
+                return jsonify({"error": "End must be after start"}), 400
+
+            if "customer_id" in data:
+                raw = data.get("customer_id")
+                if raw is None or str(raw).strip() == "":
+                    ev.customer_id = None
+                else:
+                    try:
+                        cust_id_int = int(raw)
+                    except Exception:
+                        return jsonify({"error": "customer_id must be an integer"}), 400
+                    _customer_owned_or_404(s, cust_id_int)
+                    ev.customer_id = cust_id_int
+
+            if "title" in data:
+                t = (data.get("title") or "").strip()
+                ev.title = t or None
+
+            if "notes" in data:
+                n = (data.get("notes") or "").strip()
+                ev.notes = n or None
+
+            if "status" in data:
+                st = (data.get("status") or "").strip().lower()
+                if st in ("scheduled", "completed", "cancelled"):
+                    ev.status = st
+
+            s.commit()
+            return jsonify({"ok": True})
+
+    @app.delete("/api/schedule/events/<int:event_id>")
+    @login_required
+    @subscription_required
+    def api_schedule_delete(event_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            ev = (
+                s.query(ScheduleEvent)
+                .filter(ScheduleEvent.id == event_id, ScheduleEvent.user_id == uid)
+                .first()
+            )
+            if not ev:
+                abort(404)
+            s.delete(ev)
+            s.commit()
+            return jsonify({"ok": True})
+
+    # -----------------------------
     # Customers
     # -----------------------------
     @app.route("/customers")
@@ -1221,12 +1650,21 @@ def create_app():
             phone = (request.form.get("phone") or "").strip() or None
             address = (request.form.get("address") or "").strip() or None
 
+            # Recurring fields (safe if form doesn't have them yet)
+            next_service_dt = _parse_dt_local(request.form.get("next_service_dt"))
+            interval_days_raw = (request.form.get("service_interval_days") or "").strip()
+            default_minutes_raw = (request.form.get("default_service_minutes") or "").strip()
+            service_title = (request.form.get("service_title") or "").strip() or None
+            service_notes = (request.form.get("service_notes") or "").strip() or None
+
+            service_interval_days = int(interval_days_raw) if interval_days_raw.isdigit() else None
+            default_service_minutes = int(default_minutes_raw) if default_minutes_raw.isdigit() else 60
+
             if not name:
                 flash("Customer name is required.", "error")
                 return render_template("customer_form.html", mode="new", form=request.form)
 
             with db_session() as s:
-                # quick UX: if exists (case-insensitive), jump to it
                 existing = (
                     s.query(Customer)
                     .filter(Customer.user_id == _current_user_id_int())
@@ -1243,6 +1681,12 @@ def create_app():
                     email=(email if (email and _looks_like_email(email)) else (email or None)),
                     phone=phone,
                     address=address,
+
+                    next_service_dt=next_service_dt,
+                    service_interval_days=service_interval_days,
+                    default_service_minutes=default_service_minutes,
+                    service_title=service_title,
+                    service_notes=service_notes,
                 )
                 s.add(c)
                 try:
@@ -1251,6 +1695,15 @@ def create_app():
                     s.rollback()
                     flash("That customer name is already in use.", "error")
                     return render_template("customer_form.html", mode="new", form=request.form)
+
+                # If recurrence is enabled, generate initial future events
+                try:
+                    created = _ensure_recurring_events(s, c, horizon_days=90)
+                    if created:
+                        s.commit()
+                except Exception as e:
+                    s.rollback()
+                    print("[SCHEDULE] initial recurrence gen error:", repr(e), flush=True)
 
                 return redirect(url_for("customer_view", customer_id=c.id))
 
@@ -1263,6 +1716,15 @@ def create_app():
         with db_session() as s:
             c = _customer_owned_or_404(s, customer_id)
 
+            # capture old recurring rule so we can detect changes
+            old_rule = (
+                c.next_service_dt,
+                c.service_interval_days,
+                c.default_service_minutes,
+                (c.service_title or "").strip(),
+                (c.service_notes or "").strip(),
+            )
+
             if request.method == "POST":
                 name = (request.form.get("name") or "").strip()
                 email = _normalize_email(request.form.get("email") or "").strip() or None
@@ -1273,7 +1735,6 @@ def create_app():
                     flash("Customer name is required.", "error")
                     return render_template("customer_form.html", mode="edit", c=c)
 
-                # If renaming to an existing customer name for this user, MERGE instead of 500.
                 dup = (
                     s.query(Customer)
                     .filter(Customer.user_id == _current_user_id_int())
@@ -1293,11 +1754,39 @@ def create_app():
                         flash("Could not merge customers (server error).", "error")
                         return render_template("customer_form.html", mode="edit", c=c)
 
-                # Normal update (no collision)
                 c.name = name
                 c.email = (email if (email and _looks_like_email(email)) else (email or None))
                 c.phone = phone
                 c.address = address
+
+                # Recurring fields
+                c.next_service_dt = _parse_dt_local(request.form.get("next_service_dt"))
+                interval_days_raw = (request.form.get("service_interval_days") or "").strip()
+                default_minutes_raw = (request.form.get("default_service_minutes") or "").strip()
+                c.service_interval_days = int(interval_days_raw) if interval_days_raw.isdigit() else None
+                c.default_service_minutes = int(default_minutes_raw) if default_minutes_raw.isdigit() else 60
+                c.service_title = (request.form.get("service_title") or "").strip() or None
+                c.service_notes = (request.form.get("service_notes") or "").strip() or None
+
+                new_rule = (
+                    c.next_service_dt,
+                    c.service_interval_days,
+                    c.default_service_minutes,
+                    (c.service_title or "").strip(),
+                    (c.service_notes or "").strip(),
+                )
+                rule_changed = (old_rule != new_rule)
+
+                # If rule changed, delete future old recurring events and regenerate from the new rule
+                if rule_changed:
+                    try:
+                        _delete_future_recurring_events(s, c, from_dt=datetime.utcnow())
+                        _ensure_recurring_events(s, c, horizon_days=90)
+                    except Exception as e:
+                        s.rollback()
+                        print("[SCHEDULE] recurring reset error:", repr(e), flush=True)
+                        flash("Could not update recurring schedule (server error).", "error")
+                        return render_template("customer_form.html", mode="edit", c=c)
 
                 try:
                     s.commit()
@@ -1310,6 +1799,49 @@ def create_app():
                 return redirect(url_for("customer_view", customer_id=c.id))
 
         return render_template("customer_form.html", mode="edit", c=c)
+
+    # -----------------------------
+    # NEW: Discontinue recurring schedule for a customer (button)
+    # -----------------------------
+    @app.post("/customers/<int:customer_id>/recurring/disable")
+    @login_required
+    @subscription_required
+    def customer_disable_recurring(customer_id: int):
+        """
+        Disables recurring scheduling for this customer WITHOUT requiring the user
+        to manually delete fields. Also deletes all existing auto-generated recurring
+        appointments for this customer from the calendar.
+        """
+        with db_session() as s:
+            c = _customer_owned_or_404(s, customer_id)
+
+            # delete all auto events (past + future) tied to this customer's recurring token
+            deleted = 0
+            try:
+                deleted = _delete_all_recurring_events(s, c)
+            except Exception as e:
+                s.rollback()
+                print("[SCHEDULE] disable recurring delete error:", repr(e), flush=True)
+                flash("Could not delete recurring appointments (server error).", "error")
+                return redirect(url_for("customer_edit", customer_id=customer_id))
+
+            # clear recurring fields (this disables future generation)
+            c.next_service_dt = None
+            c.service_interval_days = None
+            c.service_title = None
+            c.service_notes = None
+            # keep default_service_minutes as-is (harmless / preference)
+
+            try:
+                s.commit()
+            except Exception as e:
+                s.rollback()
+                print("[SCHEDULE] disable recurring commit error:", repr(e), flush=True)
+                flash("Could not disable recurring schedule (server error).", "error")
+                return redirect(url_for("customer_edit", customer_id=customer_id))
+
+        flash(f"Recurring schedule disabled. Removed {deleted} recurring appointment(s).", "success")
+        return redirect(url_for("customer_edit", customer_id=customer_id))
 
     @app.route("/customers/<int:customer_id>/merge", methods=["GET", "POST"])
     @login_required
@@ -1382,8 +1914,7 @@ def create_app():
                     if status == "unpaid" and not fully_paid:
                         filtered.append(inv)
                 invoices_list = filtered
-                
-            # --- Total Business (money spent) ---
+
             total_business = 0.0
             total_paid = 0.0
             total_unpaid = 0.0
@@ -1398,8 +1929,6 @@ def create_app():
                 except Exception:
                     pass
 
-
-
         return render_template(
             "customer_view.html",
             c=c,
@@ -1410,7 +1939,6 @@ def create_app():
             total_paid=total_paid,
             total_unpaid=total_unpaid,
         )
-
 
     # -----------------------------
     # All invoices list (optional / legacy)
@@ -1550,7 +2078,6 @@ def create_app():
                     invoice_number=inv_no,
                     invoice_template=user_template_key,
 
-                    # ✅ autofill fallback
                     customer_email=(cust_email_override or (c.email or None)),
                     customer_phone=(cust_phone_override or (c.phone or None)),
 
@@ -1711,12 +2238,11 @@ def create_app():
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
                 inv.paid = _to_float(request.form.get("paid"))
                 inv.date_in = request.form.get("date_in", "").strip()
-                inv.notes = request.form.get("notes", "").rstrip()
+                inv.notes = (request.form.get("notes") or "").rstrip()
 
                 cust_email_override = (request.form.get("customer_email") or "").strip() or None
                 cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
 
-                # ✅ autofill fallback
                 inv.customer_email = cust_email_override or (c.email or None)
                 inv.customer_phone = cust_phone_override or (c.phone or None)
 

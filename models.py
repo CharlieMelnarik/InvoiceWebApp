@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     UniqueConstraint,
     select,
+    Boolean,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -62,12 +63,11 @@ class User(Base):
 
     # Security (failed login lockout)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    password_reset_required: Mapped[bool] = mapped_column(nullable=False, default=False)
+    password_reset_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     last_failed_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    
+
     # Logo for PDF header (relative path under instance/, e.g. "uploads/logos/user_1.png")
     logo_path: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
-
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -84,6 +84,57 @@ class User(Base):
         back_populates="user",
         order_by="Invoice.created_at.desc()",
     )
+
+    schedule_events: Mapped[list["ScheduleEvent"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="ScheduleEvent.start_dt.asc()",
+    )
+
+
+# -----------------------------
+# Schedule / Appointments
+# -----------------------------
+class ScheduleEvent(Base):
+    __tablename__ = "schedule_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    customer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+
+    start_dt: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    end_dt: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="scheduled",
+    )  # scheduled|completed|cancelled
+
+    # ✅ recurring bookkeeping
+    is_auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    recurring_token: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="schedule_events")
+    customer: Mapped[Optional["Customer"]] = relationship(back_populates="schedule_events")
 
 
 # -----------------------------
@@ -103,6 +154,13 @@ class Customer(Base):
         index=True,
     )
 
+    # Recurring service fields
+    next_service_dt: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    service_interval_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    default_service_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    service_title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    service_notes: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+
     # Name is mandatory
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
 
@@ -121,6 +179,12 @@ class Customer(Base):
     invoices: Mapped[list["Invoice"]] = relationship(
         back_populates="customer",
         order_by="Invoice.created_at.desc()",
+    )
+
+    # NOTE: no delete-orphan here because ScheduleEvent.customer_id is SET NULL.
+    schedule_events: Mapped[list["ScheduleEvent"]] = relationship(
+        back_populates="customer",
+        order_by="ScheduleEvent.start_dt.asc()",
     )
 
 
@@ -155,7 +219,6 @@ class Invoice(Base):
         nullable=True,
     )
 
-    # ✅ New: invoice belongs to a customer (Option B)
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL"),
         index=True,
@@ -164,16 +227,13 @@ class Invoice(Base):
 
     invoice_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
 
-    # Locks template at creation time
     invoice_template: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
-    # Customer contact (can remain here; later you may auto-fill from Customer)
     customer_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     customer_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
-    # Core fields
-    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)       # customer display name (legacy/useful)
-    vehicle: Mapped[str] = mapped_column(String(200), nullable=False, index=True)   # job/vehicle field
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    vehicle: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
 
     hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     price_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -286,9 +346,4 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
-
-
-
-
-
 
