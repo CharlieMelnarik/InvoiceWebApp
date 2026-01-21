@@ -21,7 +21,7 @@ from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
     login_required, current_user
 )
-from sqlalchemy import text
+from sqlalchemy import text, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -101,6 +101,20 @@ def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
         session.query(Invoice)
         .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
         .filter(Invoice.id == invoice_id, Invoice.user_id == _current_user_id_int())
+        .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
+        .first()
+    )
+    if not inv:
+        abort(404)
+    return inv
+
+
+def _estimate_owned_or_404(session, estimate_id: int) -> Invoice:
+    inv = (
+        session.query(Invoice)
+        .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+        .filter(Invoice.id == estimate_id, Invoice.user_id == _current_user_id_int())
+        .filter(Invoice.is_estimate.is_(True))
         .first()
     )
     if not inv:
@@ -187,6 +201,15 @@ INVOICE_TEMPLATES = {
         "parts_name_label": "Expense",
         "shop_supplies_label": "Admin / Filing Fees",
     },
+    "computer_repair": {
+        "label": "Computer Repair",
+        "job_label": "Device",
+        "labor_title": "Services",
+        "labor_desc_label": "Service Description",
+        "parts_title": "Parts",
+        "parts_name_label": "Part Name",
+        "shop_supplies_label": "Shop Supplies",
+    },
     "lawn_care": {
         "label": "Lawn Care / Landscaping",
         "job_label": "Service Address",
@@ -195,6 +218,15 @@ INVOICE_TEMPLATES = {
         "parts_title": "Materials",
         "parts_name_label": "Material",
         "shop_supplies_label": "Disposal / Trip Fees",
+    },
+    "flipping_items": {
+        "label": "Flipping Items",
+        "job_label": "Item",
+        "labor_title": "Sales",
+        "labor_desc_label": "Sale Description",
+        "parts_title": "Costs",
+        "parts_name_label": "Cost Item",
+        "shop_supplies_label": "Other Expenses",
     },
 }
 
@@ -435,6 +467,19 @@ def _migrate_invoice_template(engine):
             conn.execute(text("ALTER TABLE invoices ADD COLUMN invoice_template VARCHAR(50)"))
 
 
+def _migrate_invoice_is_estimate(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "is_estimate"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN is_estimate BOOLEAN"))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE invoices SET is_estimate = FALSE WHERE is_estimate IS NULL"))
+    except Exception:
+        pass
+
+
 def _migrate_user_billing_fields(engine):
     if not _table_exists(engine, "users"):
         return
@@ -642,6 +687,7 @@ def create_app():
     _migrate_invoice_contact_fields(engine)
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
+    _migrate_invoice_is_estimate(engine)
     _migrate_user_billing_fields(engine)
     _migrate_user_security_fields(engine)
     _migrate_customers(engine)
@@ -1896,6 +1942,7 @@ def create_app():
                 .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
                 .filter(Invoice.user_id == uid)
                 .filter(Invoice.customer_id == c.id)
+                .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
                 .order_by(Invoice.created_at.desc())
             )
 
@@ -1903,6 +1950,20 @@ def create_app():
                 inv_q = inv_q.filter(Invoice.invoice_number.startswith(year))
 
             invoices_list = inv_q.all()
+
+            estimates_q = (
+                s.query(Invoice)
+                .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                .filter(Invoice.user_id == uid)
+                .filter(Invoice.customer_id == c.id)
+                .filter(Invoice.is_estimate.is_(True))
+                .order_by(Invoice.created_at.desc())
+            )
+
+            if year.isdigit() and len(year) == 4:
+                estimates_q = estimates_q.filter(Invoice.invoice_number.startswith(year))
+
+            estimates_list = estimates_q.all()
 
             if status in ("paid", "unpaid"):
                 EPS = 0.01
@@ -1933,11 +1994,55 @@ def create_app():
             "customer_view.html",
             c=c,
             invoices=invoices_list,
+            estimates=estimates_list,
             year=year,
             status=status or "all",
             total_business=total_business,
             total_paid=total_paid,
             total_unpaid=total_unpaid,
+        )
+
+    # -----------------------------
+    # All estimates list
+    # -----------------------------
+    @app.route("/estimates")
+    @login_required
+    def estimates():
+        q = (request.args.get("q") or "").strip()
+        year = (request.args.get("year") or "").strip()
+
+        uid = _current_user_id_int()
+
+        with db_session() as s:
+            estimates_q = (
+                s.query(Invoice)
+                .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                .filter(Invoice.user_id == uid)
+                .filter(Invoice.is_estimate.is_(True))
+                .order_by(Invoice.created_at.desc())
+            )
+
+            if q:
+                like = f"%{q}%"
+                estimates_q = estimates_q.filter(
+                    (Invoice.name.ilike(like)) |
+                    (Invoice.vehicle.ilike(like))
+                )
+
+            if year.isdigit() and len(year) == 4:
+                estimates_q = estimates_q.filter(Invoice.invoice_number.startswith(year))
+
+            estimates_list = estimates_q.all()
+
+            customers = s.query(Customer.id, Customer.name).filter(Customer.user_id == uid).all()
+            customer_map = {cid: (name or "").strip() for cid, name in customers}
+
+        return render_template(
+            "estimates_list.html",
+            estimates=estimates_list,
+            customer_map=customer_map,
+            q=q,
+            year=year,
         )
 
     # -----------------------------
@@ -1957,6 +2062,7 @@ def create_app():
                 s.query(Invoice)
                 .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
                 .filter(Invoice.user_id == uid)
+                .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
                 .order_by(Invoice.created_at.desc())
             )
 
@@ -1992,6 +2098,136 @@ def create_app():
             q=q,
             year=year,
             status=status or "all"
+        )
+
+    # -----------------------------
+    # Create estimate — GATED
+    # -----------------------------
+    @app.route("/estimates/new", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def estimate_new():
+        uid = _current_user_id_int()
+        pre_customer_id = (request.args.get("customer_id") or "").strip()
+
+        with db_session() as s:
+            u = s.get(User, uid)
+            user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
+            tmpl = _template_config_for(user_template_key)
+
+            customers = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .order_by(Customer.name.asc())
+                .all()
+            )
+
+            customers_for_js = [{
+                "id": c.id,
+                "name": (c.name or "").strip(),
+                "email": (c.email or "").strip(),
+                "phone": (c.phone or "").strip(),
+            } for c in customers]
+
+            pre_customer = None
+            if pre_customer_id.isdigit():
+                try:
+                    pre_customer = _customer_owned_or_404(s, int(pre_customer_id))
+                except Exception:
+                    pre_customer = None
+
+        if request.method == "POST":
+            customer_id_raw = (request.form.get("customer_id") or "").strip()
+            vehicle = (request.form.get("vehicle") or "").strip()
+
+            if not customer_id_raw.isdigit():
+                flash("Please select a customer from the list.", "error")
+                return render_template(
+                    "invoice_form.html",
+                    mode="new",
+                    doc_type="estimate",
+                    form=request.form,
+                    tmpl=tmpl,
+                    tmpl_key=user_template_key,
+                    customers=customers,
+                    customers_for_js=customers_for_js,
+                    pre_customer=pre_customer,
+                )
+
+            customer_id = int(customer_id_raw)
+
+            if user_template_key in ("auto_repair", "lawn_care") and not vehicle:
+                flash("Vehicle is required for Auto Repair estimates.", "error")
+                return render_template(
+                    "invoice_form.html",
+                    mode="new",
+                    doc_type="estimate",
+                    form=request.form,
+                    tmpl=tmpl,
+                    tmpl_key=user_template_key,
+                    customers=customers,
+                    customers_for_js=customers_for_js,
+                    pre_customer=pre_customer,
+                )
+
+            with db_session() as s:
+                c = _customer_owned_or_404(s, customer_id)
+
+                year = int(datetime.now().strftime("%Y"))
+                inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+
+                cust_email_override = (request.form.get("customer_email") or "").strip() or None
+                cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
+
+                inv = Invoice(
+                    user_id=uid,
+                    customer_id=c.id,
+
+                    invoice_number=inv_no,
+                    invoice_template=user_template_key,
+                    is_estimate=True,
+
+                    customer_email=(cust_email_override or (c.email or None)),
+                    customer_phone=(cust_phone_override or (c.phone or None)),
+
+                    name=(c.name or "").strip(),
+                    vehicle=vehicle,
+
+                    hours=_to_float(request.form.get("hours")),
+                    price_per_hour=_to_float(request.form.get("price_per_hour")),
+                    shop_supplies=_to_float(request.form.get("shop_supplies")),
+                    paid=0.0,
+                    date_in=request.form.get("date_in", "").strip(),
+                    notes=request.form.get("notes", "").rstrip(),
+                )
+
+                for pn, pp in _parse_repeating_fields(
+                    request.form.getlist("part_name"),
+                    request.form.getlist("part_price")
+                ):
+                    inv.parts.append(InvoicePart(part_name=pn, part_price=pp))
+
+                for desc, t in _parse_repeating_fields(
+                    request.form.getlist("labor_desc"),
+                    request.form.getlist("labor_time_hours")
+                ):
+                    inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
+
+                s.add(inv)
+                s.commit()
+
+                return redirect(url_for("estimate_view", estimate_id=inv.id))
+
+        return render_template(
+            "invoice_form.html",
+            mode="new",
+            doc_type="estimate",
+            default_date=datetime.now().strftime("%m/%d/%Y"),
+            tmpl=tmpl,
+            tmpl_key=user_template_key,
+            customers=customers,
+            customers_for_js=customers_for_js,
+            pre_customer=pre_customer,
         )
 
     # -----------------------------
@@ -2039,6 +2275,7 @@ def create_app():
                 return render_template(
                     "invoice_form.html",
                     mode="new",
+                    doc_type="invoice",
                     form=request.form,
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
@@ -2054,6 +2291,7 @@ def create_app():
                 return render_template(
                     "invoice_form.html",
                     mode="new",
+                    doc_type="invoice",
                     form=request.form,
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
@@ -2113,12 +2351,209 @@ def create_app():
             "invoice_form.html",
             mode="new",
             default_date=datetime.now().strftime("%m/%d/%Y"),
+            doc_type="invoice",
             tmpl=tmpl,
             tmpl_key=user_template_key,
             customers=customers,
             customers_for_js=customers_for_js,
             pre_customer=pre_customer,
         )
+
+    # -----------------------------
+    # View estimate
+    # -----------------------------
+    @app.route("/estimates/<int:estimate_id>")
+    @login_required
+    def estimate_view(estimate_id):
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+            tmpl = _template_config_for(inv.invoice_template)
+            c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+        return render_template("estimate_view.html", inv=inv, tmpl=tmpl, customer=c)
+
+    # -----------------------------
+    # Edit estimate — GATED
+    # -----------------------------
+    @app.route("/estimates/<int:estimate_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def estimate_edit(estimate_id):
+        uid = _current_user_id_int()
+
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+
+            customers = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .order_by(Customer.name.asc())
+                .all()
+            )
+
+            customers_for_js = [{
+                "id": c.id,
+                "name": (c.name or "").strip(),
+                "email": (c.email or "").strip(),
+                "phone": (c.phone or "").strip(),
+            } for c in customers]
+
+            tmpl_key = _template_key_fallback(inv.invoice_template)
+            tmpl = _template_config_for(tmpl_key)
+
+            if request.method == "POST":
+                customer_id_raw = (request.form.get("customer_id") or "").strip()
+                if not customer_id_raw.isdigit():
+                    flash("Please select a customer from the list.", "error")
+                    return render_template(
+                        "invoice_form.html",
+                        mode="edit",
+                        inv=inv,
+                        doc_type="estimate",
+                        form=request.form,
+                        tmpl=tmpl,
+                        tmpl_key=tmpl_key,
+                        customers=customers,
+                        customers_for_js=customers_for_js,
+                    )
+
+                customer_id = int(customer_id_raw)
+                c = _customer_owned_or_404(s, customer_id)
+
+                inv.customer_id = customer_id
+                inv.name = (c.name or "").strip()
+
+                inv.vehicle = (request.form.get("vehicle") or "").strip()
+                inv.hours = _to_float(request.form.get("hours"))
+                inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
+                inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
+                inv.paid = 0.0
+                inv.date_in = request.form.get("date_in", "").strip()
+                inv.notes = (request.form.get("notes") or "").rstrip()
+
+                cust_email_override = (request.form.get("customer_email") or "").strip() or None
+                cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
+
+                inv.customer_email = cust_email_override or (c.email or None)
+                inv.customer_phone = cust_phone_override or (c.phone or None)
+                inv.is_estimate = True
+
+                if tmpl_key in ("auto_repair", "lawn_care") and not inv.vehicle:
+                    flash("Vehicle is required for Auto Repair estimates.", "error")
+                    return render_template(
+                        "invoice_form.html",
+                        mode="edit",
+                        inv=inv,
+                        doc_type="estimate",
+                        form=request.form,
+                        tmpl=tmpl,
+                        tmpl_key=tmpl_key,
+                        customers=customers,
+                        customers_for_js=customers_for_js,
+                    )
+
+                inv.parts.clear()
+                inv.labor_items.clear()
+
+                for pn, pp in _parse_repeating_fields(
+                    request.form.getlist("part_name"),
+                    request.form.getlist("part_price")
+                ):
+                    inv.parts.append(InvoicePart(part_name=pn, part_price=pp))
+
+                for desc, t in _parse_repeating_fields(
+                    request.form.getlist("labor_desc"),
+                    request.form.getlist("labor_time_hours")
+                ):
+                    inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
+
+                s.commit()
+                return redirect(url_for("estimate_view", estimate_id=inv.id))
+
+        return render_template(
+            "invoice_form.html",
+            mode="edit",
+            inv=inv,
+            doc_type="estimate",
+            tmpl=tmpl,
+            tmpl_key=tmpl_key,
+            customers=customers,
+            customers_for_js=customers_for_js,
+        )
+
+    # -----------------------------
+    # Convert estimate to invoice — GATED
+    # -----------------------------
+    @app.route("/estimates/<int:estimate_id>/convert", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_convert(estimate_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+
+            year = int(datetime.now().strftime("%Y"))
+            new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+
+            new_inv = Invoice(
+                user_id=uid,
+                customer_id=inv.customer_id,
+                invoice_number=new_no,
+                invoice_template=inv.invoice_template,
+                is_estimate=False,
+
+                name=inv.name,
+                vehicle=inv.vehicle,
+
+                hours=inv.hours,
+                price_per_hour=inv.price_per_hour,
+                shop_supplies=inv.shop_supplies,
+
+                notes=inv.notes,
+                paid=0.0,
+                date_in=inv.date_in or datetime.now().strftime("%m/%d/%Y"),
+
+                customer_email=inv.customer_email,
+                customer_phone=inv.customer_phone,
+
+                pdf_path=None,
+                pdf_generated_at=None,
+            )
+
+            for p in inv.parts:
+                new_inv.parts.append(InvoicePart(part_name=p.part_name, part_price=p.part_price))
+
+            for li in inv.labor_items:
+                new_inv.labor_items.append(InvoiceLabor(labor_desc=li.labor_desc, labor_time_hours=li.labor_time_hours))
+
+            s.add(new_inv)
+            s.commit()
+
+            flash(f"Estimate converted to invoice {new_no}.", "success")
+            return redirect(url_for("invoice_edit", invoice_id=new_inv.id))
+
+    # -----------------------------
+    # Delete estimate — GATED
+    # -----------------------------
+    @app.route("/estimates/<int:estimate_id>/delete", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_delete(estimate_id: int):
+        delete_pdf = (request.form.get("delete_pdf") or "").strip() == "1"
+
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+            pdf_path = inv.pdf_path
+            s.delete(inv)
+            s.commit()
+
+        if delete_pdf and pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+            except Exception:
+                pass
+
+        flash("Estimate deleted.", "success")
+        return redirect(url_for("customers_list"))
 
     # -----------------------------
     # View invoice
@@ -2219,6 +2654,7 @@ def create_app():
                         "invoice_form.html",
                         mode="edit",
                         inv=inv,
+                        doc_type="invoice",
                         form=request.form,
                         tmpl=tmpl,
                         tmpl_key=tmpl_key,
@@ -2252,6 +2688,7 @@ def create_app():
                         "invoice_form.html",
                         mode="edit",
                         inv=inv,
+                        doc_type="invoice",
                         form=request.form,
                         tmpl=tmpl,
                         tmpl_key=tmpl_key,
@@ -2281,6 +2718,7 @@ def create_app():
             "invoice_form.html",
             mode="edit",
             inv=inv,
+            doc_type="invoice",
             tmpl=tmpl,
             tmpl_key=tmpl_key,
             customers=customers,
@@ -2341,6 +2779,7 @@ def create_app():
                 s.query(Invoice)
                 .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
                 .filter(Invoice.user_id == uid)
+                .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
                 .order_by(Invoice.created_at.desc())
                 .all()
             )
@@ -2440,6 +2879,75 @@ def create_app():
     # -----------------------------
     # PDF routes — GATED
     # -----------------------------
+    @app.route("/estimates/<int:estimate_id>/pdf/generate", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_pdf_generate(estimate_id):
+        with db_session() as s:
+            _estimate_owned_or_404(s, estimate_id)
+            generate_and_store_pdf(s, estimate_id)
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+    @app.route("/estimates/<int:estimate_id>/pdf/download")
+    @login_required
+    @subscription_required
+    def estimate_pdf_download(estimate_id):
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+            if not inv.pdf_path or not os.path.exists(inv.pdf_path):
+                flash("PDF not found. Generate it first.", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+            return send_file(
+                inv.pdf_path,
+                as_attachment=True,
+                download_name=os.path.basename(inv.pdf_path),
+                mimetype="application/pdf"
+            )
+
+    @app.route("/estimates/<int:estimate_id>/send", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_send(estimate_id: int):
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            customer_name = (customer.name if customer else "").strip()
+
+            to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
+            if not to_email or "@" not in to_email:
+                flash("Customer email is missing. Add it on the estimate edit page (or customer profile).", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+            if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
+                generate_and_store_pdf(s, estimate_id)
+                inv = _estimate_owned_or_404(s, estimate_id)
+
+            subject = f"Estimate {inv.invoice_number}"
+            body = (
+                f"Hello {customer_name or 'there'},\n\n"
+                f"Attached is your estimate {inv.invoice_number}.\n"
+                f"Details: {inv.vehicle}\n"
+                f"Total: ${inv.invoice_total():,.2f}\n\n"
+                "Thank you."
+            )
+
+            try:
+                _send_invoice_pdf_email(
+                    to_email=to_email,
+                    subject=subject,
+                    body_text=body,
+                    pdf_path=inv.pdf_path,
+                )
+            except Exception as e:
+                print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={inv.invoice_number}: {repr(e)}", flush=True)
+                flash("Could not send email (SMTP / sender config issue). Check Render logs.", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+        flash("Estimate email sent.", "success")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
     @app.route("/invoices/<int:invoice_id>/pdf/generate", methods=["POST"])
     @login_required
     @subscription_required
@@ -2521,6 +3029,7 @@ def create_app():
                 s.query(Invoice)
                 .filter(Invoice.user_id == uid)
                 .filter(Invoice.pdf_path.isnot(None))
+                .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
             )
             if year.isdigit() and len(year) == 4:
                 q = q.filter(Invoice.invoice_number.startswith(year))
@@ -2541,4 +3050,3 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True, port=5001)
-
