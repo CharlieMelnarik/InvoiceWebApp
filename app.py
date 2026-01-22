@@ -2804,12 +2804,14 @@ def create_app():
         count = 0
         total_invoice_amount = 0.0
         total_labor = 0.0
+        total_labor_raw = 0.0
         total_parts = 0.0
         total_supplies = 0.0
 
         total_paid_invoices_amount = 0.0
         total_outstanding_unpaid = 0.0
         labor_unpaid = 0.0
+        labor_unpaid_raw = 0.0
 
         unpaid = []
 
@@ -2839,6 +2841,7 @@ def create_app():
 
                 total_parts += parts_total
                 total_labor += labor_income
+                total_labor_raw += labor_total
                 total_supplies += supplies
                 total_invoice_amount += invoice_total
                 count += 1
@@ -2851,6 +2854,7 @@ def create_app():
                     outstanding = max(0.0, invoice_total - paid)
                     total_outstanding_unpaid += outstanding
                     labor_unpaid += labor_income
+                    labor_unpaid_raw += labor_total
 
                     unpaid.append({
                         "id": inv.id,
@@ -2861,7 +2865,7 @@ def create_app():
                         "outstanding": outstanding,
                     })
 
-        profit_paid_labor_only = total_labor - labor_unpaid
+        profit_paid_labor_only = total_labor_raw - labor_unpaid_raw
 
         context = {
             "year": year_text,
