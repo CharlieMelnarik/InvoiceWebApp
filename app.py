@@ -2830,12 +2830,15 @@ def create_app():
 
                 parts_total = inv.parts_total()
                 labor_total = inv.labor_total()
+                labor_income = labor_total
+                if (inv.invoice_template or "") == "flipping_items" and labor_total < 0:
+                    labor_income = 0.0
                 invoice_total = inv.invoice_total()
                 supplies = float(inv.shop_supplies or 0.0)
                 paid = float(inv.paid or 0.0)
 
                 total_parts += parts_total
-                total_labor += labor_total
+                total_labor += labor_income
                 total_supplies += supplies
                 total_invoice_amount += invoice_total
                 count += 1
@@ -2847,7 +2850,7 @@ def create_app():
                 else:
                     outstanding = max(0.0, invoice_total - paid)
                     total_outstanding_unpaid += outstanding
-                    labor_unpaid += labor_total
+                    labor_unpaid += labor_income
 
                     unpaid.append({
                         "id": inv.id,
