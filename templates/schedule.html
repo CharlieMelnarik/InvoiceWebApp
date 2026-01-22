@@ -5,12 +5,13 @@
 <style>
   .cal-toolbar { display:flex; gap:.5rem; align-items:center; justify-content:space-between; flex-wrap:wrap; }
   .cal-grid { background:#fff; border-radius:12px; padding:12px; box-shadow:0 1px 6px rgba(0,0,0,.06); }
+  .month-scroll { overflow-x:auto; }
   .month-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:8px; }
   .dow { font-weight:600; color:#6c757d; font-size:.85rem; padding:4px 6px; }
   .day-cell { border:1px solid #e6e8ec; border-radius:10px; padding:8px; min-height:110px; cursor:pointer; background:#fff; }
   .day-cell.muted { background:#fafbfc; color:#9aa0a6; }
   .day-num { font-weight:700; font-size:.9rem; }
-  .evt-pill { display:block; font-size:.8rem; margin-top:6px; padding:4px 6px; border-radius:8px; background:#f1f3f5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .evt-pill { display:block; font-size:.8rem; margin-top:6px; padding:4px 6px; border-radius:8px; background:#f1f3f5; white-space:normal; overflow-wrap:anywhere; }
   .evt-pill.cancelled { opacity:.5; text-decoration:line-through; }
 
   .day-wrap { display:flex; gap:16px; }
@@ -36,6 +37,13 @@
     .day-wrap { flex-direction:column; }
     .time-col { width:100%; display:flex; flex-wrap:wrap; gap:10px; }
     .time-row { height:auto; }
+  }
+
+  @media (max-width: 768px) {
+    .month-scroll { margin: 0 -12px; padding: 0 12px; }
+    .month-grid { min-width: 980px; }
+    .evt-pill { white-space:normal; line-height:1.2; }
+    .day-cell { min-height:90px; }
   }
 </style>
 
@@ -101,12 +109,62 @@
           <textarea class="form-control" id="notes" rows="3"></textarea>
         </div>
 
+        <hr class="my-3">
+
+        <div class="mb-2">
+          <div class="fw-semibold">Recurring Schedule (optional)</div>
+          <div class="small-muted">Creates recurring appointments for this customer from the start time.</div>
+        </div>
+
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="recurringEnabled">
+          <label class="form-check-label" for="recurringEnabled">
+            Enable recurring schedule for this customer
+          </label>
+        </div>
+
+        <div id="recurringFields" style="display:none;">
+          <div class="row g-2 mb-2">
+            <div class="col-6">
+              <label class="form-label">Repeat every (days)</label>
+              <input class="form-control" id="recurringIntervalDays" type="number" min="1" step="1" placeholder="7">
+            </div>
+            <div class="col-6">
+              <label class="form-label">Default duration (minutes)</label>
+              <input class="form-control" id="recurringDurationMinutes" type="number" min="15" step="15" placeholder="60">
+            </div>
+          </div>
+
+          <div class="row g-2 mb-2">
+            <div class="col-6">
+              <label class="form-label">Schedule out for</label>
+              <select class="form-select" id="recurringHorizonMonths">
+                <option value="1">1 month</option>
+                <option value="2">2 months</option>
+                <option value="3">3 months</option>
+                <option value="6">6 months</option>
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label">Default title (optional)</label>
+              <input class="form-control" id="recurringTitle" placeholder="Use appointment title">
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label">Default notes (optional)</label>
+            <textarea class="form-control" id="recurringNotes" rows="2" placeholder="Use appointment notes"></textarea>
+          </div>
+        </div>
+
         <div class="small-muted" id="modalHint"></div>
+        <div class="small-muted mt-2" id="recurringHint"></div>
         <input type="hidden" id="eventId">
 
       </div>
 
       <div class="modal-footer">
+        <button class="btn btn-outline-danger" id="btnStopRecurring" style="display:none;">Stop Recurring</button>
         <button class="btn btn-outline-danger" id="btnDelete" style="display:none;">Delete</button>
         <button class="btn btn-primary" id="btnSave">Save</button>
       </div>
@@ -132,6 +190,18 @@
 
   const modalEl = document.getElementById("eventModal");
   const modal = new bootstrap.Modal(modalEl);
+  const startInput = document.getElementById("start");
+  const endInput = document.getElementById("end");
+  const recurringEnabled = document.getElementById("recurringEnabled");
+  const recurringFields = document.getElementById("recurringFields");
+  const recurringIntervalDays = document.getElementById("recurringIntervalDays");
+  const recurringDurationMinutes = document.getElementById("recurringDurationMinutes");
+  const recurringHorizonMonths = document.getElementById("recurringHorizonMonths");
+  const recurringTitle = document.getElementById("recurringTitle");
+  const recurringNotes = document.getElementById("recurringNotes");
+  const recurringHint = document.getElementById("recurringHint");
+  const stopRecurringBtn = document.getElementById("btnStopRecurring");
+  let endWasEdited = false;
 
   // URL deep-links (optional):
   //   /schedule?customer_id=123&date=2026-01-20
@@ -148,6 +218,12 @@
 
   function parseISO(s){ return new Date(s); }
 
+  function _parseInputDate(value){
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
   function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
   function endOfMonth(d){ return new Date(d.getFullYear(), d.getMonth()+1, 1); }
 
@@ -161,6 +237,15 @@
       .replaceAll(">","&gt;")
       .replaceAll('"',"&quot;")
       .replaceAll("'","&#039;");
+  }
+
+  function eventDisplayLabel(e){
+    const baseTitle = (e.title || "Appointment").trim();
+    const customerName = (e.customer_name || "").trim();
+    if (!customerName) return baseTitle || "Appointment";
+    if (!baseTitle) return customerName;
+    if (baseTitle.toLowerCase() === customerName.toLowerCase()) return baseTitle;
+    return `${baseTitle} - ${customerName}`;
   }
 
   async function loadEvents(rangeStart, rangeEnd){
@@ -189,7 +274,7 @@
     gridStart.setDate(base.getDate() - base.getDay()); // back to Sunday
 
     // header row
-    let html = `<div class="month-grid mb-2">`;
+    let html = `<div class="month-scroll"><div class="month-grid mb-2">`;
     for (const h of DOW){
       html += `<div class="dow">${h}</div>`;
     }
@@ -214,7 +299,8 @@
 
       evts.forEach(e => {
         const cls = e.status === "cancelled" ? "evt-pill cancelled" : "evt-pill";
-        const safeTitle = escapeHTML(e.title || "Appointment");
+        const label = eventDisplayLabel(e);
+        const safeTitle = escapeHTML(label);
         html += `<span class="${cls}" title="${safeTitle}">${safeTitle}</span>`;
       });
 
@@ -225,7 +311,7 @@
 
       html += `</div>`;
     }
-    html += `</div>`;
+    html += `</div></div>`;
 
     elMonth.innerHTML = html;
 
@@ -323,6 +409,65 @@
     });
   }
 
+  function getDefaultStartForView(){
+    const baseDay = state.selectedDay || state.cursor || new Date();
+    const now = new Date();
+    const start = new Date(baseDay);
+    start.setHours(now.getHours(), now.getMinutes(), 0, 0);
+    return start;
+  }
+
+  function setEndFromStart(startDt){
+    if (!startDt) return;
+    const end = new Date(startDt);
+    end.setMinutes(end.getMinutes() + 60);
+    endInput.value = toLocalInputValue(end);
+  }
+
+  function syncRecurringVisibility(){
+    const enabled = !!recurringEnabled.checked;
+    recurringFields.style.display = enabled ? "" : "none";
+    recurringHint.textContent = enabled
+      ? "Recurring settings apply to this customer and schedule future appointments."
+      : "";
+    if (enabled && !recurringDurationMinutes.value){
+      const startDt = _parseInputDate(startInput.value);
+      const endDt = _parseInputDate(endInput.value);
+      if (startDt && endDt){
+        const minutes = Math.max(15, Math.round((endDt - startDt) / 60000));
+        recurringDurationMinutes.value = String(minutes);
+      }
+    }
+  }
+
+  function resetRecurringFields(){
+    recurringEnabled.checked = false;
+    recurringIntervalDays.value = "";
+    recurringDurationMinutes.value = "";
+    recurringHorizonMonths.value = "1";
+    recurringTitle.value = "";
+    recurringNotes.value = "";
+    recurringHint.textContent = "";
+    recurringFields.style.display = "none";
+    stopRecurringBtn.style.display = "none";
+  }
+
+  if (recurringEnabled){
+    recurringEnabled.addEventListener("change", syncRecurringVisibility);
+  }
+
+  if (startInput && endInput){
+    startInput.addEventListener("change", () => {
+      const startDt = _parseInputDate(startInput.value);
+      if (!endWasEdited){
+        setEndFromStart(startDt);
+      }
+    });
+    endInput.addEventListener("change", () => {
+      endWasEdited = true;
+    });
+  }
+
   function _applyPreselectedCustomerIfAny(){
     // If we have a customer_id in the URL, set it so saves link correctly.
     // NOTE: To also auto-fill the name, you'd pass pre_customer_name from app.py,
@@ -343,14 +488,16 @@
     document.getElementById("title").value = "";
     document.getElementById("notes").value = "";
 
-    document.getElementById("start").value = toLocalInputValue(start);
-    document.getElementById("end").value = toLocalInputValue(end);
+    endWasEdited = false;
+    startInput.value = toLocalInputValue(start);
+    endInput.value = toLocalInputValue(end);
     document.getElementById("modalHint").textContent = "Tip: click a time slot in Day view to auto-fill start/end.";
 
     custResults.style.display = "none";
     custHint.style.display = "none";
     custActiveIndex = -1;
 
+    resetRecurringFields();
     _applyPreselectedCustomerIfAny();
     modal.show();
 
@@ -368,13 +515,27 @@
 
     document.getElementById("title").value = e.title || "";
     document.getElementById("notes").value = e.notes || "";
-    document.getElementById("start").value = toLocalInputValue(parseISO(e.start));
-    document.getElementById("end").value = toLocalInputValue(parseISO(e.end));
+    endWasEdited = false;
+    startInput.value = toLocalInputValue(parseISO(e.start));
+    endInput.value = toLocalInputValue(parseISO(e.end));
     document.getElementById("modalHint").textContent = "";
 
     custResults.style.display = "none";
     custHint.style.display = "none";
     custActiveIndex = -1;
+
+    resetRecurringFields();
+    if (e.customer_recurring) {
+      const rec = e.customer_recurring;
+      if (rec.interval_days) {
+        stopRecurringBtn.style.display = "";
+        recurringHint.textContent = "Recurring schedule already exists for this customer.";
+      }
+      recurringIntervalDays.value = rec.interval_days || "";
+      recurringDurationMinutes.value = rec.default_minutes || "";
+      recurringTitle.value = rec.title || "";
+      recurringNotes.value = rec.notes || "";
+    }
 
     modal.show();
   }
@@ -435,21 +596,37 @@
   });
 
   document.getElementById("btnNew").addEventListener("click", () => {
-    const now = new Date();
-    const end = new Date(now); end.setMinutes(end.getMinutes()+60);
-    openModalForCreate(now, end);
+    const start = getDefaultStartForView();
+    const end = new Date(start);
+    end.setMinutes(end.getMinutes() + 60);
+    openModalForCreate(start, end);
   });
 
   // Save/Delete
   document.getElementById("btnSave").addEventListener("click", async () => {
     const id = document.getElementById("eventId").value;
+    const isRecurring = !!recurringEnabled.checked;
+    const customerId = document.getElementById("customerId").value || null;
     const payload = {
-      customer_id: document.getElementById("customerId").value || null,
+      customer_id: customerId,
       title: document.getElementById("title").value,
       notes: document.getElementById("notes").value,
-      start: document.getElementById("start").value,
-      end: document.getElementById("end").value,
+      start: startInput.value,
+      end: endInput.value,
     };
+
+    if (isRecurring){
+      if (!customerId){
+        alert("Please select a customer before enabling recurring scheduling.");
+        return;
+      }
+      payload.recurring_enabled = true;
+      payload.recurring_interval_days = recurringIntervalDays.value;
+      payload.recurring_duration_minutes = recurringDurationMinutes.value;
+      payload.recurring_horizon_months = recurringHorizonMonths.value;
+      payload.recurring_title = recurringTitle.value;
+      payload.recurring_notes = recurringNotes.value;
+    }
 
     const res = await fetch(id ? `/api/schedule/events/${id}` : "/api/schedule/events", {
       method: id ? "PUT" : "POST",
@@ -479,6 +656,25 @@
       return;
     }
     modal.hide();
+    await refresh();
+  });
+
+  stopRecurringBtn.addEventListener("click", async () => {
+    const customerId = document.getElementById("customerId").value;
+    if (!customerId){
+      alert("Select a customer to stop recurring scheduling.");
+      return;
+    }
+    if (!confirm("Disable recurring scheduling for this customer and delete future recurring appointments?")) {
+      return;
+    }
+    const res = await fetch(`/customers/${customerId}/recurring/disable`, { method:"POST" });
+    if (!res.ok){
+      alert("Error disabling recurring schedule.");
+      return;
+    }
+    resetRecurringFields();
+    stopRecurringBtn.style.display = "none";
     await refresh();
   });
 
@@ -617,7 +813,3 @@
   })();
 </script>
 {% endblock %}
-
-
-
-
