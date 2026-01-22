@@ -242,6 +242,7 @@ class Invoice(Base):
     notes: Mapped[str] = mapped_column(String, nullable=False, default="")
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    is_estimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     pdf_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     pdf_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -346,4 +347,3 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
-
