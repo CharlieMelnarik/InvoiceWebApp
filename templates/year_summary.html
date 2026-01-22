@@ -34,22 +34,22 @@
         <div class="h5 fw-bold mb-0">{{ count }}</div>
       </div>
       <div class="col-12 col-md-6">
-        <div class="small-muted">Total Invoice Amount (parts + supplies + labor)</div>
+        <div class="small-muted">Total Invoice Amount (expenses + supplies + income)</div>
         <div class="h5 fw-bold mb-0">{{ money(total_invoice_amount) }}</div>
       </div>
 
       <div class="col-12"><hr class="my-2"></div>
 
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Parts</div>
+        <div class="small-muted">Total Expenses</div>
         <div class="fw-semibold">{{ money(total_parts) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Labor (hours × rate)</div>
+        <div class="small-muted">Total Invoiced Income</div>
         <div class="fw-semibold">{{ money(total_labor) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Shop Supplies</div>
+        <div class="small-muted">Total Supplies</div>
         <div class="fw-semibold">{{ money(total_supplies) }}</div>
       </div>
       <div class="col-6 col-md-3">
@@ -117,4 +117,3 @@
   </div>
 </div>
 {% endblock %}
-
