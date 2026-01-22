@@ -480,6 +480,19 @@ def _migrate_invoice_is_estimate(engine):
         pass
 
 
+def _migrate_invoice_parts_markup_percent(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "parts_markup_percent"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN parts_markup_percent FLOAT"))
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE invoices SET parts_markup_percent = 0.0 WHERE parts_markup_percent IS NULL"))
+        except Exception:
+            pass
+
+
 def _migrate_user_billing_fields(engine):
     if not _table_exists(engine, "users"):
         return
@@ -688,6 +701,7 @@ def create_app():
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
     _migrate_invoice_is_estimate(engine)
+    _migrate_invoice_parts_markup_percent(engine)
     _migrate_user_billing_fields(engine)
     _migrate_user_security_fields(engine)
     _migrate_customers(engine)
@@ -2191,6 +2205,7 @@ def create_app():
                 price_per_hour = _to_float(request.form.get("price_per_hour"))
                 hours = _to_float(request.form.get("hours"))
                 shop_supplies = _to_float(request.form.get("shop_supplies"))
+                parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
                 if user_template_key == "flipping_items":
                     price_per_hour = 1.0
                     hours = 0.0
@@ -2212,6 +2227,7 @@ def create_app():
                     hours=hours,
                     price_per_hour=price_per_hour,
                     shop_supplies=shop_supplies,
+                    parts_markup_percent=parts_markup_percent,
                     paid=0.0,
                     date_in=request.form.get("date_in", "").strip(),
                     notes=request.form.get("notes", "").rstrip(),
@@ -2333,10 +2349,13 @@ def create_app():
                 hours = _to_float(request.form.get("hours"))
                 shop_supplies = _to_float(request.form.get("shop_supplies"))
                 paid_val = _to_float(request.form.get("paid"))
+                parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
                 if user_template_key == "flipping_items":
                     price_per_hour = 1.0
                     parts_total = sum(pp for _, pp in parts_data)
-                    hours = paid_val - parts_total - shop_supplies
+                    markup_multiplier = 1 + (parts_markup_percent or 0.0) / 100.0
+                    parts_total_with_markup = parts_total * markup_multiplier
+                    hours = paid_val - parts_total_with_markup - shop_supplies
 
                 inv = Invoice(
                     user_id=uid,
@@ -2354,6 +2373,7 @@ def create_app():
                     hours=hours,
                     price_per_hour=price_per_hour,
                     shop_supplies=shop_supplies,
+                    parts_markup_percent=parts_markup_percent,
                     paid=paid_val,
                     date_in=request.form.get("date_in", "").strip(),
                     notes=request.form.get("notes", "").rstrip(),
@@ -2459,6 +2479,7 @@ def create_app():
                 inv.hours = _to_float(request.form.get("hours"))
                 inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
+                inv.parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
                 if tmpl_key == "flipping_items":
                     inv.price_per_hour = 1.0
                     inv.hours = 0.0
@@ -2538,6 +2559,7 @@ def create_app():
                 hours=inv.hours,
                 price_per_hour=inv.price_per_hour,
                 shop_supplies=inv.shop_supplies,
+                parts_markup_percent=inv.parts_markup_percent,
 
                 notes=inv.notes,
                 paid=0.0,
@@ -2624,6 +2646,7 @@ def create_app():
                 hours=inv.hours,
                 price_per_hour=inv.price_per_hour,
                 shop_supplies=inv.shop_supplies,
+                parts_markup_percent=inv.parts_markup_percent,
 
                 notes=inv.notes,
                 paid=0.0,
@@ -2712,11 +2735,14 @@ def create_app():
                 inv.hours = _to_float(request.form.get("hours"))
                 inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
+                inv.parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
                 inv.paid = _to_float(request.form.get("paid"))
                 if tmpl_key == "flipping_items":
                     inv.price_per_hour = 1.0
                     parts_total = sum(pp for _, pp in parts_data)
-                    inv.hours = inv.paid - parts_total - inv.shop_supplies
+                    markup_multiplier = 1 + (inv.parts_markup_percent or 0.0) / 100.0
+                    parts_total_with_markup = parts_total * markup_multiplier
+                    inv.hours = inv.paid - parts_total_with_markup - inv.shop_supplies
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = (request.form.get("notes") or "").rstrip()
 
@@ -2806,6 +2832,7 @@ def create_app():
         total_labor = 0.0
         total_labor_raw = 0.0
         total_parts = 0.0
+        total_parts_markup_profit = 0.0
         total_supplies = 0.0
 
         total_paid_invoices_amount = 0.0
@@ -2830,7 +2857,8 @@ def create_app():
                 if yr != target_year:
                     continue
 
-                parts_total = inv.parts_total()
+                parts_total_raw = inv.parts_total_raw()
+                parts_markup_profit = inv.parts_markup_amount()
                 labor_total = inv.labor_total()
                 labor_income = labor_total
                 if (inv.invoice_template or "") == "flipping_items" and labor_total < 0:
@@ -2839,8 +2867,9 @@ def create_app():
                 supplies = float(inv.shop_supplies or 0.0)
                 paid = float(inv.paid or 0.0)
 
-                total_parts += parts_total
-                total_labor += labor_income
+                total_parts += parts_total_raw
+                total_parts_markup_profit += parts_markup_profit
+                total_labor += labor_income + parts_markup_profit
                 total_labor_raw += labor_total
                 total_supplies += supplies
                 total_invoice_amount += invoice_total
@@ -2853,7 +2882,7 @@ def create_app():
                 else:
                     outstanding = max(0.0, invoice_total - paid)
                     total_outstanding_unpaid += outstanding
-                    labor_unpaid += labor_income
+                    labor_unpaid += labor_income + parts_markup_profit
                     labor_unpaid_raw += labor_total
 
                     unpaid.append({
@@ -2872,6 +2901,7 @@ def create_app():
             "count": count,
             "total_invoice_amount": total_invoice_amount,
             "total_parts": total_parts,
+            "total_parts_markup_profit": total_parts_markup_profit,
             "total_labor": total_labor,
             "total_supplies": total_supplies,
             "total_paid_invoices_amount": total_paid_invoices_amount,

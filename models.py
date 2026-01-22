@@ -238,6 +238,7 @@ class Invoice(Base):
     hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     price_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     shop_supplies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    parts_markup_percent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     notes: Mapped[str] = mapped_column(String, nullable=False, default="")
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -266,8 +267,23 @@ class Invoice(Base):
         order_by="InvoiceLabor.id",
     )
 
-    def parts_total(self) -> float:
+    def parts_total_raw(self) -> float:
         return round(sum((p.part_price or 0.0) for p in self.parts), 2)
+
+    def parts_markup_amount(self) -> float:
+        markup_percent = self.parts_markup_percent or 0.0
+        if not markup_percent:
+            return 0.0
+        return round(self.parts_total_raw() * (markup_percent / 100.0), 2)
+
+    def parts_total(self) -> float:
+        return round(self.parts_total_raw() + self.parts_markup_amount(), 2)
+
+    def part_price_with_markup(self, price: float) -> float:
+        markup_percent = self.parts_markup_percent or 0.0
+        if not markup_percent:
+            return round(price or 0.0, 2)
+        return round((price or 0.0) * (1 + markup_percent / 100.0), 2)
 
     def labor_total(self) -> float:
         return round((self.hours or 0.0) * (self.price_per_hour or 0.0), 2)

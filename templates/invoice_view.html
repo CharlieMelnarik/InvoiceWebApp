@@ -120,26 +120,34 @@
 
         <div class="row g-3">
           {% if tmpl_key == "flipping_items" %}
-            <div class="col-12 col-md-6">
+            <div class="col-12 col-md-4">
               <div class="small-muted">Profit</div>
               <div class="mono">${{ "%.2f"|format(inv.labor_total()) }}</div>
             </div>
-            <div class="col-12 col-md-6">
+            <div class="col-12 col-md-4">
               <div class="small-muted">Sold for</div>
               <div class="mono">${{ "%.2f"|format(inv.paid or 0) }}</div>
             </div>
-          {% else %}
             <div class="col-12 col-md-4">
+              <div class="small-muted">Parts Markup</div>
+              <div class="mono">{{ "%.2f"|format(inv.parts_markup_percent or 0) }}%</div>
+            </div>
+          {% else %}
+            <div class="col-12 col-md-3">
               <div class="small-muted">Hours</div>
               <div class="mono">{{ "%.2f"|format(inv.hours or 0) }}</div>
             </div>
-            <div class="col-12 col-md-4">
+            <div class="col-12 col-md-3">
               <div class="small-muted">Rate / Hour</div>
               <div class="mono">${{ "%.2f"|format(inv.price_per_hour or 0) }}</div>
             </div>
-            <div class="col-12 col-md-4">
+            <div class="col-12 col-md-3">
               <div class="small-muted">{{ shop_supplies_label }}</div>
               <div class="mono">${{ "%.2f"|format(inv.shop_supplies or 0) }}</div>
+            </div>
+            <div class="col-12 col-md-3">
+              <div class="small-muted">Parts Markup</div>
+              <div class="mono">{{ "%.2f"|format(inv.parts_markup_percent or 0) }}%</div>
             </div>
           {% endif %}
         </div>
@@ -150,12 +158,13 @@
 
           <div class="col-12 col-lg-6">
             <div class="fw-semibold mb-2">{{ parts_title }}</div>
+            <div class="small-muted mb-2">Parts markup: {{ "%.2f"|format(inv.parts_markup_percent or 0) }}%</div>
             {% if inv.parts and inv.parts|length > 0 %}
               <ul class="list-group">
                 {% for p in inv.parts %}
                   <li class="list-group-item d-flex justify-content-between align-items-center">
                     <div>{{ p.part_name }}</div>
-                    <div class="mono">${{ "%.2f"|format(p.part_price or 0) }}</div>
+                    <div class="mono">${{ "%.2f"|format(inv.part_price_with_markup(p.part_price or 0)) }}</div>
                   </li>
                 {% endfor %}
                 <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -233,7 +242,6 @@
 </div>
 
 {% endblock %}
-
 
 
 

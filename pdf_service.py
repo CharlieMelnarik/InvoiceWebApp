@@ -553,7 +553,10 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # -----------------------------
     parts_rows = []
     for p in parts:
-        parts_rows.append([p.part_name or "", _money(p.part_price or 0.0) if (p.part_price or 0.0) else ""])
+        parts_rows.append([
+            p.part_name or "",
+            _money(inv.part_price_with_markup(p.part_price or 0.0)) if (p.part_price or 0.0) else ""
+        ])
 
     body_y = draw_table(
         cfg["parts_title"],
