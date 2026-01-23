@@ -194,7 +194,7 @@ INVOICE_TEMPLATES = {
     },
     "accountant": {
         "label": "Accountant",
-        "job_label": "Client / Engagement",
+        "job_label": "Engagement",
         "labor_title": "Services",
         "labor_desc_label": "Service Description",
         "parts_title": "Expenses",

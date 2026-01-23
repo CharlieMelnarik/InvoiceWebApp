@@ -118,7 +118,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "hours_suffix": "hrs",
 
             "labor_title": "Labor",
-            "labor_desc_label": "Labor Description",
+            "labor_desc_label": "Description",
             "labor_time_label": "Time",
             "labor_total_label": "Line Total",
 
@@ -136,7 +136,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "hours_suffix": "hrs",
 
             "labor_title": "Services",
-            "labor_desc_label": "Service Description",
+            "labor_desc_label": "Description",
             "labor_time_label": "Time",
             "labor_total_label": "Line Total",
 
@@ -147,14 +147,14 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "shop_supplies_label": "Supplies / Fees",
         },
         "accountant": {
-            "job_label": "Client / Engagement",
+            "job_label": "Engagement",
             "job_box_title": "ENGAGEMENT DETAILS",
             "job_rate_label": "Hourly Rate",
             "job_hours_label": "Hours Billed",
             "hours_suffix": "hrs",
 
             "labor_title": "Services",
-            "labor_desc_label": "Service / Task",
+            "labor_desc_label": "Description",
             "labor_time_label": "Hours",
             "labor_total_label": "Line Total",
 
@@ -172,7 +172,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "hours_suffix": "hrs",
 
             "labor_title": "Services",
-            "labor_desc_label": "Service Description",
+            "labor_desc_label": "Description",
             "labor_time_label": "Time",
             "labor_total_label": "Line Total",
 
@@ -190,7 +190,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "hours_suffix": "hrs",
 
             "labor_title": "Services",
-            "labor_desc_label": "Service Description",
+            "labor_desc_label": "Description",
             "labor_time_label": "Qty / Time",
             "labor_total_label": "Line Total",
 
@@ -208,7 +208,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "hours_suffix": "qty",
 
             "labor_title": "Sales",
-            "labor_desc_label": "Sale Description",
+            "labor_desc_label": "Description",
             "labor_time_label": "Qty",
             "labor_total_label": "Line Total",
 
@@ -558,15 +558,17 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             _money(inv.part_price_with_markup(p.part_price or 0.0)) if (p.part_price or 0.0) else ""
         ])
 
-    body_y = draw_table(
-        cfg["parts_title"],
-        M,
-        body_y - 10,
-        [cfg["parts_name_label"], cfg.get("parts_price_label", "Price")],
-        parts_rows,
-        col_widths=[PAGE_W - 2 * M - 120, 120],
-        money_cols={1}
-    )
+    has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
+    if has_parts_rows:
+        body_y = draw_table(
+            cfg["parts_title"],
+            M,
+            body_y - 10,
+            [cfg["parts_name_label"], cfg.get("parts_price_label", "Price")],
+            parts_rows,
+            col_widths=[PAGE_W - 2 * M - 120, 120],
+            money_cols={1}
+        )
 
     # -----------------------------
     # Notes + Summary boxes
@@ -636,9 +638,11 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     right_edge = sum_x + sum_w - 12
     y = notes_y_top - 42
 
-    label_right_value(sum_x + 10, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
+    if has_parts_rows and total_parts:
+        label_right_value(sum_x + 10, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
     label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
-    label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
+    if inv.shop_supplies:
+        label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
 
     pdf.setStrokeColor(colors.HexColor("#DDDDDD"))
     pdf.line(sum_x + 10, y + 4, sum_x + sum_w - 10, y + 4)
