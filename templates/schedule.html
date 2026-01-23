@@ -26,6 +26,23 @@
   }
   .evt-pill .evt-name { overflow:hidden; text-overflow:ellipsis; }
   .evt-pill.cancelled { opacity:.5; text-decoration:line-through; }
+  .evt-full { display:block; font-size:.8rem; margin-top:6px; padding:4px 6px; border-radius:8px; background:#f1f3f5; white-space:normal; overflow-wrap:anywhere; }
+
+  .day-cell.compact .evt-full { display:none; }
+  .day-cell.compact .evt-pill { display:inline-flex; }
+  .day-cell .evt-pill { display:none; }
+
+  .evt-popover {
+    position:fixed;
+    z-index:1080;
+    background:#fff;
+    border:1px solid #dee2e6;
+    border-radius:10px;
+    padding:8px 10px;
+    box-shadow:0 6px 20px rgba(0,0,0,.12);
+    max-width:280px;
+    font-size:.8rem;
+  }
 
   .day-wrap { display:flex; gap:16px; }
   .time-col { width:70px; color:#6c757d; font-size:.85rem; }
@@ -268,6 +285,29 @@
     return title.split(/\s+/)[0] || "Appt";
   }
 
+  function getPopover(){
+    let popover = document.getElementById("evtPopover");
+    if (!popover){
+      popover = document.createElement("div");
+      popover.id = "evtPopover";
+      popover.className = "evt-popover";
+      popover.style.display = "none";
+      document.body.appendChild(popover);
+    }
+    return popover;
+  }
+
+  function positionPopover(event){
+    const popover = getPopover();
+    const pad = 12;
+    const maxX = window.innerWidth - popover.offsetWidth - pad;
+    const maxY = window.innerHeight - popover.offsetHeight - pad;
+    const x = Math.min(event.clientX + pad, maxX);
+    const y = Math.min(event.clientY + pad, maxY);
+    popover.style.left = `${Math.max(pad, x)}px`;
+    popover.style.top = `${Math.max(pad, y)}px`;
+  }
+
   async function loadEvents(rangeStart, rangeEnd){
     const qs = new URLSearchParams({ start: toISODate(rangeStart), end: toISODate(rangeEnd) });
     const res = await fetch(`/api/schedule/events?${qs.toString()}`);
@@ -318,11 +358,17 @@
         <div class="day-num">${d.getDate()}</div>`;
 
       evts.forEach(e => {
-        const cls = e.status === "cancelled" ? "evt-pill cancelled" : "evt-pill";
+        const pillCls = e.status === "cancelled" ? "evt-pill cancelled" : "evt-pill";
+        const fullCls = e.status === "cancelled" ? "evt-full cancelled" : "evt-full";
         const label = eventDisplayLabel(e);
         const shortLabel = eventShortLabel(e);
         const safeTitle = escapeHTML(label);
-        html += `<span class="${cls}" title="${safeTitle}"><span class="evt-name">${escapeHTML(shortLabel)}</span></span>`;
+        html += `
+          <span class="${fullCls}">${safeTitle}</span>
+          <span class="${pillCls}" data-full-label="${safeTitle}">
+            <span class="evt-name">${escapeHTML(shortLabel)}</span>
+          </span>
+        `;
       });
 
       const startsCount = state.events.filter(e => e.start.slice(0,10) === iso).length;
@@ -336,6 +382,13 @@
 
     elMonth.innerHTML = html;
 
+    const popover = getPopover();
+    elMonth.querySelectorAll(".day-cell").forEach(cell => {
+      if (cell.scrollHeight > cell.clientHeight){
+        cell.classList.add("compact");
+      }
+    });
+
     elMonth.querySelectorAll(".day-cell").forEach(cell => {
       cell.addEventListener("click", () => {
         const iso = cell.getAttribute("data-day");
@@ -343,6 +396,20 @@
         state.selectedDay = new Date(y, m-1, dd);
         state.view = "day";
         renderDay();
+      });
+    });
+
+    elMonth.querySelectorAll(".evt-pill").forEach(pill => {
+      pill.addEventListener("mouseenter", (e) => {
+        const label = pill.getAttribute("data-full-label");
+        if (!label) return;
+        popover.textContent = label;
+        popover.style.display = "block";
+        positionPopover(e);
+      });
+      pill.addEventListener("mousemove", (e) => positionPopover(e));
+      pill.addEventListener("mouseleave", () => {
+        popover.style.display = "none";
       });
     });
   }
