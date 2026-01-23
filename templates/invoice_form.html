@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% set title = "New Invoice" if mode == "new" else "Edit Invoice" %}
+{% set doc_type = doc_type if doc_type is defined and doc_type else "invoice" %}
+{% set title = ("New Estimate" if mode == "new" else "Edit Estimate") if doc_type == "estimate" else ("New Invoice" if mode == "new" else "Edit Invoice") %}
 
 {% block content %}
 
@@ -28,19 +29,26 @@
 <div class="d-flex justify-content-between align-items-end mb-3">
   <div>
     <h1 class="h3 fw-bold mb-1">
-      {% if mode == "new" %}New Invoice{% else %}Edit Invoice{% endif %}
+      {% if doc_type == "estimate" %}
+        {% if mode == "new" %}New Estimate{% else %}Edit Estimate{% endif %}
+      {% else %}
+        {% if mode == "new" %}New Invoice{% else %}Edit Invoice{% endif %}
+      {% endif %}
     </h1>
     <div class="small-muted">
       {% if mode == "new" %}
-        Creates a new invoice number automatically.
+        Creates a new {{ "estimate" if doc_type == "estimate" else "invoice" }} number automatically.
       {% else %}
-        Editing invoice <span class="mono">{{ inv.invoice_number }}</span>
+        Editing {{ "estimate" if doc_type == "estimate" else "invoice" }} <span class="mono">{{ inv.invoice_number }}</span>
       {% endif %}
     </div>
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
-    <a class="btn btn-outline-secondary" href="{{ url_for('invoices') }}">All Invoices</a>
+    <a class="btn btn-outline-secondary"
+       href="{{ url_for('estimates') if doc_type == 'estimate' else url_for('invoices') }}">
+      {{ "All Estimates" if doc_type == "estimate" else "Invoices" }}
+    </a>
   </div>
 </div>
 
@@ -108,17 +116,27 @@
         <div class="small-muted mt-1">If blank, we’ll use the customer profile phone automatically.</div>
       </div>
 
-      <div class="col-6 col-md-3">
-        <label class="form-label">Hours (Total)</label>
-        <input class="form-control" name="hours" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ inv.hours }}{% else %}{{ (form.hours if form else '') }}{% endif %}">
-      </div>
-
-      <div class="col-6 col-md-3">
-        <label class="form-label">Rate / Hour</label>
-        <input class="form-control" name="price_per_hour" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ inv.price_per_hour }}{% else %}{{ (form.price_per_hour if form else '') }}{% endif %}">
-      </div>
+      {% if tmpl_key == "flipping_items" %}
+        <div class="col-12 col-md-6">
+          <label class="form-label">Profit</label>
+          <div class="small-muted">
+            Profit is calculated as <span class="mono">Sold for - Costs - Other Expenses</span>.
+          </div>
+        </div>
+        <input type="hidden" name="price_per_hour" value="1">
+        <input type="hidden" name="hours" value="0">
+      {% else %}
+        <div class="col-6 col-md-3">
+          <label class="form-label">Hours (Total)</label>
+          <input class="form-control" name="hours" inputmode="decimal"
+                 value="{% if mode=='edit' %}{{ inv.hours }}{% else %}{{ (form.hours if form else '') }}{% endif %}">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label">Rate / Hour</label>
+          <input class="form-control" name="price_per_hour" inputmode="decimal"
+                 value="{% if mode=='edit' %}{{ inv.price_per_hour }}{% else %}{{ (form.price_per_hour if form else '') }}{% endif %}">
+        </div>
+      {% endif %}
 
       <div class="col-6 col-md-3">
         <label class="form-label">{{ shop_supplies_label }}</label>
@@ -127,10 +145,21 @@
       </div>
 
       <div class="col-6 col-md-3">
-        <label class="form-label">Paid</label>
-        <input class="form-control" name="paid" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ inv.paid }}{% else %}{{ (form.paid if form else '0') }}{% endif %}">
+        <label class="form-label">Parts Markup (%)</label>
+        <input class="form-control" name="parts_markup_percent" inputmode="decimal"
+               value="{% if mode=='edit' %}{{ inv.parts_markup_percent }}{% else %}{{ (form.parts_markup_percent if form else '0') }}{% endif %}">
+        <div class="small-muted mt-1">Applies to each part price (shown on web only).</div>
       </div>
+
+      {% if doc_type != "estimate" %}
+        <div class="col-6 col-md-3">
+          <label class="form-label">
+            {% if tmpl_key == "flipping_items" %}Sold for{% else %}Paid{% endif %}
+          </label>
+          <input class="form-control" name="paid" inputmode="decimal"
+                 value="{% if mode=='edit' %}{{ inv.paid }}{% else %}{{ (form.paid if form else '0') }}{% endif %}">
+        </div>
+      {% endif %}
 
       <div class="col-12 col-md-4">
         <label class="form-label">Date In (text)</label>
@@ -186,45 +215,47 @@
     <hr class="my-4">
 
     <!-- Labor / Services -->
-    <div class="d-flex justify-content-between align-items-center mb-2">
-      <h2 class="h5 fw-bold mb-0">{{ labor_title }}</h2>
-      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLaborRow()">
-        Add Item
-      </button>
-    </div>
+    {% if tmpl_key != "flipping_items" %}
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 class="h5 fw-bold mb-0">{{ labor_title }}</h2>
+        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLaborRow()">
+          Add Item
+        </button>
+      </div>
 
-    <div class="table-responsive">
-      <table class="table table-sm align-middle" id="laborTable">
-        <thead class="table-light">
-          <tr>
-            <th style="min-width: 280px;">{{ labor_desc_label }}</th>
-            <th style="width: 180px;">Time (hrs)</th>
-            <th style="width: 80px;"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% if mode == "edit" %}
-            {% for li in inv.labor_items %}
-              <tr>
-                <td><input class="form-control" name="labor_desc" value="{{ li.labor_desc }}"></td>
-                <td><input class="form-control" name="labor_time_hours" inputmode="decimal" value="{{ li.labor_time_hours }}"></td>
-                <td class="text-end">
-                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
-                </td>
-              </tr>
-            {% endfor %}
-          {% endif %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle" id="laborTable">
+          <thead class="table-light">
+            <tr>
+              <th style="min-width: 280px;">{{ labor_desc_label }}</th>
+              <th style="width: 180px;">Time (hrs)</th>
+              <th style="width: 80px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if mode == "edit" %}
+              {% for li in inv.labor_items %}
+                <tr>
+                  <td><input class="form-control" name="labor_desc" value="{{ li.labor_desc }}"></td>
+                  <td><input class="form-control" name="labor_time_hours" inputmode="decimal" value="{{ li.labor_time_hours }}"></td>
+                  <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+                  </td>
+                </tr>
+              {% endfor %}
+            {% endif %}
 
-          <tr>
-            <td><input class="form-control" name="labor_desc" placeholder="{{ labor_placeholder }}"></td>
-            <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
-            <td class="text-end">
-              <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+            <tr>
+              <td><input class="form-control" name="labor_desc" placeholder="{{ labor_placeholder }}"></td>
+              <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
+              <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
 
     <hr class="my-4">
 
@@ -238,9 +269,16 @@
 
     <div class="d-flex gap-2">
       <button class="btn btn-primary" type="submit">
-        {% if mode == "new" %}Create Invoice{% else %}Save Changes{% endif %}
+        {% if doc_type == "estimate" %}
+          {% if mode == "new" %}Create Estimate{% else %}Save Estimate{% endif %}
+        {% else %}
+          {% if mode == "new" %}Create Invoice{% else %}Save Changes{% endif %}
+        {% endif %}
       </button>
-      <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Cancel</a>
+      <a class="btn btn-outline-secondary"
+         href="{{ url_for('estimates') if doc_type == 'estimate' else url_for('customers_list') }}">
+        Cancel
+      </a>
     </div>
 
   </div>
@@ -360,9 +398,4 @@
 </script>
 
 {% endblock %}
-
-
-
-
-
 
