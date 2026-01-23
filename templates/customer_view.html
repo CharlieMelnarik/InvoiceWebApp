@@ -15,9 +15,9 @@
 
   <div class="d-flex gap-2 flex-wrap">
     <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Back</a>
-    <a class="btn btn-outline-secondary" href="{{ url_for('customer_edit', customer_id=c.id) }}">Edit Customer</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('customer_edit', customer_id=c.id) }}">Edit Customer</a>
     <a class="btn btn-outline-primary" href="{{ url_for('schedule') }}?customer_id={{ c.id }}">Schedule Customer</a>
-    <a class="btn btn-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">New Invoice</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">New Invoice</a>
     <a class="btn btn-outline-primary" href="{{ url_for('estimate_new') }}?customer_id={{ c.id }}">New Estimate</a>
   </div>
 </div>
@@ -232,5 +232,4 @@
 </div>
 
 {% endblock %}
-
 

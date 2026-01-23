@@ -86,7 +86,7 @@
   </div>
 
   <div class="d-flex align-items-center gap-2">
-    <button class="btn btn-dark btn-sm" id="btnMonth">Month</button>
+    <button class="btn btn-outline-dark btn-sm" id="btnMonth">Month</button>
     <button class="btn btn-outline-dark btn-sm" id="btnDay">Day</button>
     <button class="btn btn-primary btn-sm" id="btnNew">+ Appointment</button>
   </div>
@@ -647,7 +647,7 @@
   document.getElementById("btnMonth").addEventListener("click", async () => {
     state.view = "month";
     await refresh();
-    document.getElementById("btnMonth").className = "btn btn-dark btn-sm";
+    document.getElementById("btnMonth").className = "btn btn-outline-dark btn-sm";
     document.getElementById("btnDay").className = "btn btn-outline-dark btn-sm";
   });
 
@@ -655,7 +655,7 @@
     state.view = "day";
     state.selectedDay = state.selectedDay || new Date(state.cursor);
     await refresh();
-    document.getElementById("btnDay").className = "btn btn-dark btn-sm";
+    document.getElementById("btnDay").className = "btn btn-outline-dark btn-sm";
     document.getElementById("btnMonth").className = "btn btn-outline-dark btn-sm";
   });
 
@@ -894,7 +894,7 @@
       state.cursor = dt;
       state.selectedDay = dt;
       state.view = "day";
-      document.getElementById("btnDay").className = "btn btn-dark btn-sm";
+      document.getElementById("btnDay").className = "btn btn-outline-dark btn-sm";
       document.getElementById("btnMonth").className = "btn btn-outline-dark btn-sm";
     }
     await refresh();
