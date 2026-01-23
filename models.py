@@ -160,6 +160,7 @@ class Customer(Base):
     default_service_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     service_title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     service_notes: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    recurring_horizon_dt: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Name is mandatory
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
