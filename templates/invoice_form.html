@@ -47,7 +47,7 @@
     <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
     <a class="btn btn-outline-secondary"
        href="{{ url_for('estimates') if doc_type == 'estimate' else url_for('invoices') }}">
-      {{ "All Estimates" if doc_type == "estimate" else "All Invoices" }}
+      {{ "All Estimates" if doc_type == "estimate" else "Invoices" }}
     </a>
   </div>
 </div>
@@ -398,5 +398,4 @@
 </script>
 
 {% endblock %}
-
 

@@ -955,7 +955,10 @@ def create_app():
         notes_default = (getattr(customer, "service_notes", None) or "").strip() or None
 
         created = 0
-        horizon_end = datetime.utcnow() + timedelta(days=horizon_days)
+        horizon_base = datetime.utcnow()
+        if next_dt and next_dt > horizon_base:
+            horizon_base = next_dt
+        horizon_end = horizon_base + timedelta(days=horizon_days)
 
         token = f"cust:{customer.id}"
 
@@ -1556,6 +1559,14 @@ def create_app():
                     "id": e.id,
                     "customer_id": e.customer_id,
                     "customer_name": (cust.name if cust else ""),
+                    "customer_recurring": {
+                        "next_service_dt": cust.next_service_dt.isoformat(timespec="minutes")
+                        if (cust and cust.next_service_dt) else None,
+                        "interval_days": (cust.service_interval_days if cust else None),
+                        "default_minutes": (cust.default_service_minutes if cust else None),
+                        "title": (cust.service_title or "").strip() if cust else "",
+                        "notes": (cust.service_notes or "").strip() if cust else "",
+                    } if cust else None,
                     "title": (e.title or "").strip() or (cust.name if cust else "Appointment"),
                     "start": e.start_dt.isoformat(timespec="minutes"),
                     "end": e.end_dt.isoformat(timespec="minutes"),
@@ -1584,6 +1595,12 @@ def create_app():
         customer_id = data.get("customer_id")
         title = (data.get("title") or "").strip()
         notes = (data.get("notes") or "").strip()
+        recurring_enabled = bool(data.get("recurring_enabled"))
+        recurring_interval_days = (data.get("recurring_interval_days") or "").strip()
+        recurring_duration_minutes = (data.get("recurring_duration_minutes") or "").strip()
+        recurring_horizon_months = (data.get("recurring_horizon_months") or "").strip()
+        recurring_title = (data.get("recurring_title") or "").strip()
+        recurring_notes = (data.get("recurring_notes") or "").strip()
 
         with db_session() as s:
             cust_id_int = None
@@ -1604,6 +1621,36 @@ def create_app():
                 # is_auto defaults False for manual events
             )
             s.add(ev)
+
+            if recurring_enabled:
+                if not cust_id_int:
+                    return jsonify({"error": "Recurring schedule requires a customer."}), 400
+                if not recurring_interval_days.isdigit():
+                    return jsonify({"error": "Recurring interval (days) is required."}), 400
+
+                interval_days = int(recurring_interval_days)
+                if interval_days < 1:
+                    return jsonify({"error": "Recurring interval must be at least 1 day."}), 400
+
+                duration_minutes = int(recurring_duration_minutes) if recurring_duration_minutes.isdigit() else None
+                if not duration_minutes or duration_minutes < 15:
+                    duration_minutes = max(15, int((end_dt - start_dt).total_seconds() / 60))
+
+                horizon_months = int(recurring_horizon_months) if recurring_horizon_months.isdigit() else 1
+                horizon_months = max(1, horizon_months)
+                horizon_days = horizon_months * 30
+
+                cust = _customer_owned_or_404(s, cust_id_int)
+                _delete_future_recurring_events(s, cust, from_dt=datetime.utcnow())
+
+                cust.next_service_dt = start_dt + timedelta(days=interval_days)
+                cust.service_interval_days = interval_days
+                cust.default_service_minutes = duration_minutes
+                cust.service_title = recurring_title or (title or cust.name)
+                cust.service_notes = recurring_notes or (notes or None)
+
+                _ensure_recurring_events(s, cust, horizon_days=horizon_days)
+
             s.commit()
 
             return jsonify({"ok": True, "id": ev.id})
@@ -1656,6 +1703,42 @@ def create_app():
                 st = (data.get("status") or "").strip().lower()
                 if st in ("scheduled", "completed", "cancelled"):
                     ev.status = st
+
+            if data.get("recurring_enabled"):
+                if not ev.customer_id:
+                    return jsonify({"error": "Recurring schedule requires a customer."}), 400
+
+                interval_days_raw = (data.get("recurring_interval_days") or "").strip()
+                if not interval_days_raw.isdigit():
+                    return jsonify({"error": "Recurring interval (days) is required."}), 400
+
+                interval_days = int(interval_days_raw)
+                if interval_days < 1:
+                    return jsonify({"error": "Recurring interval must be at least 1 day."}), 400
+
+                duration_raw = (data.get("recurring_duration_minutes") or "").strip()
+                duration_minutes = int(duration_raw) if duration_raw.isdigit() else None
+                if not duration_minutes or duration_minutes < 15:
+                    duration_minutes = max(15, int((ev.end_dt - ev.start_dt).total_seconds() / 60))
+
+                horizon_raw = (data.get("recurring_horizon_months") or "").strip()
+                horizon_months = int(horizon_raw) if horizon_raw.isdigit() else 1
+                horizon_months = max(1, horizon_months)
+                horizon_days = horizon_months * 30
+
+                recurring_title = (data.get("recurring_title") or "").strip()
+                recurring_notes = (data.get("recurring_notes") or "").strip()
+
+                cust = _customer_owned_or_404(s, ev.customer_id)
+                _delete_future_recurring_events(s, cust, from_dt=datetime.utcnow())
+
+                cust.next_service_dt = ev.start_dt + timedelta(days=interval_days)
+                cust.service_interval_days = interval_days
+                cust.default_service_minutes = duration_minutes
+                cust.service_title = recurring_title or (ev.title or cust.name)
+                cust.service_notes = recurring_notes or (ev.notes or None)
+
+                _ensure_recurring_events(s, cust, horizon_days=horizon_days)
 
             s.commit()
             return jsonify({"ok": True})
