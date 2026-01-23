@@ -653,6 +653,8 @@ def _migrate_customer_schedule_fields(engine):
         stmts.append("ALTER TABLE customers ADD COLUMN service_title VARCHAR(200)")
     if not _column_exists(engine, "customers", "service_notes"):
         stmts.append("ALTER TABLE customers ADD COLUMN service_notes VARCHAR(1000)")
+    if not _column_exists(engine, "customers", "recurring_horizon_dt"):
+        stmts.append("ALTER TABLE customers ADD COLUMN recurring_horizon_dt TIMESTAMP NULL")
 
     if stmts:
         with engine.begin() as conn:
@@ -959,6 +961,9 @@ def create_app():
         if next_dt and next_dt > horizon_base:
             horizon_base = next_dt
         horizon_end = horizon_base + timedelta(days=horizon_days)
+        recurring_horizon = getattr(customer, "recurring_horizon_dt", None)
+        if recurring_horizon:
+            horizon_end = min(horizon_end, recurring_horizon)
 
         token = f"cust:{customer.id}"
 
@@ -1648,6 +1653,7 @@ def create_app():
                 cust.default_service_minutes = duration_minutes
                 cust.service_title = recurring_title or (title or cust.name)
                 cust.service_notes = recurring_notes or (notes or None)
+                cust.recurring_horizon_dt = start_dt + timedelta(days=horizon_days)
 
                 _ensure_recurring_events(s, cust, horizon_days=horizon_days)
 
@@ -1737,6 +1743,7 @@ def create_app():
                 cust.default_service_minutes = duration_minutes
                 cust.service_title = recurring_title or (ev.title or cust.name)
                 cust.service_notes = recurring_notes or (ev.notes or None)
+                cust.recurring_horizon_dt = ev.start_dt + timedelta(days=horizon_days)
 
                 _ensure_recurring_events(s, cust, horizon_days=horizon_days)
 
@@ -1973,6 +1980,7 @@ def create_app():
             c.service_interval_days = None
             c.service_title = None
             c.service_notes = None
+            c.recurring_horizon_dt = None
             # keep default_service_minutes as-is (harmless / preference)
 
             try:
