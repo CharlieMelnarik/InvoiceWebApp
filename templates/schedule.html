@@ -194,6 +194,7 @@
       </div>
 
       <div class="modal-footer">
+        <button class="btn btn-outline-secondary" id="btnGoCustomer" style="display:none;">Go to Customer</button>
         <button class="btn btn-outline-danger" id="btnStopRecurring" style="display:none;">Stop Recurring</button>
         <button class="btn btn-outline-danger" id="btnDelete" style="display:none;">Delete</button>
         <button class="btn btn-primary" id="btnSave">Save</button>
@@ -231,6 +232,7 @@
   const recurringNotes = document.getElementById("recurringNotes");
   const recurringHint = document.getElementById("recurringHint");
   const stopRecurringBtn = document.getElementById("btnStopRecurring");
+  const goCustomerBtn = document.getElementById("btnGoCustomer");
   let endWasEdited = false;
 
   // URL deep-links (optional):
@@ -272,17 +274,39 @@
   function eventDisplayLabel(e){
     const baseTitle = (e.title || "Appointment").trim();
     const customerName = (e.customer_name || "").trim();
-    if (!customerName) return baseTitle || "Appointment";
-    if (!baseTitle) return customerName;
-    if (baseTitle.toLowerCase() === customerName.toLowerCase()) return baseTitle;
-    return `${baseTitle} - ${customerName}`;
+    let label = "";
+    if (!customerName) {
+      label = baseTitle || "Appointment";
+    } else if (!baseTitle) {
+      label = customerName;
+    } else if (baseTitle.toLowerCase() === customerName.toLowerCase()) {
+      label = baseTitle;
+    } else {
+      label = `${baseTitle} - ${customerName}`;
+    }
+
+    if (e.status === "completed") {
+      return `✓ ${label}`;
+    }
+    if (e.status === "cancelled") {
+      return `Cancelled: ${label}`;
+    }
+    return label;
   }
 
   function eventShortLabel(e){
     const customerName = (e.customer_name || "").trim();
-    if (customerName) return customerName.split(/\s+/)[0];
+    if (customerName) {
+      const shortName = customerName.split(/\s+/)[0];
+      if (e.status === "completed") return `✓ ${shortName}`;
+      if (e.status === "cancelled") return `Cancelled`;
+      return shortName;
+    }
     const title = (e.title || "Appointment").trim();
-    return title.split(/\s+/)[0] || "Appt";
+    const shortTitle = title.split(/\s+/)[0] || "Appt";
+    if (e.status === "completed") return `✓ ${shortTitle}`;
+    if (e.status === "cancelled") return `Cancelled`;
+    return shortTitle;
   }
 
   function getPopover(){
@@ -455,6 +479,8 @@
     dayEvents.forEach(e => {
       const s = parseISO(e.start);
       const en = parseISO(e.end);
+      const now = new Date();
+      const canUpdateStatus = now > en && e.status === "scheduled";
 
       const minutesFromStart = (s.getHours() - hourStart) * 60 + s.getMinutes();
       const durMin = Math.max(15, (en - s) / 60000);
@@ -468,15 +494,35 @@
       block.style.height = `${height}px`;
       block.dataset.id = e.id;
 
+      const titleLabel = eventDisplayLabel(e);
+      const statusActions = canUpdateStatus ? `
+        <div class="d-flex gap-2 mt-2">
+          <button type="button" class="btn btn-sm btn-outline-success" data-action="complete">Mark Completed</button>
+          <button type="button" class="btn btn-sm btn-outline-danger" data-action="cancel">Cancelled</button>
+        </div>
+      ` : "";
+
       block.innerHTML = `
-        <div class="event-title">${escapeHTML(e.title || "Appointment")}</div>
+        <div class="event-title">${escapeHTML(titleLabel)}</div>
         <div class="event-sub">${s.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} - ${en.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</div>
+        ${statusActions}
       `;
 
       block.addEventListener("click", (ev) => {
         ev.stopPropagation();
         openModalForEdit(e);
       });
+
+      if (canUpdateStatus){
+        block.querySelectorAll("button[data-action]").forEach(btn => {
+          btn.addEventListener("click", async (ev) => {
+            ev.stopPropagation();
+            const action = btn.getAttribute("data-action");
+            const status = action === "complete" ? "completed" : "cancelled";
+            await updateEventStatus(e.id, status);
+          });
+        });
+      }
 
       timeline.appendChild(block);
     });
@@ -556,6 +602,18 @@
     });
   }
 
+  function updateGoToCustomerButton(){
+    if (!goCustomerBtn) return;
+    const customerId = document.getElementById("customerId").value;
+    if (customerId) {
+      goCustomerBtn.style.display = "";
+      goCustomerBtn.dataset.customerId = customerId;
+    } else {
+      goCustomerBtn.style.display = "none";
+      goCustomerBtn.dataset.customerId = "";
+    }
+  }
+
   function _applyPreselectedCustomerIfAny(){
     // If we have a customer_id in the URL, set it so saves link correctly.
     // NOTE: To also auto-fill the name, you'd pass pre_customer_name from app.py,
@@ -587,6 +645,7 @@
 
     resetRecurringFields();
     _applyPreselectedCustomerIfAny();
+    updateGoToCustomerButton();
     modal.show();
 
     // if a customer_id was deep-linked, keep title blank unless user fills it
@@ -613,6 +672,7 @@
     custActiveIndex = -1;
 
     resetRecurringFields();
+    updateGoToCustomerButton();
     if (e.customer_recurring) {
       const rec = e.customer_recurring;
       if (rec.interval_days) {
@@ -766,6 +826,30 @@
     await refresh();
   });
 
+  if (goCustomerBtn){
+    goCustomerBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const customerId = goCustomerBtn.dataset.customerId;
+      if (customerId){
+        window.location.href = `/customers/${customerId}`;
+      }
+    });
+  }
+
+  async function updateEventStatus(eventId, status){
+    const res = await fetch(`/api/schedule/events/${eventId}`, {
+      method: "PUT",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ status })
+    });
+    if (!res.ok){
+      const j = await res.json().catch(() => ({}));
+      alert(j.error || "Error updating appointment status");
+      return;
+    }
+    await refresh();
+  }
+
   // -----------------------------
   // Customer typeahead (with Enter + arrow nav)
   // -----------------------------
@@ -804,6 +888,7 @@
     document.getElementById("customerId").value = row.id;
     custSearch.value = row.name;
     hideCustResults();
+    updateGoToCustomerButton();
 
     // If title is blank, default it to customer name
     const t = document.getElementById("title");
@@ -818,6 +903,7 @@
 
     // whenever user types, clear selected id until they pick
     document.getElementById("customerId").value = "";
+    updateGoToCustomerButton();
     if (custTimer) clearTimeout(custTimer);
 
     if (!q){

@@ -2041,6 +2041,16 @@ def create_app():
 
         with db_session() as s:
             c = _customer_owned_or_404(s, customer_id)
+            now = datetime.utcnow()
+            next_event = (
+                s.query(ScheduleEvent)
+                .filter(ScheduleEvent.user_id == uid)
+                .filter(ScheduleEvent.customer_id == c.id)
+                .filter(ScheduleEvent.end_dt >= now)
+                .filter(ScheduleEvent.status == "scheduled")
+                .order_by(ScheduleEvent.start_dt.asc())
+                .first()
+            )
 
             inv_q = (
                 s.query(Invoice)
@@ -2105,6 +2115,7 @@ def create_app():
             total_business=total_business,
             total_paid=total_paid,
             total_unpaid=total_unpaid,
+            next_event=next_event,
         )
 
     # -----------------------------
@@ -2340,7 +2351,7 @@ def create_app():
             "invoice_form.html",
             mode="new",
             doc_type="estimate",
-            default_date=datetime.now().strftime("%m/%d/%Y"),
+            default_date=datetime.now().strftime("%B %d, %Y"),
             tmpl=tmpl,
             tmpl_key=user_template_key,
             customers=customers,
@@ -2485,7 +2496,7 @@ def create_app():
         return render_template(
             "invoice_form.html",
             mode="new",
-            default_date=datetime.now().strftime("%m/%d/%Y"),
+            default_date=datetime.now().strftime("%B %d, %Y"),
             doc_type="invoice",
             tmpl=tmpl,
             tmpl_key=user_template_key,

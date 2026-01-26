@@ -130,7 +130,10 @@
             </div>
             <div class="col-12 col-md-4">
               <div class="small-muted">Parts Markup</div>
-              <div class="mono">{{ "%.2f"|format(inv.parts_markup_percent or 0) }}%</div>
+              <div class="mono">
+                {{ "%.2f"|format(inv.parts_markup_percent or 0) }}%
+                <span class="small-muted">(${{ "%.2f"|format(inv.parts_markup_amount()) }})</span>
+              </div>
             </div>
           {% else %}
             <div class="col-12 col-md-3">
@@ -147,7 +150,10 @@
             </div>
             <div class="col-12 col-md-3">
               <div class="small-muted">Parts Markup</div>
-              <div class="mono">{{ "%.2f"|format(inv.parts_markup_percent or 0) }}%</div>
+              <div class="mono">
+                {{ "%.2f"|format(inv.parts_markup_percent or 0) }}%
+                <span class="small-muted">(${{ "%.2f"|format(inv.parts_markup_amount()) }})</span>
+              </div>
             </div>
           {% endif %}
         </div>
@@ -242,6 +248,4 @@
 </div>
 
 {% endblock %}
-
-
 

@@ -24,6 +24,10 @@
 {% else %}
   {% set _cust_id = (form.customer_id if form else "") %}
   {% set _cust_name = (form.customer_name if form else "") %}
+  {% if (not _cust_id and not _cust_name) and pre_customer is defined and pre_customer %}
+    {% set _cust_id = (pre_customer.id|string) %}
+    {% set _cust_name = (pre_customer.name or "") %}
+  {% endif %}
 {% endif %}
 
 <div class="d-flex justify-content-between align-items-end mb-3">
@@ -398,4 +402,3 @@
 </script>
 
 {% endblock %}
-

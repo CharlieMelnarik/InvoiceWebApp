@@ -29,29 +29,33 @@
       <div class="col-12 col-md-6">
         <div class="small-muted">Next Service</div>
         <div class="fw-semibold">
-          {% if c.next_service_dt %}
-            {{ c.next_service_dt.strftime("%a, %b %d, %Y @ %I:%M %p") }}
-          {% else %}
-            <span class="small-muted">Not set</span>
-          {% endif %}
-        </div>
-      </div>
-
-      <div class="col-6 col-md-3">
-        <div class="small-muted">Repeats</div>
-        <div class="fw-semibold">
-          {% if c.service_interval_days %}
-            Every {{ c.service_interval_days }} day{% if c.service_interval_days != 1 %}s{% endif %}
+          {% if next_event %}
+            {{ next_event.start_dt.strftime("%a, %b %d, %Y @ %I:%M %p") }}
           {% else %}
             <span class="small-muted">—</span>
           {% endif %}
         </div>
       </div>
 
-      <div class="col-6 col-md-3 text-md-end">
-        <div class="small-muted">Default Duration</div>
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Recurring</div>
         <div class="fw-semibold">
-          {{ c.default_service_minutes or 60 }} min
+          {% if c.next_service_dt and c.service_interval_days %}
+            Yes
+          {% else %}
+            <span class="small-muted">No</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="col-6 col-md-3 text-md-end">
+        <div class="small-muted">Next Service Time</div>
+        <div class="fw-semibold">
+          {% if next_event %}
+            {{ next_event.start_dt.strftime("%I:%M %p") }} - {{ next_event.end_dt.strftime("%I:%M %p") }}
+          {% else %}
+            <span class="small-muted">—</span>
+          {% endif %}
         </div>
       </div>
 
@@ -232,4 +236,3 @@
 </div>
 
 {% endblock %}
-
