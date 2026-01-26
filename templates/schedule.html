@@ -60,6 +60,26 @@
     overflow:hidden;
     cursor:pointer;
   }
+  .event-actions {
+    position:absolute;
+    top:6px;
+    right:6px;
+    display:flex;
+    gap:4px;
+  }
+  .event-action-btn {
+    border:none;
+    background:#fff;
+    border-radius:999px;
+    width:22px;
+    height:22px;
+    font-size:.75rem;
+    line-height:1;
+    box-shadow:0 1px 4px rgba(0,0,0,.12);
+    cursor:pointer;
+  }
+  .event-action-btn.complete { color:#198754; }
+  .event-action-btn.cancel { color:#dc3545; }
   .event-title { font-weight:700; font-size:.9rem; }
   .event-sub { font-size:.8rem; color:#6c757d; }
 
@@ -195,6 +215,8 @@
 
       <div class="modal-footer">
         <button class="btn btn-outline-secondary" id="btnGoCustomer" style="display:none;">Go to Customer</button>
+        <button class="btn btn-outline-success" id="btnComplete" style="display:none;">Mark Completed</button>
+        <button class="btn btn-outline-danger" id="btnCancel" style="display:none;">Cancelled</button>
         <button class="btn btn-outline-danger" id="btnStopRecurring" style="display:none;">Stop Recurring</button>
         <button class="btn btn-outline-danger" id="btnDelete" style="display:none;">Delete</button>
         <button class="btn btn-primary" id="btnSave">Save</button>
@@ -233,6 +255,8 @@
   const recurringHint = document.getElementById("recurringHint");
   const stopRecurringBtn = document.getElementById("btnStopRecurring");
   const goCustomerBtn = document.getElementById("btnGoCustomer");
+  const completeBtn = document.getElementById("btnComplete");
+  const cancelBtn = document.getElementById("btnCancel");
   let endWasEdited = false;
 
   // URL deep-links (optional):
@@ -496,16 +520,16 @@
 
       const titleLabel = eventDisplayLabel(e);
       const statusActions = canUpdateStatus ? `
-        <div class="d-flex gap-2 mt-2">
-          <button type="button" class="btn btn-sm btn-outline-success" data-action="complete">Mark Completed</button>
-          <button type="button" class="btn btn-sm btn-outline-danger" data-action="cancel">Cancelled</button>
+        <div class="event-actions">
+          <button type="button" class="event-action-btn complete" data-action="complete" title="Mark completed">✓</button>
+          <button type="button" class="event-action-btn cancel" data-action="cancel" title="Cancelled">✕</button>
         </div>
       ` : "";
 
       block.innerHTML = `
+        ${statusActions}
         <div class="event-title">${escapeHTML(titleLabel)}</div>
         <div class="event-sub">${s.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} - ${en.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</div>
-        ${statusActions}
       `;
 
       block.addEventListener("click", (ev) => {
@@ -683,6 +707,31 @@
       recurringDurationMinutes.value = rec.default_minutes || "";
       recurringTitle.value = rec.title || "";
       recurringNotes.value = rec.notes || "";
+    }
+
+    const now = new Date();
+    const endDt = parseISO(e.end);
+    const canUpdateStatus = now > endDt && e.status === "scheduled";
+    if (completeBtn && cancelBtn){
+      if (canUpdateStatus){
+        completeBtn.style.display = "";
+        cancelBtn.style.display = "";
+        completeBtn.onclick = async (ev) => {
+          ev.preventDefault();
+          await updateEventStatus(e.id, "completed");
+          modal.hide();
+        };
+        cancelBtn.onclick = async (ev) => {
+          ev.preventDefault();
+          await updateEventStatus(e.id, "cancelled");
+          modal.hide();
+        };
+      } else {
+        completeBtn.style.display = "none";
+        cancelBtn.style.display = "none";
+        completeBtn.onclick = null;
+        cancelBtn.onclick = null;
+      }
     }
 
     modal.show();
