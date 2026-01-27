@@ -124,6 +124,12 @@ class ScheduleEvent(Base):
         default="scheduled",
     )  # scheduled|completed|cancelled
 
+    event_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="appointment",
+    )  # appointment|block
+
     # ✅ recurring bookkeeping
     is_auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     recurring_token: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -160,6 +166,7 @@ class Customer(Base):
     default_service_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     service_title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     service_notes: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    recurring_horizon_dt: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Name is mandatory
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
@@ -238,10 +245,12 @@ class Invoice(Base):
     hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     price_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     shop_supplies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    parts_markup_percent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     notes: Mapped[str] = mapped_column(String, nullable=False, default="")
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    is_estimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     pdf_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     pdf_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -265,8 +274,23 @@ class Invoice(Base):
         order_by="InvoiceLabor.id",
     )
 
-    def parts_total(self) -> float:
+    def parts_total_raw(self) -> float:
         return round(sum((p.part_price or 0.0) for p in self.parts), 2)
+
+    def parts_markup_amount(self) -> float:
+        markup_percent = self.parts_markup_percent or 0.0
+        if not markup_percent:
+            return 0.0
+        return round(self.parts_total_raw() * (markup_percent / 100.0), 2)
+
+    def parts_total(self) -> float:
+        return round(self.parts_total_raw() + self.parts_markup_amount(), 2)
+
+    def part_price_with_markup(self, price: float) -> float:
+        markup_percent = self.parts_markup_percent or 0.0
+        if not markup_percent:
+            return round(price or 0.0, 2)
+        return round((price or 0.0) * (1 + markup_percent / 100.0), 2)
 
     def labor_total(self) -> float:
         return round((self.hours or 0.0) * (self.price_per_hour or 0.0), 2)
@@ -346,4 +370,3 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
     session.flush()
 
     return f"{year}{seq_row.last_seq:0{seq_width}d}"
-

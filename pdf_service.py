@@ -78,6 +78,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     if not inv:
         raise ValueError(f"Invoice not found: id={invoice_id}")
 
+    is_estimate = bool(getattr(inv, "is_estimate", False))
+
     # Pull the invoice owner's profile (business header fields)
     owner = None
     try:
@@ -116,7 +118,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "hours_suffix": "hrs",
 
             "labor_title": "Labor",
-            "labor_desc_label": "Labor Description",
+            "labor_desc_label": "Description",
             "labor_time_label": "Time",
             "labor_total_label": "Line Total",
 
@@ -134,7 +136,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "hours_suffix": "hrs",
 
             "labor_title": "Services",
-            "labor_desc_label": "Service Description",
+            "labor_desc_label": "Description",
             "labor_time_label": "Time",
             "labor_total_label": "Line Total",
 
@@ -145,14 +147,14 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "shop_supplies_label": "Supplies / Fees",
         },
         "accountant": {
-            "job_label": "Client / Engagement",
+            "job_label": "Engagement",
             "job_box_title": "ENGAGEMENT DETAILS",
             "job_rate_label": "Hourly Rate",
             "job_hours_label": "Hours Billed",
             "hours_suffix": "hrs",
 
             "labor_title": "Services",
-            "labor_desc_label": "Service / Task",
+            "labor_desc_label": "Description",
             "labor_time_label": "Hours",
             "labor_total_label": "Line Total",
 
@@ -162,6 +164,24 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
             "shop_supplies_label": "Admin Fees",
         },
+        "computer_repair": {
+            "job_label": "Device",
+            "job_box_title": "DEVICE DETAILS",
+            "job_rate_label": "Rate/Hour",
+            "job_hours_label": "Total Hours",
+            "hours_suffix": "hrs",
+
+            "labor_title": "Services",
+            "labor_desc_label": "Description",
+            "labor_time_label": "Time",
+            "labor_total_label": "Line Total",
+
+            "parts_title": "Parts",
+            "parts_name_label": "Part Name",
+            "parts_price_label": "Price",
+
+            "shop_supplies_label": "Shop Supplies",
+        },
         "lawn_care": {
             "job_label": "Service Address",
             "job_box_title": "PROPERTY DETAILS",
@@ -170,7 +190,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "hours_suffix": "hrs",
 
             "labor_title": "Services",
-            "labor_desc_label": "Service Description",
+            "labor_desc_label": "Description",
             "labor_time_label": "Qty / Time",
             "labor_total_label": "Line Total",
 
@@ -179,6 +199,24 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             "parts_price_label": "Amount",
 
             "shop_supplies_label": "Disposal / Trip Fees",
+        },
+        "flipping_items": {
+            "job_label": "Item",
+            "job_box_title": "ITEM DETAILS",
+            "job_rate_label": "Sale Price",
+            "job_hours_label": "Quantity",
+            "hours_suffix": "qty",
+
+            "labor_title": "Sales",
+            "labor_desc_label": "Description",
+            "labor_time_label": "Qty",
+            "labor_total_label": "Line Total",
+
+            "parts_title": "Costs",
+            "parts_name_label": "Cost Item",
+            "parts_price_label": "Amount",
+
+            "shop_supplies_label": "Other Expenses",
         },
     }
 
@@ -225,8 +263,9 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf_filename = f"{_safe_filename(inv.invoice_number)}.pdf"
     pdf_path = os.path.abspath(os.path.join(year_dir, pdf_filename))
 
+    doc_label = "ESTIMATE" if is_estimate else "INVOICE"
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
-    pdf.setTitle(f"Invoice - {inv.invoice_number}")
+    pdf.setTitle(f"{doc_label.title()} - {inv.invoice_number}")
 
     # -----------------------------
     # Helpers bound to this canvas
@@ -252,7 +291,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         pdf.showPage()
         pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont("Helvetica-Bold", 14)
-        pdf.drawString(M, PAGE_H - M, "INVOICE (cont.)")
+        pdf.drawString(M, PAGE_H - M, f"{doc_label} (cont.)")
         pdf.setFont("Helvetica", 10)
         pdf.drawString(M, PAGE_H - M - 16, f"{inv.invoice_number}  •  Generated: {generated_str}")
 
@@ -268,7 +307,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
     pdf.setFillColorRGB(0, 0, 0)
     pdf.setFont("Helvetica-Bold", 20)
-    pdf.drawString(M, PAGE_H - 0.75 * inch, "INVOICE")
+    pdf.drawString(M, PAGE_H - 0.75 * inch, doc_label)
 
     # Optional logo on far left
     logo_w = 0
@@ -319,8 +358,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # Meta (right)
     meta_x = PAGE_W - M
     meta_y = PAGE_H - 0.78 * inch
-    right_text(meta_x, meta_y, f"Invoice #: {inv.invoice_number}", "Helvetica", 10)
-    right_text(meta_x, meta_y - 14, f"Date: {generated_str}", "Helvetica", 10)
+    right_text(meta_x, meta_y, f"{doc_label.title()} #: {inv.invoice_number}", "Helvetica", 10)
+    right_text(meta_x, meta_y - 14, f"{doc_label.title()} Date: {generated_str}", "Helvetica", 10)
     right_text(meta_x, meta_y - 28, f"Date In: {inv.date_in}", "Helvetica", 10)
 
     # -----------------------------
@@ -402,14 +441,19 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         pdf.drawString(x2 + 10, y_job, ln)
         y_job -= line_step
 
-    pdf.drawString(x2 + 10, y_job, f"{cfg['job_rate_label']}: {_money(inv.price_per_hour)}")
-    y_job -= line_step
+    if template_key == "flipping_items":
+        pdf.drawString(x2 + 10, y_job, f"Profit: {_money(inv.labor_total())}")
+        y_job -= line_step
+        pdf.drawString(x2 + 10, y_job, f"Sold For: {_money(inv.paid)}")
+    else:
+        pdf.drawString(x2 + 10, y_job, f"{cfg['job_rate_label']}: {_money(inv.price_per_hour)}")
+        y_job -= line_step
 
-    pdf.drawString(
-        x2 + 10,
-        y_job,
-        f"{cfg['job_hours_label']}: {inv.hours} {cfg.get('hours_suffix', 'hrs')}"
-    )
+        pdf.drawString(
+            x2 + 10,
+            y_job,
+            f"{cfg['job_hours_label']}: {inv.hours} {cfg.get('hours_suffix', 'hrs')}"
+        )
 
 
     # -----------------------------
@@ -509,17 +553,22 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # -----------------------------
     parts_rows = []
     for p in parts:
-        parts_rows.append([p.part_name or "", _money(p.part_price or 0.0) if (p.part_price or 0.0) else ""])
+        parts_rows.append([
+            p.part_name or "",
+            _money(inv.part_price_with_markup(p.part_price or 0.0)) if (p.part_price or 0.0) else ""
+        ])
 
-    body_y = draw_table(
-        cfg["parts_title"],
-        M,
-        body_y - 10,
-        [cfg["parts_name_label"], cfg.get("parts_price_label", "Price")],
-        parts_rows,
-        col_widths=[PAGE_W - 2 * M - 120, 120],
-        money_cols={1}
-    )
+    has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
+    if has_parts_rows:
+        body_y = draw_table(
+            cfg["parts_title"],
+            M,
+            body_y - 10,
+            [cfg["parts_name_label"], cfg.get("parts_price_label", "Price")],
+            parts_rows,
+            col_widths=[PAGE_W - 2 * M - 120, 120],
+            money_cols={1}
+        )
 
     # -----------------------------
     # Notes + Summary boxes
@@ -589,21 +638,29 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     right_edge = sum_x + sum_w - 12
     y = notes_y_top - 42
 
-    label_right_value(sum_x + 10, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
+    if has_parts_rows and total_parts:
+        label_right_value(sum_x + 10, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
     label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
-    label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
+    if inv.shop_supplies:
+        label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
 
     pdf.setStrokeColor(colors.HexColor("#DDDDDD"))
     pdf.line(sum_x + 10, y + 4, sum_x + sum_w - 10, y + 4)
     pdf.setStrokeColor(colors.black)
     y -= 10
 
-    label_right_value(sum_x + 10, right_edge, y, "Total:", _money(total_price)); y -= 18
-    label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(inv.paid)); y -= 18
+    label = "Estimated Total:" if is_estimate else "Total:"
+    label_right_value(sum_x + 10, right_edge, y, label, _money(total_price)); y -= 18
+
+    if not is_estimate:
+        label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(inv.paid)); y -= 18
 
     # Amount Due / Profit below the box
     pdf.setFont("Helvetica-Bold", 13)
-    if price_owed < 0:
+    if is_estimate:
+        pdf.setFillColorRGB(0, 0, 0)
+        right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 28, f"ESTIMATED TOTAL: {_money(total_price)}", "Helvetica-Bold", 13)
+    elif price_owed < 0:
         profit = abs(price_owed)
         pdf.setFillColorRGB(0.10, 0.55, 0.25)
         right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 28, f"PROFIT: {_money(profit)}", "Helvetica-Bold", 13)
@@ -663,4 +720,3 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     session.commit()
 
     return pdf_path
-
