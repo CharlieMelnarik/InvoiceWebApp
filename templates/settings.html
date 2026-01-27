@@ -116,13 +116,16 @@
               </select>
             </div>
             <div class="col-md-6">
-              <label class="form-label">Send Time (UTC)</label>
+              <label class="form-label">Summary Start Time (UTC)</label>
               <input
                 type="time"
                 class="form-control"
                 name="schedule_summary_time"
                 value="{{ u.schedule_summary_time or '' }}"
               >
+              <div class="small-muted mt-1">
+                Appointments within the next day/week/month starting at this time are included.
+              </div>
             </div>
           </div>
 
@@ -184,5 +187,4 @@
 </div>
 
 {% endblock %}
-
 

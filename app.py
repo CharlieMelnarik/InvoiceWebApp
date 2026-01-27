@@ -187,26 +187,27 @@ def _parse_dt_local(s: str) -> datetime | None:
         return None
 
 
-def _summary_period_key(freq: str, dt: datetime) -> str:
+def _summary_period_key(freq: str, window_start: datetime) -> str:
     if freq == "day":
-        return dt.date().isoformat()
+        return window_start.date().isoformat()
     if freq == "week":
-        iso = dt.isocalendar()
+        iso = window_start.isocalendar()
         return f"{iso.year}-W{iso.week:02d}"
     if freq == "month":
-        return f"{dt.year}-{dt.month:02d}"
+        return f"{window_start.year}-{window_start.month:02d}"
     return ""
 
 
-def _summary_window(now: datetime, freq: str) -> tuple[datetime, datetime]:
-    start = datetime(now.year, now.month, now.day)
+def _summary_window(now: datetime, freq: str, start_time: str) -> tuple[datetime, datetime]:
+    hh, mm = [int(part) for part in start_time.split(":")]
+    window_start = datetime(now.year, now.month, now.day, hh, mm)
     if freq == "day":
-        return start, start + timedelta(days=1)
+        return window_start, window_start + timedelta(days=1)
     if freq == "week":
-        return start, start + timedelta(days=7)
+        return window_start, window_start + timedelta(days=7)
     if freq == "month":
-        return start, start + timedelta(days=30)
-    return start, start + timedelta(days=1)
+        return window_start, window_start + timedelta(days=30)
+    return window_start, window_start + timedelta(days=1)
 
 
 def _should_send_summary(user: User, now: datetime) -> bool:
@@ -219,15 +220,15 @@ def _should_send_summary(user: User, now: datetime) -> bool:
         return False
 
     hh, mm = [int(part) for part in time_value.split(":")]
-    scheduled_time = datetime(now.year, now.month, now.day, hh, mm)
-    if now < scheduled_time:
+    window_start = datetime(now.year, now.month, now.day, hh, mm)
+    if now < window_start:
         return False
 
     last_sent = getattr(user, "schedule_summary_last_sent", None)
     if not last_sent:
         return True
 
-    return _summary_period_key(freq, last_sent) != _summary_period_key(freq, now)
+    return _summary_period_key(freq, last_sent) != _summary_period_key(freq, window_start)
 
 
 # -----------------------------

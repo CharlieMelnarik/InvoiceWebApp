@@ -54,7 +54,8 @@ def main() -> None:
                 if not _looks_like_email(to_email):
                     continue
 
-                start, end = _summary_window(now, freq)
+                start_time = user.schedule_summary_time or "00:00"
+                start, end = _summary_window(now, freq, start_time)
                 events = (
                     s.query(ScheduleEvent)
                     .filter(ScheduleEvent.user_id == user.id)
@@ -78,7 +79,7 @@ def main() -> None:
                 subject = f"Upcoming appointments ({freq})"
                 body = (
                     "Here is your upcoming appointment summary (UTC):\n"
-                    f"{start:%b %d, %Y} through {end_display:%b %d, %Y}\n\n"
+                    f"{start:%b %d, %Y %I:%M %p} through {end_display:%b %d, %Y %I:%M %p}\n\n"
                     + "\n".join(lines)
                 )
 
