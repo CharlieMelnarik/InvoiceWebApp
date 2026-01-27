@@ -135,6 +135,22 @@
             id="scheduleSummaryTzOffset"
             value="{{ u.schedule_summary_tz_offset_minutes or 0 }}"
           >
+          <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+            <button type="submit" class="btn btn-outline-primary">
+              Save Summary Settings
+            </button>
+            <button
+              type="submit"
+              class="btn btn-outline-secondary"
+              formmethod="post"
+              formaction="{{ url_for('schedule_summary_test') }}"
+            >
+              Send Test Summary Email
+            </button>
+            <div class="small-muted">
+              Save settings first. The test email uses your current summary window.
+            </div>
+          </div>
 
           <hr class="my-4" />
 

@@ -9,31 +9,12 @@ from app import (
     _normalize_email,
     _looks_like_email,
     _should_send_summary,
-    _summary_window,
+    _summary_window_for_user,
     _send_schedule_summary_email,
+    _format_event_line,
 )
 from config import Config
 from models import Customer, ScheduleEvent, User, make_engine, make_session_factory
-
-
-def _format_event_line(event: ScheduleEvent, customer: Customer | None) -> str:
-    title = (event.title or "").strip() or (customer.name if customer else "Appointment")
-    if customer and customer.name and title.lower() != customer.name.lower():
-        label = f"{title} - {customer.name}"
-    else:
-        label = title
-
-    start_label = event.start_dt.strftime("%b %d, %Y %I:%M %p").lstrip("0")
-    end_label = event.end_dt.strftime("%b %d, %Y %I:%M %p").lstrip("0")
-    return f"- {start_label} → {end_label}: {label}"
-
-
-def _format_offset_label(offset_minutes: int) -> str:
-    sign = "+" if offset_minutes >= 0 else "-"
-    abs_val = abs(offset_minutes)
-    hh = abs_val // 60
-    mm = abs_val % 60
-    return f"UTC{sign}{hh:02d}:{mm:02d}"
 
 
 def main() -> None:
@@ -54,18 +35,18 @@ def main() -> None:
             for user in users:
                 freq = (user.schedule_summary_frequency or "none").lower().strip()
                 if freq == "none":
+                    print(f"[SCHEDULE SUMMARY] user={user.id} skipped (frequency=none)", flush=True)
                     continue
                 if not _should_send_summary(user, now):
+                    print(f"[SCHEDULE SUMMARY] user={user.id} skipped (not time yet)", flush=True)
                     continue
 
                 to_email = _normalize_email(user.email or "")
                 if not _looks_like_email(to_email):
+                    print(f"[SCHEDULE SUMMARY] user={user.id} skipped (invalid email)", flush=True)
                     continue
 
-                offset_minutes = int(user.schedule_summary_tz_offset_minutes or 0)
-                now_local = now + timedelta(minutes=offset_minutes)
-                start_time = user.schedule_summary_time or "00:00"
-                start, end = _summary_window(now_local, freq, start_time)
+                start, end, tz_label, _now_local = _summary_window_for_user(user, now)
                 events = (
                     s.query(ScheduleEvent)
                     .filter(ScheduleEvent.user_id == user.id)
@@ -78,6 +59,7 @@ def main() -> None:
                 )
 
                 if not events:
+                    print(f"[SCHEDULE SUMMARY] user={user.id} skipped (no events)", flush=True)
                     continue
 
                 lines = []
@@ -86,7 +68,6 @@ def main() -> None:
                     lines.append(_format_event_line(event, customer))
 
                 end_display = end - timedelta(seconds=1)
-                tz_label = _format_offset_label(offset_minutes)
                 subject = f"Upcoming appointments ({freq})"
                 body = (
                     f"Here is your upcoming appointment summary (local time, {tz_label}):\n"
@@ -95,7 +76,12 @@ def main() -> None:
                 )
 
                 try:
+                    print(
+                        f"[SCHEDULE SUMMARY] user={user.id} sending {len(events)} event(s) to {to_email}",
+                        flush=True,
+                    )
                     _send_schedule_summary_email(to_email, subject, body)
+                    print(f"[SCHEDULE SUMMARY] user={user.id} email sent", flush=True)
                 except Exception as exc:
                     print(f"[SCHEDULE SUMMARY] Email failed for user={user.id}: {exc!r}", flush=True)
                     continue

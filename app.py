@@ -210,6 +210,34 @@ def _summary_window(now_local: datetime, freq: str, start_time: str) -> tuple[da
     return window_start, window_start + timedelta(days=1)
 
 
+def _format_offset_label(offset_minutes: int) -> str:
+    sign = "+" if offset_minutes >= 0 else "-"
+    abs_val = abs(offset_minutes)
+    hh = abs_val // 60
+    mm = abs_val % 60
+    return f"UTC{sign}{hh:02d}:{mm:02d}"
+
+
+def _summary_window_for_user(user: User, now_utc: datetime) -> tuple[datetime, datetime, str, datetime]:
+    offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
+    now_local = now_utc + timedelta(minutes=offset_minutes)
+    start_time = getattr(user, "schedule_summary_time", None) or "00:00"
+    start, end = _summary_window(now_local, user.schedule_summary_frequency or "day", start_time)
+    return start, end, _format_offset_label(offset_minutes), now_local
+
+
+def _format_event_line(event: ScheduleEvent, customer: Customer | None) -> str:
+    title = (event.title or "").strip() or (customer.name if customer else "Appointment")
+    if customer and customer.name and title.lower() != customer.name.lower():
+        label = f"{title} - {customer.name}"
+    else:
+        label = title
+
+    start_label = event.start_dt.strftime("%b %d, %Y %I:%M %p").lstrip("0")
+    end_label = event.end_dt.strftime("%b %d, %Y %I:%M %p").lstrip("0")
+    return f"- {start_label} → {end_label}: {label}"
+
+
 def _should_send_summary(user: User, now_utc: datetime) -> bool:
     freq = (getattr(user, "schedule_summary_frequency", None) or "none").lower().strip()
     if freq == "none":
@@ -407,6 +435,7 @@ def _send_schedule_summary_email(to_email: str, subject: str, body_text: str) ->
         smtp.starttls()
         smtp.login(user, password)
         smtp.send_message(msg)
+    print(f"[SCHEDULE SUMMARY] Sent email to {to_email}", flush=True)
 
 
 # -----------------------------
@@ -1446,6 +1475,76 @@ def create_app():
                 return redirect(url_for("settings"))
 
             return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+    @app.post("/settings/schedule-summary/test")
+    @login_required
+    def schedule_summary_test():
+        now = datetime.utcnow()
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            if not u:
+                abort(404)
+
+            freq = (u.schedule_summary_frequency or "none").lower().strip()
+            if freq == "none":
+                flash("Schedule summary frequency is set to None.", "info")
+                return redirect(url_for("settings"))
+
+            summary_time = _parse_summary_time(u.schedule_summary_time or "")
+            if not summary_time:
+                flash("Please set a summary start time first.", "error")
+                return redirect(url_for("settings"))
+
+            to_email = _normalize_email(u.email or "")
+            if not _looks_like_email(to_email):
+                flash("Your account email is missing or invalid.", "error")
+                return redirect(url_for("settings"))
+
+            start, end, tz_label, _now_local = _summary_window_for_user(u, now)
+            events = (
+                s.query(ScheduleEvent)
+                .filter(ScheduleEvent.user_id == u.id)
+                .filter(ScheduleEvent.status == "scheduled")
+                .filter(or_(ScheduleEvent.event_type.is_(None), ScheduleEvent.event_type != "block"))
+                .filter(ScheduleEvent.start_dt < end)
+                .filter(ScheduleEvent.end_dt > start)
+                .order_by(ScheduleEvent.start_dt.asc())
+                .all()
+            )
+
+            print(
+                f"[SCHEDULE SUMMARY] test user={u.id} freq={freq} window={start}..{end} events={len(events)}",
+                flush=True,
+            )
+
+            if not events:
+                flash("No scheduled appointments in the summary window.", "info")
+                return redirect(url_for("settings"))
+
+            lines = []
+            for event in events:
+                customer = s.get(Customer, event.customer_id) if event.customer_id else None
+                lines.append(_format_event_line(event, customer))
+
+            end_display = end - timedelta(seconds=1)
+            subject = f"Upcoming appointments ({freq})"
+            body = (
+                f"Here is your upcoming appointment summary (local time, {tz_label}):\n"
+                f"{start:%b %d, %Y %I:%M %p} through {end_display:%b %d, %Y %I:%M %p}\n\n"
+                + "\n".join(lines)
+            )
+
+            try:
+                _send_schedule_summary_email(to_email, subject, body)
+            except Exception as exc:
+                print(f"[SCHEDULE SUMMARY] test send failed user={u.id}: {exc!r}", flush=True)
+                flash("Could not send summary email. Check server logs for SMTP errors.", "error")
+                return redirect(url_for("settings"))
+
+            u.schedule_summary_last_sent = now
+            s.commit()
+            flash("Test summary email sent.", "success")
+            return redirect(url_for("settings"))
 
     # -----------------------------
     # Billing pages
