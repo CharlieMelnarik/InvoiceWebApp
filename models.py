@@ -69,6 +69,14 @@ class User(Base):
     # Logo for PDF header (relative path under instance/, e.g. "uploads/logos/user_1.png")
     logo_path: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
 
+    schedule_summary_frequency: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="none",
+    )  # none|day|week|month
+    schedule_summary_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # HH:MM
+    schedule_summary_last_sent: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

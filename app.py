@@ -142,6 +142,23 @@ def _looks_like_email(email: str) -> bool:
     return bool(e) and ("@" in e) and ("." in e.split("@")[-1])
 
 
+def _parse_summary_time(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if not re.match(r"^\d{2}:\d{2}$", raw):
+        return None
+    hh, mm = raw.split(":")
+    try:
+        h = int(hh)
+        m = int(mm)
+    except ValueError:
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return f"{h:02d}:{m:02d}"
+
+
 def _parse_iso_dt(s: str) -> datetime:
     """
     Accepts:
@@ -168,6 +185,49 @@ def _parse_dt_local(s: str) -> datetime | None:
         return datetime.fromisoformat(s)
     except Exception:
         return None
+
+
+def _summary_period_key(freq: str, dt: datetime) -> str:
+    if freq == "day":
+        return dt.date().isoformat()
+    if freq == "week":
+        iso = dt.isocalendar()
+        return f"{iso.year}-W{iso.week:02d}"
+    if freq == "month":
+        return f"{dt.year}-{dt.month:02d}"
+    return ""
+
+
+def _summary_window(now: datetime, freq: str) -> tuple[datetime, datetime]:
+    start = datetime(now.year, now.month, now.day)
+    if freq == "day":
+        return start, start + timedelta(days=1)
+    if freq == "week":
+        return start, start + timedelta(days=7)
+    if freq == "month":
+        return start, start + timedelta(days=30)
+    return start, start + timedelta(days=1)
+
+
+def _should_send_summary(user: User, now: datetime) -> bool:
+    freq = (getattr(user, "schedule_summary_frequency", None) or "none").lower().strip()
+    if freq == "none":
+        return False
+
+    time_value = _parse_summary_time(getattr(user, "schedule_summary_time", None) or "")
+    if not time_value:
+        return False
+
+    hh, mm = [int(part) for part in time_value.split(":")]
+    scheduled_time = datetime(now.year, now.month, now.day, hh, mm)
+    if now < scheduled_time:
+        return False
+
+    last_sent = getattr(user, "schedule_summary_last_sent", None)
+    if not last_sent:
+        return True
+
+    return _summary_period_key(freq, last_sent) != _summary_period_key(freq, now)
 
 
 # -----------------------------
@@ -323,6 +383,28 @@ def _send_invoice_pdf_email(to_email: str, subject: str, body_text: str, pdf_pat
         smtp.send_message(msg)
 
 
+def _send_schedule_summary_email(to_email: str, subject: str, body_text: str) -> None:
+    host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
+    user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
+    password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
+    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+
+    if not all([host, port, user, password, mail_from]):
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = mail_from
+    msg["To"] = to_email
+    msg.set_content(body_text)
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, password)
+        smtp.send_message(msg)
+
+
 # -----------------------------
 # DB migration (lightweight)
 # -----------------------------
@@ -429,6 +511,33 @@ def _migrate_user_email(engine):
     try:
         with engine.begin() as conn:
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email))"))
+    except Exception:
+        pass
+
+
+def _migrate_user_schedule_summary(engine):
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "schedule_summary_frequency"):
+        stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_frequency VARCHAR(20)")
+    if not _column_exists(engine, "users", "schedule_summary_time"):
+        stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_time VARCHAR(5)")
+    if not _column_exists(engine, "users", "schedule_summary_last_sent"):
+        stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_last_sent TIMESTAMP NULL")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE users SET schedule_summary_frequency = 'none' "
+                "WHERE schedule_summary_frequency IS NULL"
+            ))
     except Exception:
         pass
 
@@ -719,6 +828,7 @@ def create_app():
     _migrate_add_user_id(engine)
     _migrate_user_profile_fields(engine)
     _migrate_user_email(engine)
+    _migrate_user_schedule_summary(engine)
     _migrate_invoice_contact_fields(engine)
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
@@ -1293,6 +1403,21 @@ def create_app():
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
                 u.address = (request.form.get("address") or "").strip() or None
+
+                summary_freq = (request.form.get("schedule_summary_frequency") or "none").strip().lower()
+                summary_time_raw = request.form.get("schedule_summary_time") or ""
+                summary_time = _parse_summary_time(summary_time_raw)
+
+                if summary_freq not in ("none", "day", "week", "month"):
+                    flash("Invalid schedule summary frequency.", "error")
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+                if summary_freq != "none" and not summary_time:
+                    flash("Please choose a time for schedule summaries.", "error")
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+                u.schedule_summary_frequency = summary_freq
+                u.schedule_summary_time = summary_time if summary_freq != "none" else None
 
                 s.commit()
                 flash("Settings saved.", "success")
