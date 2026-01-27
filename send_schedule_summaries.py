@@ -28,6 +28,14 @@ def _format_event_line(event: ScheduleEvent, customer: Customer | None) -> str:
     return f"- {start_label} → {end_label}: {label}"
 
 
+def _format_offset_label(offset_minutes: int) -> str:
+    sign = "+" if offset_minutes >= 0 else "-"
+    abs_val = abs(offset_minutes)
+    hh = abs_val // 60
+    mm = abs_val % 60
+    return f"UTC{sign}{hh:02d}:{mm:02d}"
+
+
 def main() -> None:
     app = create_app()
     engine = make_engine(Config.SQLALCHEMY_DATABASE_URI, echo=Config.SQLALCHEMY_ECHO)
@@ -54,8 +62,10 @@ def main() -> None:
                 if not _looks_like_email(to_email):
                     continue
 
+                offset_minutes = int(user.schedule_summary_tz_offset_minutes or 0)
+                now_local = now + timedelta(minutes=offset_minutes)
                 start_time = user.schedule_summary_time or "00:00"
-                start, end = _summary_window(now, freq, start_time)
+                start, end = _summary_window(now_local, freq, start_time)
                 events = (
                     s.query(ScheduleEvent)
                     .filter(ScheduleEvent.user_id == user.id)
@@ -76,9 +86,10 @@ def main() -> None:
                     lines.append(_format_event_line(event, customer))
 
                 end_display = end - timedelta(seconds=1)
+                tz_label = _format_offset_label(offset_minutes)
                 subject = f"Upcoming appointments ({freq})"
                 body = (
-                    "Here is your upcoming appointment summary (UTC):\n"
+                    f"Here is your upcoming appointment summary (local time, {tz_label}):\n"
                     f"{start:%b %d, %Y %I:%M %p} through {end_display:%b %d, %Y %I:%M %p}\n\n"
                     + "\n".join(lines)
                 )

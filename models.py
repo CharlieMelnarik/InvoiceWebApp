@@ -76,6 +76,11 @@ class User(Base):
     )  # none|day|week|month
     schedule_summary_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # HH:MM
     schedule_summary_last_sent: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    schedule_summary_tz_offset_minutes: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

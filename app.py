@@ -198,9 +198,9 @@ def _summary_period_key(freq: str, window_start: datetime) -> str:
     return ""
 
 
-def _summary_window(now: datetime, freq: str, start_time: str) -> tuple[datetime, datetime]:
+def _summary_window(now_local: datetime, freq: str, start_time: str) -> tuple[datetime, datetime]:
     hh, mm = [int(part) for part in start_time.split(":")]
-    window_start = datetime(now.year, now.month, now.day, hh, mm)
+    window_start = datetime(now_local.year, now_local.month, now_local.day, hh, mm)
     if freq == "day":
         return window_start, window_start + timedelta(days=1)
     if freq == "week":
@@ -210,7 +210,7 @@ def _summary_window(now: datetime, freq: str, start_time: str) -> tuple[datetime
     return window_start, window_start + timedelta(days=1)
 
 
-def _should_send_summary(user: User, now: datetime) -> bool:
+def _should_send_summary(user: User, now_utc: datetime) -> bool:
     freq = (getattr(user, "schedule_summary_frequency", None) or "none").lower().strip()
     if freq == "none":
         return False
@@ -219,16 +219,19 @@ def _should_send_summary(user: User, now: datetime) -> bool:
     if not time_value:
         return False
 
+    offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
+    now_local = now_utc + timedelta(minutes=offset_minutes)
     hh, mm = [int(part) for part in time_value.split(":")]
-    window_start = datetime(now.year, now.month, now.day, hh, mm)
-    if now < window_start:
+    window_start = datetime(now_local.year, now_local.month, now_local.day, hh, mm)
+    if now_local < window_start:
         return False
 
     last_sent = getattr(user, "schedule_summary_last_sent", None)
     if not last_sent:
         return True
 
-    return _summary_period_key(freq, last_sent) != _summary_period_key(freq, window_start)
+    last_sent_local = last_sent + timedelta(minutes=offset_minutes)
+    return _summary_period_key(freq, last_sent_local) != _summary_period_key(freq, window_start)
 
 
 # -----------------------------
@@ -527,6 +530,8 @@ def _migrate_user_schedule_summary(engine):
         stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_time VARCHAR(5)")
     if not _column_exists(engine, "users", "schedule_summary_last_sent"):
         stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_last_sent TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "schedule_summary_tz_offset_minutes"):
+        stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_tz_offset_minutes INTEGER")
 
     if stmts:
         with engine.begin() as conn:
@@ -538,6 +543,10 @@ def _migrate_user_schedule_summary(engine):
             conn.execute(text(
                 "UPDATE users SET schedule_summary_frequency = 'none' "
                 "WHERE schedule_summary_frequency IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET schedule_summary_tz_offset_minutes = 0 "
+                "WHERE schedule_summary_tz_offset_minutes IS NULL"
             ))
     except Exception:
         pass
@@ -1408,6 +1417,17 @@ def create_app():
                 summary_freq = (request.form.get("schedule_summary_frequency") or "none").strip().lower()
                 summary_time_raw = request.form.get("schedule_summary_time") or ""
                 summary_time = _parse_summary_time(summary_time_raw)
+                summary_tz_offset_raw = (request.form.get("schedule_summary_tz_offset_minutes") or "").strip()
+                summary_tz_offset = 0
+                if summary_tz_offset_raw:
+                    try:
+                        summary_tz_offset = int(summary_tz_offset_raw)
+                    except ValueError:
+                        flash("Invalid schedule summary time zone offset.", "error")
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                if summary_tz_offset < -720 or summary_tz_offset > 840:
+                    flash("Invalid schedule summary time zone offset.", "error")
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
                 if summary_freq not in ("none", "day", "week", "month"):
                     flash("Invalid schedule summary frequency.", "error")
@@ -1419,6 +1439,7 @@ def create_app():
 
                 u.schedule_summary_frequency = summary_freq
                 u.schedule_summary_time = summary_time if summary_freq != "none" else None
+                u.schedule_summary_tz_offset_minutes = summary_tz_offset
 
                 s.commit()
                 flash("Settings saved.", "success")

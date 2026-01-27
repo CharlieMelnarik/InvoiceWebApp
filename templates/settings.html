@@ -116,7 +116,7 @@
               </select>
             </div>
             <div class="col-md-6">
-              <label class="form-label">Summary Start Time (UTC)</label>
+              <label class="form-label">Summary Start Time (Local)</label>
               <input
                 type="time"
                 class="form-control"
@@ -126,8 +126,15 @@
               <div class="small-muted mt-1">
                 Appointments within the next day/week/month starting at this time are included.
               </div>
+              <div class="small-muted mt-1" id="summaryTimezoneLabel"></div>
             </div>
           </div>
+          <input
+            type="hidden"
+            name="schedule_summary_tz_offset_minutes"
+            id="scheduleSummaryTzOffset"
+            value="{{ u.schedule_summary_tz_offset_minutes or 0 }}"
+          >
 
           <hr class="my-4" />
 
@@ -188,3 +195,20 @@
 
 {% endblock %}
 
+{% block scripts %}
+<script>
+  const tzOffsetMinutes = -new Date().getTimezoneOffset();
+  const tzInput = document.getElementById("scheduleSummaryTzOffset");
+  if (tzInput) {
+    tzInput.value = String(tzOffsetMinutes);
+  }
+  const label = document.getElementById("summaryTimezoneLabel");
+  if (label) {
+    const sign = tzOffsetMinutes >= 0 ? "+" : "-";
+    const abs = Math.abs(tzOffsetMinutes);
+    const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+    const mm = String(abs % 60).padStart(2, "0");
+    label.textContent = `Local time (UTC${sign}${hh}:${mm}).`;
+  }
+</script>
+{% endblock %}
