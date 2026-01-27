@@ -11,6 +11,7 @@
   <div class="d-flex gap-2">
     <a class="btn btn-primary" href="{{ url_for('customer_new') }}">New Customer</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('invoice_new') }}">New Invoice</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('estimate_new') }}">New Estimate</a>
   </div>
 </div>
 
@@ -57,6 +58,9 @@
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">
                     New Invoice
                   </a>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('estimate_new') }}?customer_id={{ c.id }}">
+                    New Estimate
+                  </a>
                 </td>
               </tr>
             {% endfor %}
@@ -78,4 +82,3 @@
 </div>
 
 {% endblock %}
-
