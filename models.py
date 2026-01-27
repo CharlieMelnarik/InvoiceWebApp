@@ -124,6 +124,12 @@ class ScheduleEvent(Base):
         default="scheduled",
     )  # scheduled|completed|cancelled
 
+    event_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="appointment",
+    )  # appointment|block
+
     # ✅ recurring bookkeeping
     is_auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     recurring_token: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

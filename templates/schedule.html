@@ -60,6 +60,10 @@
     overflow:hidden;
     cursor:pointer;
   }
+  .event-block.block {
+    background:#f8f9fa;
+    border-color:#adb5bd;
+  }
   .event-actions {
     position:absolute;
     top:6px;
@@ -82,6 +86,11 @@
   .event-action-btn.cancel { color:#dc3545; }
   .event-title { font-weight:700; font-size:.9rem; }
   .event-sub { font-size:.8rem; color:#6c757d; }
+  .evt-pill.block,
+  .evt-full.block {
+    background:#f8f9fa;
+    border:1px solid #ced4da;
+  }
 
   @media (max-width: 992px) {
     .day-wrap { flex-direction:column; }
@@ -109,6 +118,7 @@
     <button class="btn btn-outline-dark btn-sm" id="btnMonth">Month</button>
     <button class="btn btn-outline-dark btn-sm" id="btnDay">Day</button>
     <button class="btn btn-primary btn-sm" id="btnNew">+ Appointment</button>
+    <button class="btn btn-outline-primary btn-sm" id="btnBlock">+ Block Time</button>
   </div>
 </div>
 
@@ -128,6 +138,14 @@
 
       <div class="modal-body">
 
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="blockTime">
+          <label class="form-check-label" for="blockTime">
+            Block off time (no customer)
+          </label>
+        </div>
+
+        <div id="customerFields">
         <div class="mb-2">
           <label class="form-label">Customer</label>
           <input class="form-control" id="custSearch" placeholder="Type a customer name..." autocomplete="off">
@@ -136,6 +154,7 @@
           <div class="small-muted mt-1" id="custHint" style="display:none;">
             Tip: press <span class="mono">Enter</span> to pick the first match.
           </div>
+        </div>
         </div>
 
         <div class="mb-2">
@@ -159,6 +178,7 @@
           <textarea class="form-control" id="notes" rows="3"></textarea>
         </div>
 
+        <div id="recurringSection">
         <hr class="my-3">
 
         <div class="mb-2">
@@ -206,6 +226,7 @@
             <textarea class="form-control" id="recurringNotes" rows="2" placeholder="Use appointment notes"></textarea>
           </div>
         </div>
+        </div>
 
         <div class="small-muted" id="modalHint"></div>
         <div class="small-muted mt-2" id="recurringHint"></div>
@@ -245,6 +266,9 @@
   const modal = new bootstrap.Modal(modalEl);
   const startInput = document.getElementById("start");
   const endInput = document.getElementById("end");
+  const blockToggle = document.getElementById("blockTime");
+  const customerFields = document.getElementById("customerFields");
+  const recurringSection = document.getElementById("recurringSection");
   const recurringEnabled = document.getElementById("recurringEnabled");
   const recurringFields = document.getElementById("recurringFields");
   const recurringIntervalDays = document.getElementById("recurringIntervalDays");
@@ -296,6 +320,9 @@
   }
 
   function eventDisplayLabel(e){
+    if (e.event_type === "block") {
+      return (e.title || "Blocked time").trim() || "Blocked time";
+    }
     const baseTitle = (e.title || "Appointment").trim();
     const customerName = (e.customer_name || "").trim();
     let label = "";
@@ -319,6 +346,10 @@
   }
 
   function eventShortLabel(e){
+    if (e.event_type === "block") {
+      const title = (e.title || "Blocked").trim();
+      return title.split(/\s+/)[0] || "Blocked";
+    }
     const customerName = (e.customer_name || "").trim();
     if (customerName) {
       const shortName = customerName.split(/\s+/)[0];
@@ -406,14 +437,16 @@
         <div class="day-num">${d.getDate()}</div>`;
 
       evts.forEach(e => {
+        const isBlock = e.event_type === "block";
         const pillCls = e.status === "cancelled" ? "evt-pill cancelled" : "evt-pill";
         const fullCls = e.status === "cancelled" ? "evt-full cancelled" : "evt-full";
         const label = eventDisplayLabel(e);
         const shortLabel = eventShortLabel(e);
         const safeTitle = escapeHTML(label);
+        const blockClass = isBlock ? " block" : "";
         html += `
-          <span class="${fullCls}">${safeTitle}</span>
-          <span class="${pillCls}" data-full-label="${safeTitle}">
+          <span class="${fullCls}${blockClass}">${safeTitle}</span>
+          <span class="${pillCls}${blockClass}" data-full-label="${safeTitle}">
             <span class="evt-name">${escapeHTML(shortLabel)}</span>
           </span>
         `;
@@ -469,6 +502,7 @@
 
     const day = state.selectedDay || state.cursor;
     const dayStart = startOfDay(day);
+    const dayEnd = endOfDay(day);
 
     // hours shown
     const hourStart = 6;   // 6am
@@ -498,22 +532,29 @@
 
     // events on this day
     const isoDay = toISODate(dayStart);
-    const dayEvents = state.events.filter(e => e.start.slice(0,10) === isoDay);
+    const dayEvents = state.events.filter(e => {
+      const s = parseISO(e.start);
+      const en = parseISO(e.end);
+      return s < dayEnd && en > dayStart;
+    });
 
     dayEvents.forEach(e => {
       const s = parseISO(e.start);
       const en = parseISO(e.end);
+      const blockStart = s < dayStart ? dayStart : s;
+      const blockEnd = en > dayEnd ? dayEnd : en;
       const now = new Date();
-      const canUpdateStatus = now > en && e.status === "scheduled";
+      const isBlock = e.event_type === "block";
+      const canUpdateStatus = !isBlock && now > en && e.status === "scheduled";
 
-      const minutesFromStart = (s.getHours() - hourStart) * 60 + s.getMinutes();
-      const durMin = Math.max(15, (en - s) / 60000);
+      const minutesFromStart = (blockStart.getHours() - hourStart) * 60 + blockStart.getMinutes();
+      const durMin = Math.max(15, (blockEnd - blockStart) / 60000);
 
       const top = Math.max(0, minutesFromStart * pxPerMin);
       const height = Math.max(18, durMin * pxPerMin);
 
       const block = document.createElement("div");
-      block.className = "event-block";
+      block.className = `event-block${isBlock ? " block" : ""}`;
       block.style.top = `${top}px`;
       block.style.height = `${height}px`;
       block.dataset.id = e.id;
@@ -529,7 +570,7 @@
       block.innerHTML = `
         ${statusActions}
         <div class="event-title">${escapeHTML(titleLabel)}</div>
-        <div class="event-sub">${s.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} - ${en.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</div>
+        <div class="event-sub">${blockStart.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} - ${blockEnd.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</div>
       `;
 
       block.addEventListener("click", (ev) => {
@@ -610,6 +651,35 @@
     stopRecurringBtn.style.display = "none";
   }
 
+  function setBlockMode(isBlock){
+    if (blockToggle){
+      blockToggle.checked = isBlock;
+    }
+    if (customerFields){
+      customerFields.style.display = isBlock ? "none" : "";
+    }
+    if (recurringSection){
+      recurringSection.style.display = isBlock ? "none" : "";
+    }
+    if (isBlock){
+      document.getElementById("customerId").value = "";
+      document.getElementById("custSearch").value = "";
+      hideCustResults();
+      resetRecurringFields();
+      const titleInput = document.getElementById("title");
+      if (titleInput && !(titleInput.value || "").trim()){
+        titleInput.value = "Blocked time";
+      }
+    }
+    updateGoToCustomerButton();
+  }
+
+  if (blockToggle){
+    blockToggle.addEventListener("change", () => {
+      setBlockMode(blockToggle.checked);
+    });
+  }
+
   if (recurringEnabled){
     recurringEnabled.addEventListener("change", syncRecurringVisibility);
   }
@@ -629,7 +699,7 @@
   function updateGoToCustomerButton(){
     if (!goCustomerBtn) return;
     const customerId = document.getElementById("customerId").value;
-    if (customerId) {
+    if (customerId && !blockToggle.checked) {
       goCustomerBtn.style.display = "";
       goCustomerBtn.dataset.customerId = customerId;
     } else {
@@ -642,14 +712,14 @@
     // If we have a customer_id in the URL, set it so saves link correctly.
     // NOTE: To also auto-fill the name, you'd pass pre_customer_name from app.py,
     // or add a /api/customers/<id> endpoint. This keeps it safe without needing new routes.
-    if (PRESELECT_CUSTOMER_ID && /^\d+$/.test(PRESELECT_CUSTOMER_ID)){
+    if (PRESELECT_CUSTOMER_ID && /^\d+$/.test(PRESELECT_CUSTOMER_ID) && !blockToggle.checked){
       document.getElementById("customerId").value = PRESELECT_CUSTOMER_ID;
       // If user starts typing and selects someone else, this will be replaced.
     }
   }
 
-  function openModalForCreate(start, end){
-    document.getElementById("modalTitle").textContent = "New Appointment";
+  function openModalForCreate(start, end, isBlock = false){
+    document.getElementById("modalTitle").textContent = isBlock ? "New Blocked Time" : "New Appointment";
     document.getElementById("eventId").value = "";
     document.getElementById("btnDelete").style.display = "none";
 
@@ -657,6 +727,7 @@
     document.getElementById("custSearch").value = "";
     document.getElementById("title").value = "";
     document.getElementById("notes").value = "";
+    setBlockMode(isBlock);
 
     endWasEdited = false;
     startInput.value = toLocalInputValue(start);
@@ -667,8 +738,10 @@
     custHint.style.display = "none";
     custActiveIndex = -1;
 
-    resetRecurringFields();
-    _applyPreselectedCustomerIfAny();
+    if (!isBlock){
+      resetRecurringFields();
+      _applyPreselectedCustomerIfAny();
+    }
     updateGoToCustomerButton();
     modal.show();
 
@@ -677,7 +750,8 @@
   }
 
   function openModalForEdit(e){
-    document.getElementById("modalTitle").textContent = "Edit Appointment";
+    const isBlock = e.event_type === "block";
+    document.getElementById("modalTitle").textContent = isBlock ? "Edit Blocked Time" : "Edit Appointment";
     document.getElementById("eventId").value = e.id;
     document.getElementById("btnDelete").style.display = "";
 
@@ -686,6 +760,7 @@
 
     document.getElementById("title").value = e.title || "";
     document.getElementById("notes").value = e.notes || "";
+    setBlockMode(isBlock);
     endWasEdited = false;
     startInput.value = toLocalInputValue(parseISO(e.start));
     endInput.value = toLocalInputValue(parseISO(e.end));
@@ -697,7 +772,7 @@
 
     resetRecurringFields();
     updateGoToCustomerButton();
-    if (e.customer_recurring) {
+    if (!isBlock && e.customer_recurring) {
       const rec = e.customer_recurring;
       if (rec.interval_days) {
         stopRecurringBtn.style.display = "";
@@ -711,7 +786,7 @@
 
     const now = new Date();
     const endDt = parseISO(e.end);
-    const canUpdateStatus = now > endDt && e.status === "scheduled";
+    const canUpdateStatus = !isBlock && now > endDt && e.status === "scheduled";
     if (completeBtn && cancelBtn){
       if (canUpdateStatus){
         completeBtn.style.display = "";
@@ -799,20 +874,33 @@
     openModalForCreate(start, end);
   });
 
+  document.getElementById("btnBlock").addEventListener("click", () => {
+    const start = getDefaultStartForView();
+    const end = new Date(start);
+    end.setMinutes(end.getMinutes() + 60);
+    openModalForCreate(start, end, true);
+  });
+
   // Save/Delete
   document.getElementById("btnSave").addEventListener("click", async () => {
     const id = document.getElementById("eventId").value;
     const isRecurring = !!recurringEnabled.checked;
-    const customerId = document.getElementById("customerId").value || null;
+    const isBlock = !!blockToggle.checked;
+    const customerId = isBlock ? null : (document.getElementById("customerId").value || null);
     const payload = {
       customer_id: customerId,
       title: document.getElementById("title").value,
       notes: document.getElementById("notes").value,
       start: startInput.value,
       end: endInput.value,
+      event_type: isBlock ? "block" : "appointment",
     };
 
     if (isRecurring){
+      if (isBlock){
+        alert("Blocked time cannot be saved as recurring.");
+        return;
+      }
       if (!customerId){
         alert("Please select a customer before enabling recurring scheduling.");
         return;
@@ -844,7 +932,8 @@
   document.getElementById("btnDelete").addEventListener("click", async () => {
     const id = document.getElementById("eventId").value;
     if (!id) return;
-    if (!confirm("Delete this appointment?")) return;
+    const isBlock = !!blockToggle.checked;
+    if (!confirm(isBlock ? "Delete this blocked time?" : "Delete this appointment?")) return;
 
     const res = await fetch(`/api/schedule/events/${id}`, { method:"DELETE" });
     if (!res.ok){

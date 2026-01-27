@@ -635,6 +635,26 @@ def _migrate_schedule_event_auto_fields(engine):
         pass
 
 
+def _migrate_schedule_event_type(engine):
+    """
+    Adds event_type so we can store appointment vs. block-off time entries.
+    """
+    if not _table_exists(engine, "schedule_events"):
+        return
+
+    if not _column_exists(engine, "schedule_events", "event_type"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE schedule_events ADD COLUMN event_type VARCHAR(20)"))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE schedule_events SET event_type = 'appointment' WHERE event_type IS NULL"
+            ))
+    except Exception:
+        pass
+
+
 def _migrate_customer_schedule_fields(engine):
     """
     Adds recurring service fields onto customers.
@@ -712,6 +732,7 @@ def create_app():
     _migrate_user_logo(engine)
     _migrate_schedule_events(engine)
     _migrate_schedule_event_auto_fields(engine)   # <-- schedule is_auto/recurring_token
+    _migrate_schedule_event_type(engine)
     _migrate_customer_schedule_fields(engine)
 
     SessionLocal = make_session_factory(engine)
@@ -1560,10 +1581,17 @@ def create_app():
             out = []
             for e in evs:
                 cust = s.get(Customer, e.customer_id) if getattr(e, "customer_id", None) else None
+                event_type = (getattr(e, "event_type", None) or "appointment")
+                if event_type == "block":
+                    title = (e.title or "").strip() or "Blocked time"
+                    customer_name = ""
+                else:
+                    title = (e.title or "").strip() or (cust.name if cust else "Appointment")
+                    customer_name = (cust.name if cust else "")
                 out.append({
                     "id": e.id,
                     "customer_id": e.customer_id,
-                    "customer_name": (cust.name if cust else ""),
+                    "customer_name": customer_name,
                     "customer_recurring": {
                         "next_service_dt": cust.next_service_dt.isoformat(timespec="minutes")
                         if (cust and cust.next_service_dt) else None,
@@ -1572,11 +1600,12 @@ def create_app():
                         "title": (cust.service_title or "").strip() if cust else "",
                         "notes": (cust.service_notes or "").strip() if cust else "",
                     } if cust else None,
-                    "title": (e.title or "").strip() or (cust.name if cust else "Appointment"),
+                    "title": title,
                     "start": e.start_dt.isoformat(timespec="minutes"),
                     "end": e.end_dt.isoformat(timespec="minutes"),
                     "notes": (e.notes or "").strip(),
                     "status": (getattr(e, "status", None) or "scheduled"),
+                    "event_type": event_type,
                 })
 
             return jsonify(out)
@@ -1606,10 +1635,16 @@ def create_app():
         recurring_horizon_months = (data.get("recurring_horizon_months") or "").strip()
         recurring_title = (data.get("recurring_title") or "").strip()
         recurring_notes = (data.get("recurring_notes") or "").strip()
+        event_type = (data.get("event_type") or "appointment").strip().lower()
+
+        if event_type not in ("appointment", "block"):
+            return jsonify({"error": "Invalid event type"}), 400
 
         with db_session() as s:
             cust_id_int = None
-            if customer_id is not None and str(customer_id).strip() != "":
+            if event_type == "block":
+                cust_id_int = None
+            elif customer_id is not None and str(customer_id).strip() != "":
                 try:
                     cust_id_int = int(customer_id)
                 except Exception:
@@ -1619,15 +1654,18 @@ def create_app():
             ev = ScheduleEvent(
                 user_id=uid,
                 customer_id=cust_id_int,
-                title=title or None,
+                title=(title or None) if event_type != "block" else (title or "Blocked time"),
                 start_dt=start_dt,
                 end_dt=end_dt,
                 notes=notes or None,
+                event_type=event_type,
                 # is_auto defaults False for manual events
             )
             s.add(ev)
 
             if recurring_enabled:
+                if event_type == "block":
+                    return jsonify({"error": "Recurring schedule is not available for blocked time."}), 400
                 if not cust_id_int:
                     return jsonify({"error": "Recurring schedule requires a customer."}), 400
                 if not recurring_interval_days.isdigit():
@@ -1677,6 +1715,14 @@ def create_app():
             if not ev:
                 abort(404)
 
+            if "event_type" in data:
+                event_type = (data.get("event_type") or "appointment").strip().lower()
+                if event_type not in ("appointment", "block"):
+                    return jsonify({"error": "Invalid event type"}), 400
+                ev.event_type = event_type
+                if event_type == "block":
+                    ev.customer_id = None
+
             if "start" in data:
                 ev.start_dt = _parse_iso_dt(data.get("start") or "")
             if "end" in data:
@@ -1687,7 +1733,9 @@ def create_app():
 
             if "customer_id" in data:
                 raw = data.get("customer_id")
-                if raw is None or str(raw).strip() == "":
+                if getattr(ev, "event_type", None) == "block":
+                    ev.customer_id = None
+                elif raw is None or str(raw).strip() == "":
                     ev.customer_id = None
                 else:
                     try:
@@ -1699,18 +1747,25 @@ def create_app():
 
             if "title" in data:
                 t = (data.get("title") or "").strip()
-                ev.title = t or None
+                if getattr(ev, "event_type", None) == "block":
+                    ev.title = t or "Blocked time"
+                else:
+                    ev.title = t or None
 
             if "notes" in data:
                 n = (data.get("notes") or "").strip()
                 ev.notes = n or None
 
             if "status" in data:
+                if getattr(ev, "event_type", None) == "block":
+                    return jsonify({"error": "Blocked time cannot change status."}), 400
                 st = (data.get("status") or "").strip().lower()
                 if st in ("scheduled", "completed", "cancelled"):
                     ev.status = st
 
             if data.get("recurring_enabled"):
+                if getattr(ev, "event_type", None) == "block":
+                    return jsonify({"error": "Recurring schedule is not available for blocked time."}), 400
                 if not ev.customer_id:
                     return jsonify({"error": "Recurring schedule requires a customer."}), 400
 
