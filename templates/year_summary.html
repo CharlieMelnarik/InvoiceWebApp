@@ -34,23 +34,27 @@
         <div class="h5 fw-bold mb-0">{{ count }}</div>
       </div>
       <div class="col-12 col-md-6">
-        <div class="small-muted">Total Invoice Amount (parts + supplies + labor)</div>
+        <div class="small-muted">Total Invoice Amount (expenses + supplies + income)</div>
         <div class="h5 fw-bold mb-0">{{ money(total_invoice_amount) }}</div>
       </div>
 
       <div class="col-12"><hr class="my-2"></div>
 
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Parts</div>
-        <div class="fw-semibold">{{ money(total_parts) }}</div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="small-muted">Total Labor (hours × rate)</div>
+        <div class="small-muted">Total Invoiced Income</div>
         <div class="fw-semibold">{{ money(total_labor) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Shop Supplies</div>
+        <div class="small-muted">Parts Markup Profit</div>
+        <div class="fw-semibold">{{ money(total_parts_markup_profit) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Total Supplies</div>
         <div class="fw-semibold">{{ money(total_supplies) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Total Invoiced Expenses</div>
+        <div class="fw-semibold">{{ money(total_invoice_amount - total_labor) }}</div>
       </div>
       <div class="col-6 col-md-3">
         <div class="small-muted">Total Paid Invoices</div>
@@ -59,15 +63,19 @@
 
       <div class="col-12"><hr class="my-2"></div>
 
-      <div class="col-6 col-md-4">
+      <div class="col-6 col-md-6">
         <div class="small-muted">Total Outstanding (Unpaid)</div>
         <div class="fw-semibold text-warning">{{ money(total_outstanding_unpaid) }}</div>
       </div>
-      <div class="col-6 col-md-4">
+      <div class="col-6 col-md-6">
         <div class="small-muted">Unpaid invoices</div>
         <div class="fw-semibold">{{ unpaid_count }}</div>
       </div>
-      <div class="col-12 col-md-4">
+      <div class="col-6 col-md-6">
+        <div class="small-muted">Total Expenses</div>
+        <div class="fw-semibold">{{ money(total_parts + total_supplies) }}</div>
+      </div>
+      <div class="col-6 col-md-6">
         <div class="small-muted">Total Profit (paid labor only)</div>
         <div class="fw-bold">{{ money(profit_paid_labor_only) }}</div>
       </div>
@@ -117,4 +125,3 @@
   </div>
 </div>
 {% endblock %}
-
