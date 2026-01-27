@@ -49,73 +49,6 @@
       </div>
     </div>
 
-    <hr class="my-4">
-
-    <!-- -----------------------------
-         Service Schedule (Recurring)
-         ----------------------------- -->
-    <div class="mb-2">
-      <div class="fw-bold mb-1">Service Schedule</div>
-      <div class="small-muted mb-3">
-        Optional. If set, InvoiceRunner will auto-create recurring appointments on the Scheduler.
-      </div>
-
-      <div class="row g-3">
-        <div class="col-12 col-md-6">
-          <label class="form-label">Next service date & time</label>
-          <input
-            class="form-control"
-            type="datetime-local"
-            name="next_service_dt"
-            id="next_service_dt"
-            value="{% if mode=='edit' and c.next_service_dt %}{{ c.next_service_dt.strftime('%Y-%m-%dT%H:%M') }}{% else %}{{ (form.next_service_dt if form else '') }}{% endif %}">
-          <div class="small-muted mt-1">Leave blank to disable recurring jobs for this customer.</div>
-        </div>
-
-        <div class="col-12 col-md-3">
-          <label class="form-label">Repeat every (days)</label>
-          <input
-            class="form-control"
-            type="number"
-            min="1"
-            step="1"
-            name="service_interval_days"
-            id="service_interval_days"
-            value="{% if mode=='edit' %}{{ c.service_interval_days or '' }}{% else %}{{ (form.service_interval_days if form else '') }}{% endif %}"
-            placeholder="7">
-          <div class="small-muted mt-1">Examples: 7 weekly, 14 bi-weekly, 30 monthly-ish.</div>
-        </div>
-
-        <div class="col-12 col-md-3">
-          <label class="form-label">Default duration (minutes)</label>
-          <input
-            class="form-control"
-            type="number"
-            min="15"
-            step="15"
-            name="default_service_minutes"
-            value="{% if mode=='edit' %}{{ c.default_service_minutes or 60 }}{% else %}{{ (form.default_service_minutes if form else '60') }}{% endif %}">
-          <div class="small-muted mt-1">Used for auto-created appointments.</div>
-        </div>
-
-        <div class="col-12 col-md-6">
-          <label class="form-label">Default appointment title (optional)</label>
-          <input class="form-control" name="service_title"
-            value="{% if mode=='edit' %}{{ c.service_title or '' }}{% else %}{{ (form.service_title if form else '') }}{% endif %}"
-            placeholder="Mow / trim / cleanup">
-          <div class="small-muted mt-1">If blank, we’ll use the customer name.</div>
-        </div>
-
-        <div class="col-12">
-          <label class="form-label">Default appointment notes (optional)</label>
-          <textarea class="form-control" name="service_notes" rows="3"
-            placeholder="Gate code, preferred time, specific instructions...">{% if mode=='edit' %}{{ c.service_notes or '' }}{% else %}{{ (form.service_notes if form else '') }}{% endif %}</textarea>
-        </div>
-      </div>
-    </div>
-
-    <hr class="my-4">
-
     <div class="d-flex gap-2 align-items-center">
       <button class="btn btn-primary" type="submit">
         {% if mode == "new" %}Create Customer{% else %}Save Changes{% endif %}
@@ -127,58 +60,9 @@
 
       <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Cancel</a>
 
-      {% if mode == "edit" and c.next_service_dt and c.service_interval_days %}
-        <span class="ms-auto"></span>
-        <button class="btn btn-outline-danger" type="button" id="stopRecurringProxy">
-          Stop Recurring
-        </button>
-      {% endif %}
     </div>
 
   </div>
 </form>
 
-{% if mode == "edit" and c.next_service_dt and c.service_interval_days %}
-  <form method="post"
-        action="{{ url_for('customer_disable_recurring', customer_id=c.id) }}"
-        id="stopRecurringForm"
-        onsubmit="return confirm('Disable recurring scheduling for this customer and delete future recurring appointments?');">
-  </form>
-
-  <script>
-    // submit real form when proxy button is clicked
-    (function(){
-      const btn = document.getElementById("stopRecurringProxy");
-      const form = document.getElementById("stopRecurringForm");
-      if (btn && form){
-        btn.addEventListener("click", function(){
-          form.requestSubmit();
-        });
-      }
-    })();
-  </script>
-{% endif %}
-
-<script>
-  // Small UX guard: if user fills one recurring field but not the other, warn them
-  (function(){
-    const form = document.getElementById("customerForm");
-    const nextDt = document.getElementById("next_service_dt");
-    const interval = document.getElementById("service_interval_days");
-
-    if (!form || !nextDt || !interval) return;
-
-    form.addEventListener("submit", function(e){
-      const hasNext = !!nextDt.value;
-      const hasInterval = !!interval.value;
-
-      if ((hasNext && !hasInterval) || (!hasNext && hasInterval)){
-        e.preventDefault();
-        alert("For recurring service, please set BOTH the next service date and the repeat interval (days).");
-      }
-    });
-  })();
-</script>
-
 {% endblock %}
-
