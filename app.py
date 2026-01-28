@@ -260,6 +260,13 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
         flush=True
     )
 
+    is_before = now_local < window_start
+    print(
+      f"[SCHEDULE SUMMARY DEBUG] user={user.id} now_utc={now_utc} offset={offset_minutes} "
+      f"now_local={now_local} window_start={window_start} now_local<window_start={is_before}",
+      flush=True
+    )
+
     if now_local < window_start:
         return False
 
