@@ -267,7 +267,7 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
     if not last_sent:
         return True
 
-    last_sent_local = last_sent - timedelta(minutes=offset_minutes)
+    last_sent_local = last_sent + timedelta(minutes=offset_minutes)
 
     return _summary_period_key(freq, last_sent_local) != _summary_period_key(freq, now_local)
 
