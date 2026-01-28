@@ -208,7 +208,6 @@
             data-text="{{ inv.useful_info|e }}"
             style="white-space: pre-wrap;"
           ></div>
-          <div class="mt-2" id="usefulInfoLinks" style="display:none;"></div>
         {% else %}
           <div class="small-muted">No useful information.</div>
         {% endif %}
@@ -250,11 +249,18 @@
 <script>
   (function () {
     const textEl = document.getElementById("usefulInfoText");
-    const linkWrap = document.getElementById("usefulInfoLinks");
-    if (!textEl || !linkWrap) return;
+    if (!textEl) return;
 
     const raw = textEl.dataset.text || "";
-    textEl.textContent = raw;
+
+    function escapeHtml(value) {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
 
     function normalizeUrl(value) {
       const trimmed = value.trim();
@@ -264,18 +270,17 @@
       return null;
     }
 
-    const urls = raw.match(/\b(https?:\/\/[^\s]+|www\.[^\s]+)\b/gi) || [];
-    const links = urls.map(normalizeUrl).filter(Boolean);
-    if (!links.length) {
-      linkWrap.style.display = "none";
-      return;
-    }
-
-    linkWrap.style.display = "block";
-    linkWrap.innerHTML = `
-      <div class="small-muted mb-1">Detected links:</div>
-      ${links.map((url) => `<div><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></div>`).join("")}
-    `;
+    const escaped = escapeHtml(raw);
+    textEl.innerHTML = escaped.replace(
+      /\b(https?:\/\/[^\s]+|www\.[^\s]+)\b/gi,
+      (match) => {
+        const url = normalizeUrl(match);
+        if (!url) return match;
+        const safeUrl = escapeHtml(url);
+        const safeText = escapeHtml(match);
+        return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
+      }
+    );
   })();
 </script>
 {% endblock %}
