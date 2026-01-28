@@ -221,8 +221,10 @@ def _format_offset_label(offset_minutes: int) -> str:
 def _summary_window_for_user(user: User, now_utc: datetime) -> tuple[datetime, datetime, str, datetime]:
     offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
     now_local = now_utc + timedelta(minutes=offset_minutes)
+
     start_time = getattr(user, "schedule_summary_time", None) or "00:00"
     start, end = _summary_window(now_local, user.schedule_summary_frequency or "day", start_time)
+
     return start, end, _format_offset_label(offset_minutes), now_local
 
 
@@ -247,27 +249,23 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
     if not time_value:
         return False
 
+    # IMPORTANT: Your DB currently stores offsets like Denver winter = -420
+    # So local = utc + offset_minutes
     offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
-
-    now_local = now_utc + timedelta(minutes=offset_minutes)  # <-- also change sign here
+    now_local = now_utc + timedelta(minutes=offset_minutes)
 
     hh, mm = [int(part) for part in time_value.split(":")]
     window_start = datetime(now_local.year, now_local.month, now_local.day, hh, mm)
 
-    print(
-        f"[SCHEDULE SUMMARY DEBUG] user={user.id} now_utc={now_utc} "
-        f"offset={offset_minutes} now_local={now_local} window_start={window_start}",
-        flush=True
-    )
-
+    # Debug (optional; remove later)
     is_before = now_local < window_start
     print(
-      f"[SCHEDULE SUMMARY DEBUG] user={user.id} now_utc={now_utc} offset={offset_minutes} "
-      f"now_local={now_local} window_start={window_start} now_local<window_start={is_before}",
-      flush=True
+        f"[SCHEDULE SUMMARY DEBUG] user={user.id} now_utc={now_utc} offset={offset_minutes} "
+        f"now_local={now_local} window_start={window_start} now_local<window_start={is_before}",
+        flush=True,
     )
 
-    if now_local < window_start:
+    if is_before:
         return False
 
     last_sent = getattr(user, "schedule_summary_last_sent", None)
@@ -276,6 +274,7 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
 
     last_sent_local = last_sent + timedelta(minutes=offset_minutes)
 
+    # IMPORTANT: compare "have we sent in the CURRENT period?" vs now_local
     return _summary_period_key(freq, last_sent_local) != _summary_period_key(freq, now_local)
 
 

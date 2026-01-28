@@ -24,6 +24,9 @@ def main() -> None:
 
     now = datetime.utcnow()
 
+    # Helpful top-level log so you know the cron fired
+    print(f"[SCHEDULE SUMMARY] job started now_utc={now.isoformat()}", flush=True)
+
     with app.app_context():
         with SessionLocal() as s:
             users = (
@@ -31,13 +34,17 @@ def main() -> None:
                 .filter(User.schedule_summary_frequency.isnot(None))
                 .all()
             )
+            print(f"[SCHEDULE SUMMARY] users_to_check={len(users)}", flush=True)
 
             for user in users:
                 freq = (user.schedule_summary_frequency or "none").lower().strip()
                 if freq == "none":
                     print(f"[SCHEDULE SUMMARY] user={user.id} skipped (frequency=none)", flush=True)
                     continue
-                if not _should_send_summary(user, now):
+
+                decision = _should_send_summary(user, now)
+                print(f"[SCHEDULE SUMMARY DEBUG] user={user.id} should_send={decision}", flush=True)
+                if not decision:
                     print(f"[SCHEDULE SUMMARY] user={user.id} skipped (not time yet)", flush=True)
                     continue
 
@@ -92,3 +99,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
