@@ -248,9 +248,18 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
         return False
 
     offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
-    now_local = now_utc + timedelta(minutes=offset_minutes)
+
+    now_local = now_utc - timedelta(minutes=offset_minutes)  # <-- also change sign here
+
     hh, mm = [int(part) for part in time_value.split(":")]
     window_start = datetime(now_local.year, now_local.month, now_local.day, hh, mm)
+
+    print(
+        f"[SCHEDULE SUMMARY DEBUG] user={user.id} now_utc={now_utc} "
+        f"offset={offset_minutes} now_local={now_local} window_start={window_start}",
+        flush=True
+    )
+
     if now_local < window_start:
         return False
 
@@ -258,8 +267,10 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
     if not last_sent:
         return True
 
-    last_sent_local = last_sent + timedelta(minutes=offset_minutes)
-    return _summary_period_key(freq, last_sent_local) != _summary_period_key(freq, window_start)
+    last_sent_local = last_sent - timedelta(minutes=offset_minutes)
+
+    return _summary_period_key(freq, last_sent_local) != _summary_period_key(freq, now_local)
+
 
 
 # -----------------------------
