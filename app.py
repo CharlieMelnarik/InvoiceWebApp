@@ -597,6 +597,14 @@ def _migrate_invoice_contact_fields(engine):
                 conn.execute(text(st))
 
 
+def _migrate_invoice_useful_info(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "useful_info"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN useful_info TEXT"))
+
+
 def _migrate_user_invoice_template(engine):
     if not _table_exists(engine, "users"):
         return
@@ -869,6 +877,7 @@ def create_app():
     _migrate_user_email(engine)
     _migrate_user_schedule_summary(engine)
     _migrate_invoice_contact_fields(engine)
+    _migrate_invoice_useful_info(engine)
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
     _migrate_invoice_is_estimate(engine)
@@ -2634,6 +2643,7 @@ def create_app():
                     paid=0.0,
                     date_in=request.form.get("date_in", "").strip(),
                     notes=request.form.get("notes", "").rstrip(),
+                    useful_info=(request.form.get("useful_info") or "").rstrip() or None,
                 )
 
                 for pn, pp in parts_data:
@@ -2780,6 +2790,7 @@ def create_app():
                     paid=paid_val,
                     date_in=request.form.get("date_in", "").strip(),
                     notes=request.form.get("notes", "").rstrip(),
+                    useful_info=(request.form.get("useful_info") or "").rstrip() or None,
                 )
 
                 for pn, pp in parts_data:
@@ -2889,6 +2900,7 @@ def create_app():
                 inv.paid = 0.0
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = (request.form.get("notes") or "").rstrip()
+                inv.useful_info = (request.form.get("useful_info") or "").rstrip() or None
 
                 cust_email_override = (request.form.get("customer_email") or "").strip() or None
                 cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
@@ -2965,6 +2977,7 @@ def create_app():
                 parts_markup_percent=inv.parts_markup_percent,
 
                 notes=inv.notes,
+                useful_info=inv.useful_info,
                 paid=0.0,
                 date_in=inv.date_in or datetime.now().strftime("%m/%d/%Y"),
 
@@ -3052,6 +3065,7 @@ def create_app():
                 parts_markup_percent=inv.parts_markup_percent,
 
                 notes=inv.notes,
+                useful_info=inv.useful_info,
                 paid=0.0,
                 date_in=datetime.now().strftime("%m/%d/%Y"),
 
@@ -3148,6 +3162,7 @@ def create_app():
                     inv.hours = inv.paid - parts_total_with_markup - inv.shop_supplies
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = (request.form.get("notes") or "").rstrip()
+                inv.useful_info = (request.form.get("useful_info") or "").rstrip() or None
 
                 cust_email_override = (request.form.get("customer_email") or "").strip() or None
                 cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
