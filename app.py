@@ -249,7 +249,7 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
 
     offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
 
-    now_local = now_utc - timedelta(minutes=offset_minutes)  # <-- also change sign here
+    now_local = now_utc + timedelta(minutes=offset_minutes)  # <-- also change sign here
 
     hh, mm = [int(part) for part in time_value.split(":")]
     window_start = datetime(now_local.year, now_local.month, now_local.day, hh, mm)
