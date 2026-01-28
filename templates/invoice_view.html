@@ -218,6 +218,21 @@
 
         <hr class="my-4">
 
+        <div class="fw-semibold mb-2">Useful Information</div>
+        {% if inv.useful_info %}
+          <div
+            class="border rounded p-3 bg-light"
+            id="usefulInfoText"
+            data-text="{{ inv.useful_info|e }}"
+            style="white-space: pre-wrap;"
+          ></div>
+          <div class="mt-2" id="usefulInfoLinks" style="display:none;"></div>
+        {% else %}
+          <div class="small-muted">No useful information.</div>
+        {% endif %}
+
+        <hr class="my-4">
+
         <div class="d-flex flex-wrap gap-2">
           <form method="post" action="{{ url_for('invoice_pdf_generate', invoice_id=inv.id) }}">
             <button class="btn btn-outline-primary" type="submit">Generate PDF</button>
@@ -249,3 +264,36 @@
 
 {% endblock %}
 
+{% block scripts %}
+<script>
+  (function () {
+    const textEl = document.getElementById("usefulInfoText");
+    const linkWrap = document.getElementById("usefulInfoLinks");
+    if (!textEl || !linkWrap) return;
+
+    const raw = textEl.dataset.text || "";
+    textEl.textContent = raw;
+
+    function normalizeUrl(value) {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      if (/^https?:\/\//i.test(trimmed)) return trimmed;
+      if (/^www\./i.test(trimmed)) return `https://${trimmed}`;
+      return null;
+    }
+
+    const urls = raw.match(/\b(https?:\/\/[^\s]+|www\.[^\s]+)\b/gi) || [];
+    const links = urls.map(normalizeUrl).filter(Boolean);
+    if (!links.length) {
+      linkWrap.style.display = "none";
+      return;
+    }
+
+    linkWrap.style.display = "block";
+    linkWrap.innerHTML = `
+      <div class="small-muted mb-1">Detected links:</div>
+      ${links.map((url) => `<div><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></div>`).join("")}
+    `;
+  })();
+</script>
+{% endblock %}
