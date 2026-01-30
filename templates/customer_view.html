@@ -215,6 +215,9 @@
                   <a href="{{ url_for('estimate_view', estimate_id=inv.id) }}" class="text-decoration-none">
                     {{ inv.invoice_number }}
                   </a>
+                  {% if inv.converted_to_invoice %}
+                    <span class="badge text-bg-info ms-2">Converted to Invoice</span>
+                  {% endif %}
                 </td>
 
                 <td class="mono">{{ inv.date_in }}</td>

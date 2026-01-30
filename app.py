@@ -640,6 +640,22 @@ def _migrate_invoice_converted_flag(engine):
             pass
 
 
+def _migrate_estimate_converted_flag(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "converted_to_invoice"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN converted_to_invoice BOOLEAN"))
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE invoices SET converted_to_invoice = FALSE "
+                    "WHERE converted_to_invoice IS NULL"
+                ))
+        except Exception:
+            pass
+
+
 def _migrate_customer_address_fields(engine):
     if not _table_exists(engine, "customers"):
         return
@@ -936,6 +952,7 @@ def create_app():
     _migrate_invoice_contact_fields(engine)
     _migrate_invoice_useful_info(engine)
     _migrate_invoice_converted_flag(engine)
+    _migrate_estimate_converted_flag(engine)
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
     _migrate_invoice_is_estimate(engine)
@@ -3067,6 +3084,8 @@ def create_app():
                 pdf_path=None,
                 pdf_generated_at=None,
             )
+
+            inv.converted_to_invoice = True
 
             for p in inv.parts:
                 new_inv.parts.append(InvoicePart(part_name=p.part_name, part_price=p.part_price))

@@ -17,7 +17,7 @@
 <form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('invoices') }}">
   <div class="col-12 col-md-6">
     <label class="form-label">Search</label>
-    <input class="form-control" name="q" value="{{ q or '' }}" placeholder="Search attn/contact or job…">
+    <input class="form-control" name="q" value="{{ q or '' }}" placeholder="Search name or job…">
   </div>
 
   <div class="col-6 col-md-2">
@@ -48,7 +48,6 @@
           <tr>
             <th style="min-width: 170px;">Invoice #</th>
             <th style="min-width: 260px;">Customer</th>
-            <th style="min-width: 240px;">Attn / Contact</th>
             <th style="min-width: 260px;">Job</th>
             <th style="min-width: 140px;">Date In</th>
             <th style="width: 140px;">Total</th>
@@ -83,7 +82,6 @@
                   {% endif %}
                 </td>
 
-                <td>{{ inv.name or "" }}</td>
                 <td>{{ inv.vehicle }}</td>
                 <td class="mono">{{ inv.date_in }}</td>
                 <td class="mono">${{ "%.2f"|format(total) }}</td>
@@ -95,7 +93,7 @@
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="7" class="p-4">
+              <td colspan="6" class="p-4">
                 <div class="text-center">
                   <div class="fw-semibold mb-1">No invoices found.</div>
                   <div class="small-muted mb-3">Try clearing filters or create a new invoice.</div>
@@ -111,6 +109,5 @@
 </div>
 
 {% endblock %}
-
 
 

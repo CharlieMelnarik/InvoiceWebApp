@@ -37,7 +37,7 @@
 
       <div class="col-12 col-md-6">
         <label class="form-label">Phone</label>
-        <input class="form-control" name="phone"
+        <input class="form-control" name="phone" inputmode="tel" id="customer_phone"
           value="{% if mode=='edit' %}{{ c.phone or '' }}{% else %}{{ (form.phone if form else '') }}{% endif %}"
           placeholder="(406) 555-1234">
       </div>
@@ -89,5 +89,31 @@
 
   </div>
 </form>
+
+<script>
+  const phoneInput = document.getElementById("customer_phone");
+  const formatPhone = (value) => {
+    const digits = (value || "").replace(/\D/g, "").slice(0, 10);
+    if (!digits) {
+      return "";
+    }
+
+    let formatted = `(${digits.slice(0, Math.min(3, digits.length))}`;
+    if (digits.length >= 4) {
+      formatted += `)${digits.slice(3, Math.min(6, digits.length))}`;
+    }
+    if (digits.length >= 7) {
+      formatted += `-${digits.slice(6, 10)}`;
+    }
+    return formatted;
+  };
+
+  if (phoneInput) {
+    phoneInput.value = formatPhone(phoneInput.value);
+    phoneInput.addEventListener("input", () => {
+      phoneInput.value = formatPhone(phoneInput.value);
+    });
+  }
+</script>
 
 {% endblock %}
