@@ -43,9 +43,34 @@
       </div>
 
       <div class="col-12">
-        <label class="form-label">Address</label>
-        <textarea class="form-control" name="address" rows="3"
-          placeholder="Street, City, State, ZIP">{% if mode=='edit' %}{{ c.address or '' }}{% else %}{{ (form.address if form else '') }}{% endif %}</textarea>
+        <label class="form-label">Address Line 1</label>
+        <input class="form-control" name="address_line1" autocomplete="address-line1"
+          value="{% if mode=='edit' %}{{ c.address_line1 or c.address or '' }}{% else %}{{ (form.address_line1 if form else '') }}{% endif %}"
+          placeholder="Street address">
+      </div>
+      <div class="col-12">
+        <label class="form-label">Address Line 2</label>
+        <input class="form-control" name="address_line2" autocomplete="address-line2"
+          value="{% if mode=='edit' %}{{ c.address_line2 or '' }}{% else %}{{ (form.address_line2 if form else '') }}{% endif %}"
+          placeholder="Apartment, suite, unit, etc. (optional)">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">City</label>
+        <input class="form-control" name="city" autocomplete="address-level2"
+          value="{% if mode=='edit' %}{{ c.city or '' }}{% else %}{{ (form.city if form else '') }}{% endif %}"
+          placeholder="City">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">State</label>
+        <input class="form-control" name="state" autocomplete="address-level1"
+          value="{% if mode=='edit' %}{{ c.state or '' }}{% else %}{{ (form.state if form else '') }}{% endif %}"
+          placeholder="State">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">ZIP</label>
+        <input class="form-control" name="postal_code" autocomplete="postal-code"
+          value="{% if mode=='edit' %}{{ c.postal_code or '' }}{% else %}{{ (form.postal_code if form else '') }}{% endif %}"
+          placeholder="ZIP">
       </div>
     </div>
 

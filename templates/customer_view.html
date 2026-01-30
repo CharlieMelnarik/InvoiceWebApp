@@ -9,7 +9,15 @@
     <div class="small-muted">
       {% if c.email %}<span class="mono">{{ c.email }}</span>{% endif %}
       {% if c.phone %}{% if c.email %} · {% endif %}<span class="mono">{{ c.phone }}</span>{% endif %}
-      {% if c.address %}<div class="mt-1">{{ c.address }}</div>{% endif %}
+      {% if c.address_line1 %}
+        <div class="mt-1">{{ c.address_line1 }}</div>
+        {% if c.address_line2 %}<div>{{ c.address_line2 }}</div>{% endif %}
+        {% if c.city or c.state or c.postal_code %}
+          <div>{{ [c.city, c.state, c.postal_code]|select|join(' ') }}</div>
+        {% endif %}
+      {% elif c.address %}
+        <div class="mt-1">{{ c.address }}</div>
+      {% endif %}
     </div>
   </div>
 

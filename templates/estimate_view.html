@@ -78,24 +78,13 @@
 
         <div class="row g-3">
           <div class="col-12 col-md-6">
-            <div class="small-muted">Email (estimate override)</div>
-            <div class="mono">{{ inv.customer_email or "" }}</div>
+            <div class="small-muted">Email</div>
+            <div class="mono">{{ inv.customer_email or (customer.email if customer else "") }}</div>
           </div>
           <div class="col-12 col-md-6">
-            <div class="small-muted">Phone (estimate override)</div>
-            <div class="mono">{{ inv.customer_phone or "" }}</div>
+            <div class="small-muted">Phone</div>
+            <div class="mono">{{ inv.customer_phone or (customer.phone if customer else "") }}</div>
           </div>
-
-          {% if customer %}
-            <div class="col-12 col-md-6">
-              <div class="small-muted">Email (customer)</div>
-              <div class="mono">{{ customer.email or "" }}</div>
-            </div>
-            <div class="col-12 col-md-6">
-              <div class="small-muted">Phone (customer)</div>
-              <div class="mono">{{ customer.phone or "" }}</div>
-            </div>
-          {% endif %}
         </div>
 
         <hr class="my-4">
@@ -117,6 +106,10 @@
                 <span class="small-muted">(${{ "%.2f"|format(inv.parts_markup_amount()) }})</span>
               </div>
             </div>
+            <div class="col-12 col-md-4">
+              <div class="small-muted">Total Profit</div>
+              <div class="mono">${{ "%.2f"|format(inv.labor_total() + inv.parts_markup_amount()) }}</div>
+            </div>
           {% else %}
             <div class="col-12 col-md-3">
               <div class="small-muted">Hours</div>
@@ -136,6 +129,10 @@
                 {{ "%.2f"|format(inv.parts_markup_percent or 0) }}%
                 <span class="small-muted">(${{ "%.2f"|format(inv.parts_markup_amount()) }})</span>
               </div>
+            </div>
+            <div class="col-12 col-md-3">
+              <div class="small-muted">Total Profit</div>
+              <div class="mono">${{ "%.2f"|format(inv.labor_total() + inv.parts_markup_amount()) }}</div>
             </div>
           {% endif %}
         </div>

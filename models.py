@@ -188,6 +188,11 @@ class Customer(Base):
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    address_line1: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    address_line2: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    state: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -262,6 +267,7 @@ class Invoice(Base):
 
     notes: Mapped[str] = mapped_column(String, nullable=False, default="")
     useful_info: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    converted_from_estimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     is_estimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

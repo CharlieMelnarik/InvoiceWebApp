@@ -187,6 +187,25 @@ def _parse_dt_local(s: str) -> datetime | None:
         return None
 
 
+def _format_customer_address(
+    line1: str | None,
+    line2: str | None,
+    city: str | None,
+    state: str | None,
+    postal_code: str | None,
+) -> str | None:
+    parts = [p for p in [(line1 or "").strip(), (line2 or "").strip()] if p]
+    city_state = " ".join([p for p in [(city or "").strip(), (state or "").strip()] if p])
+    if city_state:
+        parts.append(city_state)
+    if (postal_code or "").strip():
+        if parts:
+            parts[-1] = f"{parts[-1]} {postal_code.strip()}"
+        else:
+            parts.append(postal_code.strip())
+    return ", ".join(parts) if parts else None
+
+
 def _summary_period_key(freq: str, window_start: datetime) -> str:
     if freq == "day":
         return window_start.date().isoformat()
@@ -221,10 +240,8 @@ def _format_offset_label(offset_minutes: int) -> str:
 def _summary_window_for_user(user: User, now_utc: datetime) -> tuple[datetime, datetime, str, datetime]:
     offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
     now_local = now_utc + timedelta(minutes=offset_minutes)
-
     start_time = getattr(user, "schedule_summary_time", None) or "00:00"
     start, end = _summary_window(now_local, user.schedule_summary_frequency or "day", start_time)
-
     return start, end, _format_offset_label(offset_minutes), now_local
 
 
@@ -249,23 +266,11 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
     if not time_value:
         return False
 
-    # IMPORTANT: Your DB currently stores offsets like Denver winter = -420
-    # So local = utc + offset_minutes
     offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
     now_local = now_utc + timedelta(minutes=offset_minutes)
-
     hh, mm = [int(part) for part in time_value.split(":")]
     window_start = datetime(now_local.year, now_local.month, now_local.day, hh, mm)
-
-    # Debug (optional; remove later)
-    is_before = now_local < window_start
-    print(
-        f"[SCHEDULE SUMMARY DEBUG] user={user.id} now_utc={now_utc} offset={offset_minutes} "
-        f"now_local={now_local} window_start={window_start} now_local<window_start={is_before}",
-        flush=True,
-    )
-
-    if is_before:
+    if now_local < window_start:
         return False
 
     last_sent = getattr(user, "schedule_summary_last_sent", None)
@@ -273,10 +278,7 @@ def _should_send_summary(user: User, now_utc: datetime) -> bool:
         return True
 
     last_sent_local = last_sent + timedelta(minutes=offset_minutes)
-
-    # IMPORTANT: compare "have we sent in the CURRENT period?" vs now_local
-    return _summary_period_key(freq, last_sent_local) != _summary_period_key(freq, now_local)
-
+    return _summary_period_key(freq, last_sent_local) != _summary_period_key(freq, window_start)
 
 
 # -----------------------------
@@ -622,6 +624,44 @@ def _migrate_invoice_useful_info(engine):
             conn.execute(text("ALTER TABLE invoices ADD COLUMN useful_info TEXT"))
 
 
+def _migrate_invoice_converted_flag(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "converted_from_estimate"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN converted_from_estimate BOOLEAN"))
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE invoices SET converted_from_estimate = FALSE "
+                    "WHERE converted_from_estimate IS NULL"
+                ))
+        except Exception:
+            pass
+
+
+def _migrate_customer_address_fields(engine):
+    if not _table_exists(engine, "customers"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "customers", "address_line1"):
+        stmts.append("ALTER TABLE customers ADD COLUMN address_line1 VARCHAR(200)")
+    if not _column_exists(engine, "customers", "address_line2"):
+        stmts.append("ALTER TABLE customers ADD COLUMN address_line2 VARCHAR(200)")
+    if not _column_exists(engine, "customers", "city"):
+        stmts.append("ALTER TABLE customers ADD COLUMN city VARCHAR(100)")
+    if not _column_exists(engine, "customers", "state"):
+        stmts.append("ALTER TABLE customers ADD COLUMN state VARCHAR(50)")
+    if not _column_exists(engine, "customers", "postal_code"):
+        stmts.append("ALTER TABLE customers ADD COLUMN postal_code VARCHAR(20)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+
 def _migrate_user_invoice_template(engine):
     if not _table_exists(engine, "users"):
         return
@@ -895,6 +935,7 @@ def create_app():
     _migrate_user_schedule_summary(engine)
     _migrate_invoice_contact_fields(engine)
     _migrate_invoice_useful_info(engine)
+    _migrate_invoice_converted_flag(engine)
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
     _migrate_invoice_is_estimate(engine)
@@ -909,6 +950,7 @@ def create_app():
     _migrate_schedule_event_auto_fields(engine)   # <-- schedule is_auto/recurring_token
     _migrate_schedule_event_type(engine)
     _migrate_customer_schedule_fields(engine)
+    _migrate_customer_address_fields(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -2125,7 +2167,12 @@ def create_app():
             name = (request.form.get("name") or "").strip()
             email = _normalize_email(request.form.get("email") or "").strip() or None
             phone = (request.form.get("phone") or "").strip() or None
-            address = (request.form.get("address") or "").strip() or None
+            address_line1 = (request.form.get("address_line1") or "").strip() or None
+            address_line2 = (request.form.get("address_line2") or "").strip() or None
+            city = (request.form.get("city") or "").strip() or None
+            state = (request.form.get("state") or "").strip() or None
+            postal_code = (request.form.get("postal_code") or "").strip() or None
+            address = _format_customer_address(address_line1, address_line2, city, state, postal_code)
 
             # Recurring fields (safe if form doesn't have them yet)
             next_service_dt = _parse_dt_local(request.form.get("next_service_dt"))
@@ -2158,6 +2205,11 @@ def create_app():
                     email=(email if (email and _looks_like_email(email)) else (email or None)),
                     phone=phone,
                     address=address,
+                    address_line1=address_line1,
+                    address_line2=address_line2,
+                    city=city,
+                    state=state,
+                    postal_code=postal_code,
 
                     next_service_dt=next_service_dt,
                     service_interval_days=service_interval_days,
@@ -2206,7 +2258,12 @@ def create_app():
                 name = (request.form.get("name") or "").strip()
                 email = _normalize_email(request.form.get("email") or "").strip() or None
                 phone = (request.form.get("phone") or "").strip() or None
-                address = (request.form.get("address") or "").strip() or None
+                address_line1 = (request.form.get("address_line1") or "").strip() or None
+                address_line2 = (request.form.get("address_line2") or "").strip() or None
+                city = (request.form.get("city") or "").strip() or None
+                state = (request.form.get("state") or "").strip() or None
+                postal_code = (request.form.get("postal_code") or "").strip() or None
+                address = _format_customer_address(address_line1, address_line2, city, state, postal_code)
 
                 if not name:
                     flash("Customer name is required.", "error")
@@ -2235,6 +2292,11 @@ def create_app():
                 c.email = (email if (email and _looks_like_email(email)) else (email or None))
                 c.phone = phone
                 c.address = address
+                c.address_line1 = address_line1
+                c.address_line2 = address_line2
+                c.city = city
+                c.state = state
+                c.postal_code = postal_code
 
                 # Recurring fields
                 c.next_service_dt = _parse_dt_local(request.form.get("next_service_dt"))
@@ -2984,6 +3046,57 @@ def create_app():
                 invoice_number=new_no,
                 invoice_template=inv.invoice_template,
                 is_estimate=False,
+                converted_from_estimate=True,
+
+                name=inv.name,
+                vehicle=inv.vehicle,
+
+                hours=inv.hours,
+                price_per_hour=inv.price_per_hour,
+                shop_supplies=inv.shop_supplies,
+                parts_markup_percent=inv.parts_markup_percent,
+
+                notes=inv.notes,
+                useful_info=inv.useful_info,
+                paid=0.0,
+                date_in=inv.date_in or datetime.now().strftime("%m/%d/%Y"),
+
+                customer_email=inv.customer_email,
+                customer_phone=inv.customer_phone,
+
+                pdf_path=None,
+                pdf_generated_at=None,
+            )
+
+            for p in inv.parts:
+                new_inv.parts.append(InvoicePart(part_name=p.part_name, part_price=p.part_price))
+
+                for li in inv.labor_items:
+                    new_inv.labor_items.append(InvoiceLabor(labor_desc=li.labor_desc, labor_time_hours=li.labor_time_hours))
+
+            s.add(new_inv)
+            s.commit()
+
+            flash(f"Estimate converted to invoice {new_no}.", "success")
+            return redirect(url_for("invoice_edit", invoice_id=new_inv.id))
+
+    @app.route("/invoices/<int:invoice_id>/convert", methods=["POST"])
+    @login_required
+    @subscription_required
+    def invoice_convert(invoice_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            inv = _invoice_owned_or_404(s, invoice_id)
+
+            year = int(datetime.now().strftime("%Y"))
+            new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+
+            new_inv = Invoice(
+                user_id=uid,
+                customer_id=inv.customer_id,
+                invoice_number=new_no,
+                invoice_template=inv.invoice_template,
+                is_estimate=True,
 
                 name=inv.name,
                 vehicle=inv.vehicle,
@@ -3014,8 +3127,8 @@ def create_app():
             s.add(new_inv)
             s.commit()
 
-            flash(f"Estimate converted to invoice {new_no}.", "success")
-            return redirect(url_for("invoice_edit", invoice_id=new_inv.id))
+            flash(f"Invoice converted to estimate {new_no}.", "success")
+            return redirect(url_for("estimate_edit", estimate_id=new_inv.id))
 
     # -----------------------------
     # Delete estimate — GATED

@@ -25,6 +25,9 @@
       {% else %}
         <span class="badge text-bg-warning ms-2">Unpaid</span>
       {% endif %}
+      {% if inv.converted_from_estimate %}
+        <span class="badge text-bg-info ms-2">Converted to Invoice</span>
+      {% endif %}
     </h1>
 
     <div class="small-muted">
@@ -96,24 +99,13 @@
 
         <div class="row g-3">
           <div class="col-12 col-md-6">
-            <div class="small-muted">Email (invoice override)</div>
-            <div class="mono">{{ inv.customer_email or "" }}</div>
+            <div class="small-muted">Email</div>
+            <div class="mono">{{ inv.customer_email or (customer.email if customer else "") }}</div>
           </div>
           <div class="col-12 col-md-6">
-            <div class="small-muted">Phone (invoice override)</div>
-            <div class="mono">{{ inv.customer_phone or "" }}</div>
+            <div class="small-muted">Phone</div>
+            <div class="mono">{{ inv.customer_phone or (customer.phone if customer else "") }}</div>
           </div>
-
-          {% if customer %}
-            <div class="col-12 col-md-6">
-              <div class="small-muted">Email (customer)</div>
-              <div class="mono">{{ customer.email or "" }}</div>
-            </div>
-            <div class="col-12 col-md-6">
-              <div class="small-muted">Phone (customer)</div>
-              <div class="mono">{{ customer.phone or "" }}</div>
-            </div>
-          {% endif %}
         </div>
 
         <hr class="my-4">
@@ -135,6 +127,10 @@
                 <span class="small-muted">(${{ "%.2f"|format(inv.parts_markup_amount()) }})</span>
               </div>
             </div>
+            <div class="col-12 col-md-4">
+              <div class="small-muted">Total Profit</div>
+              <div class="mono">${{ "%.2f"|format(inv.labor_total() + inv.parts_markup_amount()) }}</div>
+            </div>
           {% else %}
             <div class="col-12 col-md-3">
               <div class="small-muted">Hours</div>
@@ -154,6 +150,10 @@
                 {{ "%.2f"|format(inv.parts_markup_percent or 0) }}%
                 <span class="small-muted">(${{ "%.2f"|format(inv.parts_markup_amount()) }})</span>
               </div>
+            </div>
+            <div class="col-12 col-md-3">
+              <div class="small-muted">Total Profit</div>
+              <div class="mono">${{ "%.2f"|format(inv.labor_total() + inv.parts_markup_amount()) }}</div>
             </div>
           {% endif %}
         </div>
@@ -243,6 +243,10 @@
 
           <form method="post" action="{{ url_for('invoice_send', invoice_id=inv.id) }}">
             <button class="btn btn-outline-success" type="submit">Email PDF</button>
+          </form>
+
+          <form method="post" action="{{ url_for('invoice_convert', invoice_id=inv.id) }}">
+            <button class="btn btn-outline-primary" type="submit">Convert to Estimate</button>
           </form>
 
           <form method="post" action="{{ url_for('invoice_mark_paid', invoice_id=inv.id) }}">
