@@ -19,6 +19,9 @@
   <div>
     <h1 class="h3 fw-bold mb-1">
       Estimate <span class="mono">{{ inv.invoice_number }}</span>
+      {% if inv.converted_to_invoice %}
+        <span class="badge text-bg-info ms-2">Converted to Invoice</span>
+      {% endif %}
     </h1>
 
     <div class="small-muted">
