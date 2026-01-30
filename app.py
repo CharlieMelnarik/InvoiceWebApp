@@ -884,6 +884,14 @@ def _migrate_schedule_event_type(engine):
         pass
 
 
+def _migrate_schedule_event_invoice_id(engine):
+    if not _table_exists(engine, "schedule_events"):
+        return
+    if not _column_exists(engine, "schedule_events", "invoice_id"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE schedule_events ADD COLUMN invoice_id INTEGER"))
+
+
 def _migrate_customer_schedule_fields(engine):
     """
     Adds recurring service fields onto customers.
@@ -966,6 +974,7 @@ def create_app():
     _migrate_schedule_events(engine)
     _migrate_schedule_event_auto_fields(engine)   # <-- schedule is_auto/recurring_token
     _migrate_schedule_event_type(engine)
+    _migrate_schedule_event_invoice_id(engine)
     _migrate_customer_schedule_fields(engine)
     _migrate_customer_address_fields(engine)
 
@@ -1852,6 +1861,31 @@ def create_app():
                 for c in rows
             ])
 
+    @app.get("/api/customers/<int:customer_id>/documents")
+    @login_required
+    @subscription_required
+    def api_customer_documents(customer_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            customer = _customer_owned_or_404(s, customer_id)
+            invoices = (
+                s.query(Invoice)
+                .filter(Invoice.user_id == uid)
+                .filter(Invoice.customer_id == customer.id)
+                .order_by(Invoice.created_at.desc())
+                .all()
+            )
+            return jsonify([
+                {
+                    "id": inv.id,
+                    "invoice_number": inv.invoice_number,
+                    "is_estimate": bool(inv.is_estimate),
+                    "date_in": inv.date_in,
+                    "vehicle": inv.vehicle,
+                }
+                for inv in invoices
+            ])
+
     @app.get("/api/schedule/events")
     @login_required
     @subscription_required
@@ -1912,6 +1946,11 @@ def create_app():
             out = []
             for e in evs:
                 cust = s.get(Customer, e.customer_id) if getattr(e, "customer_id", None) else None
+                inv = None
+                if getattr(e, "invoice_id", None):
+                    inv = s.get(Invoice, e.invoice_id)
+                    if inv and inv.user_id != uid:
+                        inv = None
                 event_type = (getattr(e, "event_type", None) or "appointment")
                 if event_type == "block":
                     title = (e.title or "").strip() or "Blocked time"
@@ -1923,6 +1962,14 @@ def create_app():
                     "id": e.id,
                     "customer_id": e.customer_id,
                     "customer_name": customer_name,
+                    "invoice_id": inv.id if inv else None,
+                    "invoice_number": inv.invoice_number if inv else "",
+                    "invoice_is_estimate": bool(inv.is_estimate) if inv else False,
+                    "invoice_url": (
+                        url_for("estimate_view", estimate_id=inv.id)
+                        if (inv and inv.is_estimate)
+                        else (url_for("invoice_view", invoice_id=inv.id) if inv else "")
+                    ),
                     "customer_recurring": {
                         "next_service_dt": cust.next_service_dt.isoformat(timespec="minutes")
                         if (cust and cust.next_service_dt) else None,
@@ -1967,12 +2014,14 @@ def create_app():
         recurring_title = (data.get("recurring_title") or "").strip()
         recurring_notes = (data.get("recurring_notes") or "").strip()
         event_type = (data.get("event_type") or "appointment").strip().lower()
+        invoice_id_raw = (data.get("invoice_id") or "").strip()
 
         if event_type not in ("appointment", "block"):
             return jsonify({"error": "Invalid event type"}), 400
 
         with db_session() as s:
             cust_id_int = None
+            invoice_id_int = None
             if event_type == "block":
                 cust_id_int = None
             elif customer_id is not None and str(customer_id).strip() != "":
@@ -1982,9 +2031,23 @@ def create_app():
                     return jsonify({"error": "customer_id must be an integer"}), 400
                 _customer_owned_or_404(s, cust_id_int)
 
+            if event_type == "block":
+                invoice_id_int = None
+            elif invoice_id_raw:
+                try:
+                    invoice_id_int = int(invoice_id_raw)
+                except Exception:
+                    return jsonify({"error": "invoice_id must be an integer"}), 400
+                if not cust_id_int:
+                    return jsonify({"error": "Select a customer before choosing an invoice."}), 400
+                inv = _invoice_owned_or_404(s, invoice_id_int)
+                if cust_id_int and inv.customer_id != cust_id_int:
+                    return jsonify({"error": "Invoice must belong to the selected customer."}), 400
+
             ev = ScheduleEvent(
                 user_id=uid,
                 customer_id=cust_id_int,
+                invoice_id=invoice_id_int,
                 title=(title or None) if event_type != "block" else (title or "Blocked time"),
                 start_dt=start_dt,
                 end_dt=end_dt,
@@ -2075,6 +2138,26 @@ def create_app():
                         return jsonify({"error": "customer_id must be an integer"}), 400
                     _customer_owned_or_404(s, cust_id_int)
                     ev.customer_id = cust_id_int
+                if not ev.customer_id:
+                    ev.invoice_id = None
+
+            if "invoice_id" in data:
+                invoice_raw = (data.get("invoice_id") or "").strip()
+                if getattr(ev, "event_type", None) == "block":
+                    ev.invoice_id = None
+                elif not invoice_raw:
+                    ev.invoice_id = None
+                else:
+                    try:
+                        invoice_id_int = int(invoice_raw)
+                    except Exception:
+                        return jsonify({"error": "invoice_id must be an integer"}), 400
+                    if not ev.customer_id:
+                        return jsonify({"error": "Select a customer before choosing an invoice."}), 400
+                    inv = _invoice_owned_or_404(s, invoice_id_int)
+                    if ev.customer_id and inv.customer_id != ev.customer_id:
+                        return jsonify({"error": "Invoice must belong to the selected customer."}), 400
+                    ev.invoice_id = invoice_id_int
 
             if "title" in data:
                 t = (data.get("title") or "").strip()
@@ -2750,6 +2833,11 @@ def create_app():
                         inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
 
                 s.add(inv)
+                s.flush()
+                try:
+                    generate_and_store_pdf(s, inv.id)
+                except Exception as exc:
+                    flash(f"Estimate saved, but PDF generation failed: {exc}", "warning")
                 s.commit()
 
                 return redirect(url_for("estimate_view", estimate_id=inv.id))
@@ -2897,6 +2985,11 @@ def create_app():
                         inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
 
                 s.add(inv)
+                s.flush()
+                try:
+                    generate_and_store_pdf(s, inv.id)
+                except Exception as exc:
+                    flash(f"Invoice saved, but PDF generation failed: {exc}", "warning")
                 s.commit()
 
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
@@ -3029,6 +3122,10 @@ def create_app():
                     for desc, t in labor_data:
                         inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
 
+                try:
+                    generate_and_store_pdf(s, inv.id)
+                except Exception as exc:
+                    flash(f"Estimate saved, but PDF generation failed: {exc}", "warning")
                 s.commit()
                 return redirect(url_for("estimate_view", estimate_id=inv.id))
 
@@ -3343,6 +3440,10 @@ def create_app():
                     for desc, t in labor_data:
                         inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
 
+                try:
+                    generate_and_store_pdf(s, inv.id)
+                except Exception as exc:
+                    flash(f"Invoice saved, but PDF generation failed: {exc}", "warning")
                 s.commit()
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
 

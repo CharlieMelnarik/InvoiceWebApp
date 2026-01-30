@@ -215,10 +215,6 @@
         <hr class="my-4">
 
         <div class="d-flex flex-wrap gap-2">
-          <form method="post" action="{{ url_for('estimate_pdf_generate', estimate_id=inv.id) }}">
-            <button class="btn btn-outline-primary" type="submit">Generate PDF</button>
-          </form>
-
           <a class="btn btn-outline-secondary" href="{{ url_for('estimate_pdf_download', estimate_id=inv.id) }}">
             Download PDF
           </a>

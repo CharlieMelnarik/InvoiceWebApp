@@ -87,6 +87,8 @@
   .event-action-btn.cancel { color:#dc3545; }
   .event-title { font-weight:700; font-size:.9rem; }
   .event-sub { font-size:.8rem; color:#6c757d; }
+  .event-link { display:inline-block; margin-top:4px; font-size:.75rem; color:#0d6efd; text-decoration:none; }
+  .event-link:hover { text-decoration:underline; }
   .evt-pill.block,
   .evt-full.block {
     background:#f8f9fa;
@@ -154,6 +156,18 @@
           <input type="hidden" id="customerId">
           <div class="small-muted mt-1" id="custHint" style="display:none;">
             Tip: press <span class="mono">Enter</span> to pick the first match.
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <label class="form-label">Related Invoice / Estimate (optional)</label>
+          <select class="form-select" id="invoiceSelect" disabled>
+            <option value="">Select a customer first</option>
+          </select>
+          <div class="small-muted mt-1">
+            <a href="#" id="invoiceLink" class="text-decoration-none" style="display:none;" target="_blank" rel="noopener">
+              View selected document
+            </a>
           </div>
         </div>
         </div>
@@ -282,6 +296,8 @@
   const goCustomerBtn = document.getElementById("btnGoCustomer");
   const completeBtn = document.getElementById("btnComplete");
   const cancelBtn = document.getElementById("btnCancel");
+  const invoiceSelect = document.getElementById("invoiceSelect");
+  const invoiceLink = document.getElementById("invoiceLink");
   let endWasEdited = false;
 
   // URL deep-links (optional):
@@ -318,6 +334,61 @@
       .replaceAll(">","&gt;")
       .replaceAll('"',"&quot;")
       .replaceAll("'","&#039;");
+  }
+
+  function updateInvoiceLink(){
+    if (!invoiceSelect || !invoiceLink) return;
+    const selected = invoiceSelect.options[invoiceSelect.selectedIndex];
+    const url = selected ? selected.dataset.url : "";
+    if (url) {
+      invoiceLink.href = url;
+      invoiceLink.style.display = "";
+    } else {
+      invoiceLink.href = "#";
+      invoiceLink.style.display = "none";
+    }
+  }
+
+  function resetInvoiceSelect(message){
+    if (!invoiceSelect) return;
+    invoiceSelect.innerHTML = `<option value="">${message}</option>`;
+    invoiceSelect.value = "";
+    invoiceSelect.disabled = true;
+    updateInvoiceLink();
+  }
+
+  async function loadCustomerDocuments(customerId, selectedId = ""){
+    if (!invoiceSelect) return;
+    if (!customerId) {
+      resetInvoiceSelect("Select a customer first");
+      return;
+    }
+    invoiceSelect.disabled = true;
+    invoiceSelect.innerHTML = `<option value="">Loading...</option>`;
+    updateInvoiceLink();
+    const res = await fetch(`/api/customers/${customerId}/documents`);
+    const rows = await res.json().catch(() => ([]));
+    const docs = Array.isArray(rows) ? rows : [];
+    if (!docs.length) {
+      resetInvoiceSelect("No invoices or estimates found");
+      return;
+    }
+    const options = [`<option value="">None</option>`];
+    docs.forEach(doc => {
+      const typeLabel = doc.is_estimate ? "Estimate" : "Invoice";
+      const parts = [`${typeLabel} ${doc.invoice_number || ""}`.trim()];
+      if (doc.vehicle) parts.push(doc.vehicle);
+      if (doc.date_in) parts.push(doc.date_in);
+      const label = parts.filter(Boolean).join(" • ");
+      const url = doc.is_estimate ? `/estimates/${doc.id}` : `/invoices/${doc.id}`;
+      options.push(`<option value="${doc.id}" data-url="${url}">${escapeHTML(label)}</option>`);
+    });
+    invoiceSelect.innerHTML = options.join("");
+    invoiceSelect.disabled = false;
+    if (selectedId) {
+      invoiceSelect.value = String(selectedId);
+    }
+    updateInvoiceLink();
   }
 
   function eventDisplayLabel(e){
@@ -569,11 +640,18 @@
           <button type="button" class="event-action-btn cancel" data-action="cancel" title="Cancelled">✕</button>
         </div>
       ` : "";
+      const invoiceLabel = e.invoice_is_estimate ? "Estimate" : "Invoice";
+      const invoiceLink = e.invoice_url ? `
+        <a class="event-link" href="${e.invoice_url}" target="_blank" rel="noopener">
+          View ${invoiceLabel} ${escapeHTML(e.invoice_number || "")}
+        </a>
+      ` : "";
 
       block.innerHTML = `
         ${statusActions}
         <div class="event-title">${escapeHTML(titleLabel)}</div>
         <div class="event-sub">${blockStart.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} - ${blockEnd.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</div>
+        ${invoiceLink}
       `;
 
       block.addEventListener("click", (ev) => {
@@ -668,6 +746,7 @@
       document.getElementById("customerId").value = "";
       document.getElementById("custSearch").value = "";
       hideCustResults();
+      resetInvoiceSelect("Blocked time has no documents");
       resetRecurringFields();
       const titleInput = document.getElementById("title");
       if (titleInput && !(titleInput.value || "").trim()){
@@ -717,6 +796,7 @@
     // or add a /api/customers/<id> endpoint. This keeps it safe without needing new routes.
     if (PRESELECT_CUSTOMER_ID && /^\d+$/.test(PRESELECT_CUSTOMER_ID) && !blockToggle.checked){
       document.getElementById("customerId").value = PRESELECT_CUSTOMER_ID;
+      loadCustomerDocuments(PRESELECT_CUSTOMER_ID);
       // If user starts typing and selects someone else, this will be replaced.
     }
   }
@@ -728,6 +808,7 @@
 
     document.getElementById("customerId").value = "";
     document.getElementById("custSearch").value = "";
+    resetInvoiceSelect("Select a customer first");
     document.getElementById("title").value = "";
     document.getElementById("notes").value = "";
     setBlockMode(isBlock);
@@ -760,6 +841,11 @@
 
     document.getElementById("customerId").value = e.customer_id || "";
     document.getElementById("custSearch").value = e.customer_name || "";
+    if (!isBlock && e.customer_id) {
+      loadCustomerDocuments(e.customer_id, e.invoice_id || "");
+    } else {
+      resetInvoiceSelect(isBlock ? "Blocked time has no documents" : "Select a customer first");
+    }
 
     document.getElementById("title").value = e.title || "";
     document.getElementById("notes").value = e.notes || "";
@@ -890,8 +976,10 @@
     const isRecurring = !!recurringEnabled.checked;
     const isBlock = !!blockToggle.checked;
     const customerId = isBlock ? null : (document.getElementById("customerId").value || null);
+    const invoiceId = isBlock ? null : (invoiceSelect ? (invoiceSelect.value || null) : null);
     const payload = {
       customer_id: customerId,
+      invoice_id: invoiceId,
       title: document.getElementById("title").value,
       notes: document.getElementById("notes").value,
       start: startInput.value,
@@ -977,6 +1065,10 @@
     });
   }
 
+  if (invoiceSelect){
+    invoiceSelect.addEventListener("change", updateInvoiceLink);
+  }
+
   async function updateEventStatus(eventId, status){
     const res = await fetch(`/api/schedule/events/${eventId}`, {
       method: "PUT",
@@ -1030,6 +1122,7 @@
     custSearch.value = row.name;
     hideCustResults();
     updateGoToCustomerButton();
+    loadCustomerDocuments(row.id);
 
     // If title is blank, default it to customer name
     const t = document.getElementById("title");
@@ -1044,6 +1137,7 @@
 
     // whenever user types, clear selected id until they pick
     document.getElementById("customerId").value = "";
+    resetInvoiceSelect("Select a customer first");
     updateGoToCustomerButton();
     if (custTimer) clearTimeout(custTimer);
 
