@@ -124,6 +124,11 @@ class ScheduleEvent(Base):
         nullable=True,
         index=True,
     )
+    invoice_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
@@ -154,6 +159,7 @@ class ScheduleEvent(Base):
 
     user: Mapped["User"] = relationship(back_populates="schedule_events")
     customer: Mapped[Optional["Customer"]] = relationship(back_populates="schedule_events")
+    invoice: Mapped[Optional["Invoice"]] = relationship()
 
 
 # -----------------------------
