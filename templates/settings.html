@@ -96,6 +96,47 @@
 
           <hr class="my-4" />
 
+          <div class="mb-3">
+            <h6 class="mb-2">Scheduler Email Summaries</h6>
+            <div class="small-muted">
+              Choose how often to receive an email with upcoming appointments. Emails only send when there are
+              scheduled appointments in the selected window.
+            </div>
+          </div>
+
+          <div class="row g-3 align-items-end mb-3">
+            <div class="col-md-6">
+              <label class="form-label">Summary Frequency</label>
+              <select class="form-select" name="schedule_summary_frequency">
+                {% set freq = (u.schedule_summary_frequency or 'none') %}
+                <option value="none" {% if freq == 'none' %}selected{% endif %}>None</option>
+                <option value="day" {% if freq == 'day' %}selected{% endif %}>Day</option>
+                <option value="week" {% if freq == 'week' %}selected{% endif %}>Week</option>
+                <option value="month" {% if freq == 'month' %}selected{% endif %}>Month</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Summary Start Time (Local)</label>
+              <input
+                type="time"
+                class="form-control"
+                name="schedule_summary_time"
+                value="{{ u.schedule_summary_time or '' }}"
+              >
+              <div class="small-muted mt-1">
+                Appointments within the next day/week/month starting at this time are included.
+              </div>
+              <div class="small-muted mt-1" id="summaryTimezoneLabel"></div>
+            </div>
+          </div>
+          <input
+            type="hidden"
+            name="schedule_summary_tz_offset_minutes"
+            id="scheduleSummaryTzOffset"
+            value="{{ u.schedule_summary_tz_offset_minutes or 0 }}"
+          >
+          <hr class="my-4" />
+
           <!-- Logo Upload -->
           <div class="mb-3">
             <label class="form-label">
@@ -153,5 +194,20 @@
 
 {% endblock %}
 
-
-
+{% block scripts %}
+<script>
+  const tzOffsetMinutes = -new Date().getTimezoneOffset();
+  const tzInput = document.getElementById("scheduleSummaryTzOffset");
+  if (tzInput) {
+    tzInput.value = String(tzOffsetMinutes);
+  }
+  const label = document.getElementById("summaryTimezoneLabel");
+  if (label) {
+    const sign = tzOffsetMinutes >= 0 ? "+" : "-";
+    const abs = Math.abs(tzOffsetMinutes);
+    const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+    const mm = String(abs % 60).padStart(2, "0");
+    label.textContent = `Local time (UTC${sign}${hh}:${mm}).`;
+  }
+</script>
+{% endblock %}

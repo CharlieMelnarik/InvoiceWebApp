@@ -11,6 +11,7 @@
   <div class="d-flex gap-2">
     <a class="btn btn-primary" href="{{ url_for('customer_new') }}">New Customer</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('invoice_new') }}">New Invoice</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('estimate_new') }}">New Estimate</a>
   </div>
 </div>
 
@@ -49,13 +50,26 @@
                 </td>
                 <td class="mono">{{ c.email or "" }}</td>
                 <td class="mono">{{ c.phone or "" }}</td>
-                <td>{{ c.address or "" }}</td>
+                <td>
+                  {% if c.address_line1 %}
+                    {{ c.address_line1 }}
+                    {% if c.address_line2 %} {{ c.address_line2 }}{% endif %}
+                    {% if c.city or c.state or c.postal_code %}
+                      <br>{{ [c.city, c.state, c.postal_code]|select|join(' ') }}
+                    {% endif %}
+                  {% else %}
+                    {{ c.address or "" }}
+                  {% endif %}
+                </td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('customer_edit', customer_id=c.id) }}">
                     Edit
                   </a>
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">
                     New Invoice
+                  </a>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('estimate_new') }}?customer_id={{ c.id }}">
+                    New Estimate
                   </a>
                 </td>
               </tr>
@@ -78,4 +92,3 @@
 </div>
 
 {% endblock %}
-

@@ -9,15 +9,24 @@
     <div class="small-muted">
       {% if c.email %}<span class="mono">{{ c.email }}</span>{% endif %}
       {% if c.phone %}{% if c.email %} · {% endif %}<span class="mono">{{ c.phone }}</span>{% endif %}
-      {% if c.address %}<div class="mt-1">{{ c.address }}</div>{% endif %}
+      {% if c.address_line1 %}
+        <div class="mt-1">{{ c.address_line1 }}</div>
+        {% if c.address_line2 %}<div>{{ c.address_line2 }}</div>{% endif %}
+        {% if c.city or c.state or c.postal_code %}
+          <div>{{ [c.city, c.state, c.postal_code]|select|join(' ') }}</div>
+        {% endif %}
+      {% elif c.address %}
+        <div class="mt-1">{{ c.address }}</div>
+      {% endif %}
     </div>
   </div>
 
   <div class="d-flex gap-2 flex-wrap">
     <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Back</a>
-    <a class="btn btn-outline-secondary" href="{{ url_for('customer_edit', customer_id=c.id) }}">Edit Customer</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('customer_edit', customer_id=c.id) }}">Edit Customer</a>
     <a class="btn btn-outline-primary" href="{{ url_for('schedule') }}?customer_id={{ c.id }}">Schedule Customer</a>
-    <a class="btn btn-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">New Invoice</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">New Invoice</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('estimate_new') }}?customer_id={{ c.id }}">New Estimate</a>
   </div>
 </div>
 
@@ -28,29 +37,33 @@
       <div class="col-12 col-md-6">
         <div class="small-muted">Next Service</div>
         <div class="fw-semibold">
-          {% if c.next_service_dt %}
-            {{ c.next_service_dt.strftime("%a, %b %d, %Y @ %I:%M %p") }}
-          {% else %}
-            <span class="small-muted">Not set</span>
-          {% endif %}
-        </div>
-      </div>
-
-      <div class="col-6 col-md-3">
-        <div class="small-muted">Repeats</div>
-        <div class="fw-semibold">
-          {% if c.service_interval_days %}
-            Every {{ c.service_interval_days }} day{% if c.service_interval_days != 1 %}s{% endif %}
+          {% if next_event %}
+            {{ next_event.start_dt.strftime("%a, %b %d, %Y @ %I:%M %p") }}
           {% else %}
             <span class="small-muted">—</span>
           {% endif %}
         </div>
       </div>
 
-      <div class="col-6 col-md-3 text-md-end">
-        <div class="small-muted">Default Duration</div>
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Recurring</div>
         <div class="fw-semibold">
-          {{ c.default_service_minutes or 60 }} min
+          {% if c.next_service_dt and c.service_interval_days %}
+            Yes
+          {% else %}
+            <span class="small-muted">No</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="col-6 col-md-3 text-md-end">
+        <div class="small-muted">Next Service Time</div>
+        <div class="fw-semibold">
+          {% if next_event %}
+            {{ next_event.start_dt.strftime("%I:%M %p") }} - {{ next_event.end_dt.strftime("%I:%M %p") }}
+          {% else %}
+            <span class="small-muted">—</span>
+          {% endif %}
         </div>
       </div>
 
@@ -178,8 +191,56 @@
   </div>
 </div>
 
+<div class="card shadow-sm mt-3">
+  <div class="card-header fw-semibold">Estimates</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="min-width: 170px;">Estimate #</th>
+            <th style="min-width: 160px;">Date In</th>
+            <th style="min-width: 260px;">Job</th>
+            <th style="width: 140px;">Total</th>
+            <th style="width: 120px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if estimates and estimates|length > 0 %}
+            {% for inv in estimates %}
+              {% set total = inv.invoice_total() %}
+
+              <tr>
+                <td class="mono fw-semibold">
+                  <a href="{{ url_for('estimate_view', estimate_id=inv.id) }}" class="text-decoration-none">
+                    {{ inv.invoice_number }}
+                  </a>
+                </td>
+
+                <td class="mono">{{ inv.date_in }}</td>
+                <td>{{ inv.vehicle }}</td>
+                <td class="mono">${{ "%.2f"|format(total) }}</td>
+
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('estimate_view', estimate_id=inv.id) }}">View</a>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5" class="p-4">
+                <div class="text-center">
+                  <div class="fw-semibold mb-1">No estimates found for this customer.</div>
+                  <div class="small-muted mb-3">Create an estimate to get started.</div>
+                  <a class="btn btn-outline-primary" href="{{ url_for('estimate_new') }}?customer_id={{ c.id }}">New Estimate</a>
+                </div>
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
-
-
-
-

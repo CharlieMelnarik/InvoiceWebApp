@@ -21,7 +21,7 @@ from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
     login_required, current_user
 )
-from sqlalchemy import text
+from sqlalchemy import text, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -101,6 +101,20 @@ def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
         session.query(Invoice)
         .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
         .filter(Invoice.id == invoice_id, Invoice.user_id == _current_user_id_int())
+        .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
+        .first()
+    )
+    if not inv:
+        abort(404)
+    return inv
+
+
+def _estimate_owned_or_404(session, estimate_id: int) -> Invoice:
+    inv = (
+        session.query(Invoice)
+        .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+        .filter(Invoice.id == estimate_id, Invoice.user_id == _current_user_id_int())
+        .filter(Invoice.is_estimate.is_(True))
         .first()
     )
     if not inv:
@@ -126,6 +140,23 @@ def _normalize_email(email: str) -> str:
 def _looks_like_email(email: str) -> bool:
     e = _normalize_email(email)
     return bool(e) and ("@" in e) and ("." in e.split("@")[-1])
+
+
+def _parse_summary_time(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if not re.match(r"^\d{2}:\d{2}$", raw):
+        return None
+    hh, mm = raw.split(":")
+    try:
+        h = int(hh)
+        m = int(mm)
+    except ValueError:
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return f"{h:02d}:{m:02d}"
 
 
 def _parse_iso_dt(s: str) -> datetime:
@@ -156,6 +187,100 @@ def _parse_dt_local(s: str) -> datetime | None:
         return None
 
 
+def _format_customer_address(
+    line1: str | None,
+    line2: str | None,
+    city: str | None,
+    state: str | None,
+    postal_code: str | None,
+) -> str | None:
+    parts = [p for p in [(line1 or "").strip(), (line2 or "").strip()] if p]
+    city_state = " ".join([p for p in [(city or "").strip(), (state or "").strip()] if p])
+    if city_state:
+        parts.append(city_state)
+    if (postal_code or "").strip():
+        if parts:
+            parts[-1] = f"{parts[-1]} {postal_code.strip()}"
+        else:
+            parts.append(postal_code.strip())
+    return ", ".join(parts) if parts else None
+
+
+def _summary_period_key(freq: str, window_start: datetime) -> str:
+    if freq == "day":
+        return window_start.date().isoformat()
+    if freq == "week":
+        iso = window_start.isocalendar()
+        return f"{iso.year}-W{iso.week:02d}"
+    if freq == "month":
+        return f"{window_start.year}-{window_start.month:02d}"
+    return ""
+
+
+def _summary_window(now_local: datetime, freq: str, start_time: str) -> tuple[datetime, datetime]:
+    hh, mm = [int(part) for part in start_time.split(":")]
+    window_start = datetime(now_local.year, now_local.month, now_local.day, hh, mm)
+    if freq == "day":
+        return window_start, window_start + timedelta(days=1)
+    if freq == "week":
+        return window_start, window_start + timedelta(days=7)
+    if freq == "month":
+        return window_start, window_start + timedelta(days=30)
+    return window_start, window_start + timedelta(days=1)
+
+
+def _format_offset_label(offset_minutes: int) -> str:
+    sign = "+" if offset_minutes >= 0 else "-"
+    abs_val = abs(offset_minutes)
+    hh = abs_val // 60
+    mm = abs_val % 60
+    return f"UTC{sign}{hh:02d}:{mm:02d}"
+
+
+def _summary_window_for_user(user: User, now_utc: datetime) -> tuple[datetime, datetime, str, datetime]:
+    offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
+    now_local = now_utc + timedelta(minutes=offset_minutes)
+    start_time = getattr(user, "schedule_summary_time", None) or "00:00"
+    start, end = _summary_window(now_local, user.schedule_summary_frequency or "day", start_time)
+    return start, end, _format_offset_label(offset_minutes), now_local
+
+
+def _format_event_line(event: ScheduleEvent, customer: Customer | None) -> str:
+    title = (event.title or "").strip() or (customer.name if customer else "Appointment")
+    if customer and customer.name and title.lower() != customer.name.lower():
+        label = f"{title} - {customer.name}"
+    else:
+        label = title
+
+    start_label = event.start_dt.strftime("%b %d, %Y %I:%M %p").lstrip("0")
+    end_label = event.end_dt.strftime("%b %d, %Y %I:%M %p").lstrip("0")
+    return f"- {start_label} → {end_label}: {label}"
+
+
+def _should_send_summary(user: User, now_utc: datetime) -> bool:
+    freq = (getattr(user, "schedule_summary_frequency", None) or "none").lower().strip()
+    if freq == "none":
+        return False
+
+    time_value = _parse_summary_time(getattr(user, "schedule_summary_time", None) or "")
+    if not time_value:
+        return False
+
+    offset_minutes = int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0)
+    now_local = now_utc + timedelta(minutes=offset_minutes)
+    hh, mm = [int(part) for part in time_value.split(":")]
+    window_start = datetime(now_local.year, now_local.month, now_local.day, hh, mm)
+    if now_local < window_start:
+        return False
+
+    last_sent = getattr(user, "schedule_summary_last_sent", None)
+    if not last_sent:
+        return True
+
+    last_sent_local = last_sent + timedelta(minutes=offset_minutes)
+    return _summary_period_key(freq, last_sent_local) != _summary_period_key(freq, window_start)
+
+
 # -----------------------------
 # Invoice template / profession config
 # -----------------------------
@@ -180,12 +305,21 @@ INVOICE_TEMPLATES = {
     },
     "accountant": {
         "label": "Accountant",
-        "job_label": "Client / Engagement",
+        "job_label": "Engagement",
         "labor_title": "Services",
         "labor_desc_label": "Service Description",
         "parts_title": "Expenses",
         "parts_name_label": "Expense",
         "shop_supplies_label": "Admin / Filing Fees",
+    },
+    "computer_repair": {
+        "label": "Computer Repair",
+        "job_label": "Device",
+        "labor_title": "Services",
+        "labor_desc_label": "Service Description",
+        "parts_title": "Parts",
+        "parts_name_label": "Part Name",
+        "shop_supplies_label": "Shop Supplies",
     },
     "lawn_care": {
         "label": "Lawn Care / Landscaping",
@@ -195,6 +329,15 @@ INVOICE_TEMPLATES = {
         "parts_title": "Materials",
         "parts_name_label": "Material",
         "shop_supplies_label": "Disposal / Trip Fees",
+    },
+    "flipping_items": {
+        "label": "Flipping Items",
+        "job_label": "Item",
+        "labor_title": "Sales",
+        "labor_desc_label": "Sale Description",
+        "parts_title": "Costs",
+        "parts_name_label": "Cost Item",
+        "shop_supplies_label": "Other Expenses",
     },
 }
 
@@ -289,6 +432,29 @@ def _send_invoice_pdf_email(to_email: str, subject: str, body_text: str, pdf_pat
         smtp.starttls()
         smtp.login(user, password)
         smtp.send_message(msg)
+
+
+def _send_schedule_summary_email(to_email: str, subject: str, body_text: str) -> None:
+    host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
+    user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
+    password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
+    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+
+    if not all([host, port, user, password, mail_from]):
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = mail_from
+    msg["To"] = to_email
+    msg.set_content(body_text)
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, password)
+        smtp.send_message(msg)
+    print(f"[SCHEDULE SUMMARY] Sent email to {to_email}", flush=True)
 
 
 # -----------------------------
@@ -401,6 +567,39 @@ def _migrate_user_email(engine):
         pass
 
 
+def _migrate_user_schedule_summary(engine):
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "schedule_summary_frequency"):
+        stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_frequency VARCHAR(20)")
+    if not _column_exists(engine, "users", "schedule_summary_time"):
+        stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_time VARCHAR(5)")
+    if not _column_exists(engine, "users", "schedule_summary_last_sent"):
+        stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_last_sent TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "schedule_summary_tz_offset_minutes"):
+        stmts.append("ALTER TABLE users ADD COLUMN schedule_summary_tz_offset_minutes INTEGER")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE users SET schedule_summary_frequency = 'none' "
+                "WHERE schedule_summary_frequency IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET schedule_summary_tz_offset_minutes = 0 "
+                "WHERE schedule_summary_tz_offset_minutes IS NULL"
+            ))
+    except Exception:
+        pass
+
+
 def _migrate_invoice_contact_fields(engine):
     if not _table_exists(engine, "invoices"):
         return
@@ -410,6 +609,52 @@ def _migrate_invoice_contact_fields(engine):
         stmts.append("ALTER TABLE invoices ADD COLUMN customer_email VARCHAR(255)")
     if not _column_exists(engine, "invoices", "customer_phone"):
         stmts.append("ALTER TABLE invoices ADD COLUMN customer_phone VARCHAR(50)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+
+def _migrate_invoice_useful_info(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "useful_info"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN useful_info TEXT"))
+
+
+def _migrate_invoice_converted_flag(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "converted_from_estimate"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN converted_from_estimate BOOLEAN"))
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE invoices SET converted_from_estimate = FALSE "
+                    "WHERE converted_from_estimate IS NULL"
+                ))
+        except Exception:
+            pass
+
+
+def _migrate_customer_address_fields(engine):
+    if not _table_exists(engine, "customers"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "customers", "address_line1"):
+        stmts.append("ALTER TABLE customers ADD COLUMN address_line1 VARCHAR(200)")
+    if not _column_exists(engine, "customers", "address_line2"):
+        stmts.append("ALTER TABLE customers ADD COLUMN address_line2 VARCHAR(200)")
+    if not _column_exists(engine, "customers", "city"):
+        stmts.append("ALTER TABLE customers ADD COLUMN city VARCHAR(100)")
+    if not _column_exists(engine, "customers", "state"):
+        stmts.append("ALTER TABLE customers ADD COLUMN state VARCHAR(50)")
+    if not _column_exists(engine, "customers", "postal_code"):
+        stmts.append("ALTER TABLE customers ADD COLUMN postal_code VARCHAR(20)")
 
     if stmts:
         with engine.begin() as conn:
@@ -433,6 +678,32 @@ def _migrate_invoice_template(engine):
     if not _column_exists(engine, "invoices", "invoice_template"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE invoices ADD COLUMN invoice_template VARCHAR(50)"))
+
+
+def _migrate_invoice_is_estimate(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "is_estimate"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN is_estimate BOOLEAN"))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE invoices SET is_estimate = FALSE WHERE is_estimate IS NULL"))
+    except Exception:
+        pass
+
+
+def _migrate_invoice_parts_markup_percent(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "parts_markup_percent"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN parts_markup_percent FLOAT"))
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE invoices SET parts_markup_percent = 0.0 WHERE parts_markup_percent IS NULL"))
+        except Exception:
+            pass
 
 
 def _migrate_user_billing_fields(engine):
@@ -577,6 +848,26 @@ def _migrate_schedule_event_auto_fields(engine):
         pass
 
 
+def _migrate_schedule_event_type(engine):
+    """
+    Adds event_type so we can store appointment vs. block-off time entries.
+    """
+    if not _table_exists(engine, "schedule_events"):
+        return
+
+    if not _column_exists(engine, "schedule_events", "event_type"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE schedule_events ADD COLUMN event_type VARCHAR(20)"))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE schedule_events SET event_type = 'appointment' WHERE event_type IS NULL"
+            ))
+    except Exception:
+        pass
+
+
 def _migrate_customer_schedule_fields(engine):
     """
     Adds recurring service fields onto customers.
@@ -595,6 +886,8 @@ def _migrate_customer_schedule_fields(engine):
         stmts.append("ALTER TABLE customers ADD COLUMN service_title VARCHAR(200)")
     if not _column_exists(engine, "customers", "service_notes"):
         stmts.append("ALTER TABLE customers ADD COLUMN service_notes VARCHAR(1000)")
+    if not _column_exists(engine, "customers", "recurring_horizon_dt"):
+        stmts.append("ALTER TABLE customers ADD COLUMN recurring_horizon_dt TIMESTAMP NULL")
 
     if stmts:
         with engine.begin() as conn:
@@ -639,9 +932,14 @@ def create_app():
     _migrate_add_user_id(engine)
     _migrate_user_profile_fields(engine)
     _migrate_user_email(engine)
+    _migrate_user_schedule_summary(engine)
     _migrate_invoice_contact_fields(engine)
+    _migrate_invoice_useful_info(engine)
+    _migrate_invoice_converted_flag(engine)
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
+    _migrate_invoice_is_estimate(engine)
+    _migrate_invoice_parts_markup_percent(engine)
     _migrate_user_billing_fields(engine)
     _migrate_user_security_fields(engine)
     _migrate_customers(engine)
@@ -650,7 +948,9 @@ def create_app():
     _migrate_user_logo(engine)
     _migrate_schedule_events(engine)
     _migrate_schedule_event_auto_fields(engine)   # <-- schedule is_auto/recurring_token
+    _migrate_schedule_event_type(engine)
     _migrate_customer_schedule_fields(engine)
+    _migrate_customer_address_fields(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -895,7 +1195,13 @@ def create_app():
         notes_default = (getattr(customer, "service_notes", None) or "").strip() or None
 
         created = 0
-        horizon_end = datetime.utcnow() + timedelta(days=horizon_days)
+        horizon_base = datetime.utcnow()
+        if next_dt and next_dt > horizon_base:
+            horizon_base = next_dt
+        horizon_end = horizon_base + timedelta(days=horizon_days)
+        recurring_horizon = getattr(customer, "recurring_horizon_dt", None)
+        if recurring_horizon:
+            horizon_end = min(horizon_end, recurring_horizon)
 
         token = f"cust:{customer.id}"
 
@@ -1205,11 +1511,108 @@ def create_app():
                 u.phone = (request.form.get("phone") or "").strip() or None
                 u.address = (request.form.get("address") or "").strip() or None
 
+                summary_freq = (request.form.get("schedule_summary_frequency") or "none").strip().lower()
+                summary_time_raw = request.form.get("schedule_summary_time") or ""
+                summary_time = _parse_summary_time(summary_time_raw)
+                summary_tz_offset_raw = (request.form.get("schedule_summary_tz_offset_minutes") or "").strip()
+                summary_tz_offset = 0
+                if summary_tz_offset_raw:
+                    try:
+                        summary_tz_offset = int(summary_tz_offset_raw)
+                    except ValueError:
+                        flash("Invalid schedule summary time zone offset.", "error")
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                if summary_tz_offset < -720 or summary_tz_offset > 840:
+                    flash("Invalid schedule summary time zone offset.", "error")
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+                if summary_freq not in ("none", "day", "week", "month"):
+                    flash("Invalid schedule summary frequency.", "error")
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+                if summary_freq != "none" and not summary_time:
+                    flash("Please choose a time for schedule summaries.", "error")
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+                u.schedule_summary_frequency = summary_freq
+                u.schedule_summary_time = summary_time if summary_freq != "none" else None
+                u.schedule_summary_tz_offset_minutes = summary_tz_offset
+
                 s.commit()
                 flash("Settings saved.", "success")
                 return redirect(url_for("settings"))
 
             return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+    @app.post("/settings/schedule-summary/test")
+    @login_required
+    def schedule_summary_test():
+        now = datetime.utcnow()
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            if not u:
+                abort(404)
+
+            freq = (u.schedule_summary_frequency or "none").lower().strip()
+            if freq == "none":
+                flash("Schedule summary frequency is set to None.", "info")
+                return redirect(url_for("settings"))
+
+            summary_time = _parse_summary_time(u.schedule_summary_time or "")
+            if not summary_time:
+                flash("Please set a summary start time first.", "error")
+                return redirect(url_for("settings"))
+
+            to_email = _normalize_email(u.email or "")
+            if not _looks_like_email(to_email):
+                flash("Your account email is missing or invalid.", "error")
+                return redirect(url_for("settings"))
+
+            start, end, tz_label, _now_local = _summary_window_for_user(u, now)
+            events = (
+                s.query(ScheduleEvent)
+                .filter(ScheduleEvent.user_id == u.id)
+                .filter(ScheduleEvent.status == "scheduled")
+                .filter(or_(ScheduleEvent.event_type.is_(None), ScheduleEvent.event_type != "block"))
+                .filter(ScheduleEvent.start_dt < end)
+                .filter(ScheduleEvent.end_dt > start)
+                .order_by(ScheduleEvent.start_dt.asc())
+                .all()
+            )
+
+            print(
+                f"[SCHEDULE SUMMARY] test user={u.id} freq={freq} window={start}..{end} events={len(events)}",
+                flush=True,
+            )
+
+            if not events:
+                flash("No scheduled appointments in the summary window.", "info")
+                return redirect(url_for("settings"))
+
+            lines = []
+            for event in events:
+                customer = s.get(Customer, event.customer_id) if event.customer_id else None
+                lines.append(_format_event_line(event, customer))
+
+            end_display = end - timedelta(seconds=1)
+            subject = f"Upcoming appointments ({freq})"
+            body = (
+                f"Here is your upcoming appointment summary (local time, {tz_label}):\n"
+                f"{start:%b %d, %Y %I:%M %p} through {end_display:%b %d, %Y %I:%M %p}\n\n"
+                + "\n".join(lines)
+            )
+
+            try:
+                _send_schedule_summary_email(to_email, subject, body)
+            except Exception as exc:
+                print(f"[SCHEDULE SUMMARY] test send failed user={u.id}: {exc!r}", flush=True)
+                flash("Could not send summary email. Check server logs for SMTP errors.", "error")
+                return redirect(url_for("settings"))
+
+            u.schedule_summary_last_sent = now
+            s.commit()
+            flash("Test summary email sent.", "success")
+            return redirect(url_for("settings"))
 
     # -----------------------------
     # Billing pages
@@ -1492,15 +1895,31 @@ def create_app():
             out = []
             for e in evs:
                 cust = s.get(Customer, e.customer_id) if getattr(e, "customer_id", None) else None
+                event_type = (getattr(e, "event_type", None) or "appointment")
+                if event_type == "block":
+                    title = (e.title or "").strip() or "Blocked time"
+                    customer_name = ""
+                else:
+                    title = (e.title or "").strip() or (cust.name if cust else "Appointment")
+                    customer_name = (cust.name if cust else "")
                 out.append({
                     "id": e.id,
                     "customer_id": e.customer_id,
-                    "customer_name": (cust.name if cust else ""),
-                    "title": (e.title or "").strip() or (cust.name if cust else "Appointment"),
+                    "customer_name": customer_name,
+                    "customer_recurring": {
+                        "next_service_dt": cust.next_service_dt.isoformat(timespec="minutes")
+                        if (cust and cust.next_service_dt) else None,
+                        "interval_days": (cust.service_interval_days if cust else None),
+                        "default_minutes": (cust.default_service_minutes if cust else None),
+                        "title": (cust.service_title or "").strip() if cust else "",
+                        "notes": (cust.service_notes or "").strip() if cust else "",
+                    } if cust else None,
+                    "title": title,
                     "start": e.start_dt.isoformat(timespec="minutes"),
                     "end": e.end_dt.isoformat(timespec="minutes"),
                     "notes": (e.notes or "").strip(),
                     "status": (getattr(e, "status", None) or "scheduled"),
+                    "event_type": event_type,
                 })
 
             return jsonify(out)
@@ -1524,10 +1943,22 @@ def create_app():
         customer_id = data.get("customer_id")
         title = (data.get("title") or "").strip()
         notes = (data.get("notes") or "").strip()
+        recurring_enabled = bool(data.get("recurring_enabled"))
+        recurring_interval_days = (data.get("recurring_interval_days") or "").strip()
+        recurring_duration_minutes = (data.get("recurring_duration_minutes") or "").strip()
+        recurring_horizon_months = (data.get("recurring_horizon_months") or "").strip()
+        recurring_title = (data.get("recurring_title") or "").strip()
+        recurring_notes = (data.get("recurring_notes") or "").strip()
+        event_type = (data.get("event_type") or "appointment").strip().lower()
+
+        if event_type not in ("appointment", "block"):
+            return jsonify({"error": "Invalid event type"}), 400
 
         with db_session() as s:
             cust_id_int = None
-            if customer_id is not None and str(customer_id).strip() != "":
+            if event_type == "block":
+                cust_id_int = None
+            elif customer_id is not None and str(customer_id).strip() != "":
                 try:
                     cust_id_int = int(customer_id)
                 except Exception:
@@ -1537,13 +1968,47 @@ def create_app():
             ev = ScheduleEvent(
                 user_id=uid,
                 customer_id=cust_id_int,
-                title=title or None,
+                title=(title or None) if event_type != "block" else (title or "Blocked time"),
                 start_dt=start_dt,
                 end_dt=end_dt,
                 notes=notes or None,
+                event_type=event_type,
                 # is_auto defaults False for manual events
             )
             s.add(ev)
+
+            if recurring_enabled:
+                if event_type == "block":
+                    return jsonify({"error": "Recurring schedule is not available for blocked time."}), 400
+                if not cust_id_int:
+                    return jsonify({"error": "Recurring schedule requires a customer."}), 400
+                if not recurring_interval_days.isdigit():
+                    return jsonify({"error": "Recurring interval (days) is required."}), 400
+
+                interval_days = int(recurring_interval_days)
+                if interval_days < 1:
+                    return jsonify({"error": "Recurring interval must be at least 1 day."}), 400
+
+                duration_minutes = int(recurring_duration_minutes) if recurring_duration_minutes.isdigit() else None
+                if not duration_minutes or duration_minutes < 15:
+                    duration_minutes = max(15, int((end_dt - start_dt).total_seconds() / 60))
+
+                horizon_months = int(recurring_horizon_months) if recurring_horizon_months.isdigit() else 1
+                horizon_months = max(1, horizon_months)
+                horizon_days = horizon_months * 30
+
+                cust = _customer_owned_or_404(s, cust_id_int)
+                _delete_future_recurring_events(s, cust, from_dt=datetime.utcnow())
+
+                cust.next_service_dt = start_dt + timedelta(days=interval_days)
+                cust.service_interval_days = interval_days
+                cust.default_service_minutes = duration_minutes
+                cust.service_title = recurring_title or (title or cust.name)
+                cust.service_notes = recurring_notes or (notes or None)
+                cust.recurring_horizon_dt = start_dt + timedelta(days=horizon_days)
+
+                _ensure_recurring_events(s, cust, horizon_days=horizon_days)
+
             s.commit()
 
             return jsonify({"ok": True, "id": ev.id})
@@ -1564,6 +2029,14 @@ def create_app():
             if not ev:
                 abort(404)
 
+            if "event_type" in data:
+                event_type = (data.get("event_type") or "appointment").strip().lower()
+                if event_type not in ("appointment", "block"):
+                    return jsonify({"error": "Invalid event type"}), 400
+                ev.event_type = event_type
+                if event_type == "block":
+                    ev.customer_id = None
+
             if "start" in data:
                 ev.start_dt = _parse_iso_dt(data.get("start") or "")
             if "end" in data:
@@ -1574,7 +2047,9 @@ def create_app():
 
             if "customer_id" in data:
                 raw = data.get("customer_id")
-                if raw is None or str(raw).strip() == "":
+                if getattr(ev, "event_type", None) == "block":
+                    ev.customer_id = None
+                elif raw is None or str(raw).strip() == "":
                     ev.customer_id = None
                 else:
                     try:
@@ -1586,16 +2061,60 @@ def create_app():
 
             if "title" in data:
                 t = (data.get("title") or "").strip()
-                ev.title = t or None
+                if getattr(ev, "event_type", None) == "block":
+                    ev.title = t or "Blocked time"
+                else:
+                    ev.title = t or None
 
             if "notes" in data:
                 n = (data.get("notes") or "").strip()
                 ev.notes = n or None
 
             if "status" in data:
+                if getattr(ev, "event_type", None) == "block":
+                    return jsonify({"error": "Blocked time cannot change status."}), 400
                 st = (data.get("status") or "").strip().lower()
                 if st in ("scheduled", "completed", "cancelled"):
                     ev.status = st
+
+            if data.get("recurring_enabled"):
+                if getattr(ev, "event_type", None) == "block":
+                    return jsonify({"error": "Recurring schedule is not available for blocked time."}), 400
+                if not ev.customer_id:
+                    return jsonify({"error": "Recurring schedule requires a customer."}), 400
+
+                interval_days_raw = (data.get("recurring_interval_days") or "").strip()
+                if not interval_days_raw.isdigit():
+                    return jsonify({"error": "Recurring interval (days) is required."}), 400
+
+                interval_days = int(interval_days_raw)
+                if interval_days < 1:
+                    return jsonify({"error": "Recurring interval must be at least 1 day."}), 400
+
+                duration_raw = (data.get("recurring_duration_minutes") or "").strip()
+                duration_minutes = int(duration_raw) if duration_raw.isdigit() else None
+                if not duration_minutes or duration_minutes < 15:
+                    duration_minutes = max(15, int((ev.end_dt - ev.start_dt).total_seconds() / 60))
+
+                horizon_raw = (data.get("recurring_horizon_months") or "").strip()
+                horizon_months = int(horizon_raw) if horizon_raw.isdigit() else 1
+                horizon_months = max(1, horizon_months)
+                horizon_days = horizon_months * 30
+
+                recurring_title = (data.get("recurring_title") or "").strip()
+                recurring_notes = (data.get("recurring_notes") or "").strip()
+
+                cust = _customer_owned_or_404(s, ev.customer_id)
+                _delete_future_recurring_events(s, cust, from_dt=datetime.utcnow())
+
+                cust.next_service_dt = ev.start_dt + timedelta(days=interval_days)
+                cust.service_interval_days = interval_days
+                cust.default_service_minutes = duration_minutes
+                cust.service_title = recurring_title or (ev.title or cust.name)
+                cust.service_notes = recurring_notes or (ev.notes or None)
+                cust.recurring_horizon_dt = ev.start_dt + timedelta(days=horizon_days)
+
+                _ensure_recurring_events(s, cust, horizon_days=horizon_days)
 
             s.commit()
             return jsonify({"ok": True})
@@ -1648,7 +2167,12 @@ def create_app():
             name = (request.form.get("name") or "").strip()
             email = _normalize_email(request.form.get("email") or "").strip() or None
             phone = (request.form.get("phone") or "").strip() or None
-            address = (request.form.get("address") or "").strip() or None
+            address_line1 = (request.form.get("address_line1") or "").strip() or None
+            address_line2 = (request.form.get("address_line2") or "").strip() or None
+            city = (request.form.get("city") or "").strip() or None
+            state = (request.form.get("state") or "").strip() or None
+            postal_code = (request.form.get("postal_code") or "").strip() or None
+            address = _format_customer_address(address_line1, address_line2, city, state, postal_code)
 
             # Recurring fields (safe if form doesn't have them yet)
             next_service_dt = _parse_dt_local(request.form.get("next_service_dt"))
@@ -1681,6 +2205,11 @@ def create_app():
                     email=(email if (email and _looks_like_email(email)) else (email or None)),
                     phone=phone,
                     address=address,
+                    address_line1=address_line1,
+                    address_line2=address_line2,
+                    city=city,
+                    state=state,
+                    postal_code=postal_code,
 
                     next_service_dt=next_service_dt,
                     service_interval_days=service_interval_days,
@@ -1729,7 +2258,12 @@ def create_app():
                 name = (request.form.get("name") or "").strip()
                 email = _normalize_email(request.form.get("email") or "").strip() or None
                 phone = (request.form.get("phone") or "").strip() or None
-                address = (request.form.get("address") or "").strip() or None
+                address_line1 = (request.form.get("address_line1") or "").strip() or None
+                address_line2 = (request.form.get("address_line2") or "").strip() or None
+                city = (request.form.get("city") or "").strip() or None
+                state = (request.form.get("state") or "").strip() or None
+                postal_code = (request.form.get("postal_code") or "").strip() or None
+                address = _format_customer_address(address_line1, address_line2, city, state, postal_code)
 
                 if not name:
                     flash("Customer name is required.", "error")
@@ -1758,6 +2292,11 @@ def create_app():
                 c.email = (email if (email and _looks_like_email(email)) else (email or None))
                 c.phone = phone
                 c.address = address
+                c.address_line1 = address_line1
+                c.address_line2 = address_line2
+                c.city = city
+                c.state = state
+                c.postal_code = postal_code
 
                 # Recurring fields
                 c.next_service_dt = _parse_dt_local(request.form.get("next_service_dt"))
@@ -1830,6 +2369,7 @@ def create_app():
             c.service_interval_days = None
             c.service_title = None
             c.service_notes = None
+            c.recurring_horizon_dt = None
             # keep default_service_minutes as-is (harmless / preference)
 
             try:
@@ -1890,12 +2430,23 @@ def create_app():
 
         with db_session() as s:
             c = _customer_owned_or_404(s, customer_id)
+            now = datetime.utcnow()
+            next_event = (
+                s.query(ScheduleEvent)
+                .filter(ScheduleEvent.user_id == uid)
+                .filter(ScheduleEvent.customer_id == c.id)
+                .filter(ScheduleEvent.end_dt >= now)
+                .filter(ScheduleEvent.status == "scheduled")
+                .order_by(ScheduleEvent.start_dt.asc())
+                .first()
+            )
 
             inv_q = (
                 s.query(Invoice)
                 .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
                 .filter(Invoice.user_id == uid)
                 .filter(Invoice.customer_id == c.id)
+                .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
                 .order_by(Invoice.created_at.desc())
             )
 
@@ -1903,6 +2454,20 @@ def create_app():
                 inv_q = inv_q.filter(Invoice.invoice_number.startswith(year))
 
             invoices_list = inv_q.all()
+
+            estimates_q = (
+                s.query(Invoice)
+                .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                .filter(Invoice.user_id == uid)
+                .filter(Invoice.customer_id == c.id)
+                .filter(Invoice.is_estimate.is_(True))
+                .order_by(Invoice.created_at.desc())
+            )
+
+            if year.isdigit() and len(year) == 4:
+                estimates_q = estimates_q.filter(Invoice.invoice_number.startswith(year))
+
+            estimates_list = estimates_q.all()
 
             if status in ("paid", "unpaid"):
                 EPS = 0.01
@@ -1933,11 +2498,56 @@ def create_app():
             "customer_view.html",
             c=c,
             invoices=invoices_list,
+            estimates=estimates_list,
             year=year,
             status=status or "all",
             total_business=total_business,
             total_paid=total_paid,
             total_unpaid=total_unpaid,
+            next_event=next_event,
+        )
+
+    # -----------------------------
+    # All estimates list
+    # -----------------------------
+    @app.route("/estimates")
+    @login_required
+    def estimates():
+        q = (request.args.get("q") or "").strip()
+        year = (request.args.get("year") or "").strip()
+
+        uid = _current_user_id_int()
+
+        with db_session() as s:
+            estimates_q = (
+                s.query(Invoice)
+                .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                .filter(Invoice.user_id == uid)
+                .filter(Invoice.is_estimate.is_(True))
+                .order_by(Invoice.created_at.desc())
+            )
+
+            if q:
+                like = f"%{q}%"
+                estimates_q = estimates_q.filter(
+                    (Invoice.name.ilike(like)) |
+                    (Invoice.vehicle.ilike(like))
+                )
+
+            if year.isdigit() and len(year) == 4:
+                estimates_q = estimates_q.filter(Invoice.invoice_number.startswith(year))
+
+            estimates_list = estimates_q.all()
+
+            customers = s.query(Customer.id, Customer.name).filter(Customer.user_id == uid).all()
+            customer_map = {cid: (name or "").strip() for cid, name in customers}
+
+        return render_template(
+            "estimates_list.html",
+            estimates=estimates_list,
+            customer_map=customer_map,
+            q=q,
+            year=year,
         )
 
     # -----------------------------
@@ -1957,6 +2567,7 @@ def create_app():
                 s.query(Invoice)
                 .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
                 .filter(Invoice.user_id == uid)
+                .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
                 .order_by(Invoice.created_at.desc())
             )
 
@@ -1992,6 +2603,150 @@ def create_app():
             q=q,
             year=year,
             status=status or "all"
+        )
+
+    # -----------------------------
+    # Create estimate — GATED
+    # -----------------------------
+    @app.route("/estimates/new", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def estimate_new():
+        uid = _current_user_id_int()
+        pre_customer_id = (request.args.get("customer_id") or "").strip()
+
+        with db_session() as s:
+            u = s.get(User, uid)
+            user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
+            tmpl = _template_config_for(user_template_key)
+
+            customers = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .order_by(Customer.name.asc())
+                .all()
+            )
+
+            customers_for_js = [{
+                "id": c.id,
+                "name": (c.name or "").strip(),
+                "email": (c.email or "").strip(),
+                "phone": (c.phone or "").strip(),
+            } for c in customers]
+
+            pre_customer = None
+            if pre_customer_id.isdigit():
+                try:
+                    pre_customer = _customer_owned_or_404(s, int(pre_customer_id))
+                except Exception:
+                    pre_customer = None
+
+        if request.method == "POST":
+            customer_id_raw = (request.form.get("customer_id") or "").strip()
+            vehicle = (request.form.get("vehicle") or "").strip()
+
+            if not customer_id_raw.isdigit():
+                flash("Please select a customer from the list.", "error")
+                return render_template(
+                    "invoice_form.html",
+                    mode="new",
+                    doc_type="estimate",
+                    form=request.form,
+                    tmpl=tmpl,
+                    tmpl_key=user_template_key,
+                    customers=customers,
+                    customers_for_js=customers_for_js,
+                    pre_customer=pre_customer,
+                )
+
+            customer_id = int(customer_id_raw)
+
+            if user_template_key in ("auto_repair", "lawn_care") and not vehicle:
+                flash("Vehicle is required for Auto Repair estimates.", "error")
+                return render_template(
+                    "invoice_form.html",
+                    mode="new",
+                    doc_type="estimate",
+                    form=request.form,
+                    tmpl=tmpl,
+                    tmpl_key=user_template_key,
+                    customers=customers,
+                    customers_for_js=customers_for_js,
+                    pre_customer=pre_customer,
+                )
+
+            with db_session() as s:
+                c = _customer_owned_or_404(s, customer_id)
+
+                year = int(datetime.now().strftime("%Y"))
+                inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+
+                cust_email_override = (request.form.get("customer_email") or "").strip() or None
+                cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
+
+                parts_data = _parse_repeating_fields(
+                    request.form.getlist("part_name"),
+                    request.form.getlist("part_price")
+                )
+                labor_data = _parse_repeating_fields(
+                    request.form.getlist("labor_desc"),
+                    request.form.getlist("labor_time_hours")
+                )
+
+                price_per_hour = _to_float(request.form.get("price_per_hour"))
+                hours = _to_float(request.form.get("hours"))
+                shop_supplies = _to_float(request.form.get("shop_supplies"))
+                parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                if user_template_key == "flipping_items":
+                    price_per_hour = 1.0
+                    hours = 0.0
+
+                inv = Invoice(
+                    user_id=uid,
+                    customer_id=c.id,
+
+                    invoice_number=inv_no,
+                    invoice_template=user_template_key,
+                    is_estimate=True,
+
+                    customer_email=(cust_email_override or (c.email or None)),
+                    customer_phone=(cust_phone_override or (c.phone or None)),
+
+                    name=(c.name or "").strip(),
+                    vehicle=vehicle,
+
+                    hours=hours,
+                    price_per_hour=price_per_hour,
+                    shop_supplies=shop_supplies,
+                    parts_markup_percent=parts_markup_percent,
+                    paid=0.0,
+                    date_in=request.form.get("date_in", "").strip(),
+                    notes=request.form.get("notes", "").rstrip(),
+                    useful_info=(request.form.get("useful_info") or "").rstrip() or None,
+                )
+
+                for pn, pp in parts_data:
+                    inv.parts.append(InvoicePart(part_name=pn, part_price=pp))
+
+                if user_template_key != "flipping_items":
+                    for desc, t in labor_data:
+                        inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
+
+                s.add(inv)
+                s.commit()
+
+                return redirect(url_for("estimate_view", estimate_id=inv.id))
+
+        return render_template(
+            "invoice_form.html",
+            mode="new",
+            doc_type="estimate",
+            default_date=datetime.now().strftime("%B %d, %Y"),
+            tmpl=tmpl,
+            tmpl_key=user_template_key,
+            customers=customers,
+            customers_for_js=customers_for_js,
+            pre_customer=pre_customer,
         )
 
     # -----------------------------
@@ -2039,6 +2794,7 @@ def create_app():
                 return render_template(
                     "invoice_form.html",
                     mode="new",
+                    doc_type="invoice",
                     form=request.form,
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
@@ -2054,6 +2810,7 @@ def create_app():
                 return render_template(
                     "invoice_form.html",
                     mode="new",
+                    doc_type="invoice",
                     form=request.form,
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
@@ -2071,6 +2828,27 @@ def create_app():
                 cust_email_override = (request.form.get("customer_email") or "").strip() or None
                 cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
 
+                parts_data = _parse_repeating_fields(
+                    request.form.getlist("part_name"),
+                    request.form.getlist("part_price")
+                )
+                labor_data = _parse_repeating_fields(
+                    request.form.getlist("labor_desc"),
+                    request.form.getlist("labor_time_hours")
+                )
+
+                price_per_hour = _to_float(request.form.get("price_per_hour"))
+                hours = _to_float(request.form.get("hours"))
+                shop_supplies = _to_float(request.form.get("shop_supplies"))
+                paid_val = _to_float(request.form.get("paid"))
+                parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                if user_template_key == "flipping_items":
+                    price_per_hour = 1.0
+                    parts_total = sum(pp for _, pp in parts_data)
+                    markup_multiplier = 1 + (parts_markup_percent or 0.0) / 100.0
+                    parts_total_with_markup = parts_total * markup_multiplier
+                    hours = paid_val - parts_total_with_markup - shop_supplies
+
                 inv = Invoice(
                     user_id=uid,
                     customer_id=c.id,
@@ -2084,25 +2862,22 @@ def create_app():
                     name=(c.name or "").strip(),
                     vehicle=vehicle,
 
-                    hours=_to_float(request.form.get("hours")),
-                    price_per_hour=_to_float(request.form.get("price_per_hour")),
-                    shop_supplies=_to_float(request.form.get("shop_supplies")),
-                    paid=_to_float(request.form.get("paid")),
+                    hours=hours,
+                    price_per_hour=price_per_hour,
+                    shop_supplies=shop_supplies,
+                    parts_markup_percent=parts_markup_percent,
+                    paid=paid_val,
                     date_in=request.form.get("date_in", "").strip(),
                     notes=request.form.get("notes", "").rstrip(),
+                    useful_info=(request.form.get("useful_info") or "").rstrip() or None,
                 )
 
-                for pn, pp in _parse_repeating_fields(
-                    request.form.getlist("part_name"),
-                    request.form.getlist("part_price")
-                ):
+                for pn, pp in parts_data:
                     inv.parts.append(InvoicePart(part_name=pn, part_price=pp))
 
-                for desc, t in _parse_repeating_fields(
-                    request.form.getlist("labor_desc"),
-                    request.form.getlist("labor_time_hours")
-                ):
-                    inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
+                if user_template_key != "flipping_items":
+                    for desc, t in labor_data:
+                        inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
 
                 s.add(inv)
                 s.commit()
@@ -2112,13 +2887,272 @@ def create_app():
         return render_template(
             "invoice_form.html",
             mode="new",
-            default_date=datetime.now().strftime("%m/%d/%Y"),
+            default_date=datetime.now().strftime("%B %d, %Y"),
+            doc_type="invoice",
             tmpl=tmpl,
             tmpl_key=user_template_key,
             customers=customers,
             customers_for_js=customers_for_js,
             pre_customer=pre_customer,
         )
+
+    # -----------------------------
+    # View estimate
+    # -----------------------------
+    @app.route("/estimates/<int:estimate_id>")
+    @login_required
+    def estimate_view(estimate_id):
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+            tmpl = _template_config_for(inv.invoice_template)
+            c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+        return render_template("estimate_view.html", inv=inv, tmpl=tmpl, customer=c)
+
+    # -----------------------------
+    # Edit estimate — GATED
+    # -----------------------------
+    @app.route("/estimates/<int:estimate_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def estimate_edit(estimate_id):
+        uid = _current_user_id_int()
+
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+
+            customers = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .order_by(Customer.name.asc())
+                .all()
+            )
+
+            customers_for_js = [{
+                "id": c.id,
+                "name": (c.name or "").strip(),
+                "email": (c.email or "").strip(),
+                "phone": (c.phone or "").strip(),
+            } for c in customers]
+
+            tmpl_key = _template_key_fallback(inv.invoice_template)
+            tmpl = _template_config_for(tmpl_key)
+
+            if request.method == "POST":
+                customer_id_raw = (request.form.get("customer_id") or "").strip()
+                if not customer_id_raw.isdigit():
+                    flash("Please select a customer from the list.", "error")
+                    return render_template(
+                        "invoice_form.html",
+                        mode="edit",
+                        inv=inv,
+                        doc_type="estimate",
+                        form=request.form,
+                        tmpl=tmpl,
+                        tmpl_key=tmpl_key,
+                        customers=customers,
+                        customers_for_js=customers_for_js,
+                    )
+
+                customer_id = int(customer_id_raw)
+                c = _customer_owned_or_404(s, customer_id)
+
+                inv.customer_id = customer_id
+                inv.name = (c.name or "").strip()
+
+                parts_data = _parse_repeating_fields(
+                    request.form.getlist("part_name"),
+                    request.form.getlist("part_price")
+                )
+                labor_data = _parse_repeating_fields(
+                    request.form.getlist("labor_desc"),
+                    request.form.getlist("labor_time_hours")
+                )
+
+                inv.vehicle = (request.form.get("vehicle") or "").strip()
+                inv.hours = _to_float(request.form.get("hours"))
+                inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
+                inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
+                inv.parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                if tmpl_key == "flipping_items":
+                    inv.price_per_hour = 1.0
+                    inv.hours = 0.0
+                inv.paid = 0.0
+                inv.date_in = request.form.get("date_in", "").strip()
+                inv.notes = (request.form.get("notes") or "").rstrip()
+                inv.useful_info = (request.form.get("useful_info") or "").rstrip() or None
+
+                cust_email_override = (request.form.get("customer_email") or "").strip() or None
+                cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
+
+                inv.customer_email = cust_email_override or (c.email or None)
+                inv.customer_phone = cust_phone_override or (c.phone or None)
+                inv.is_estimate = True
+
+                if tmpl_key in ("auto_repair", "lawn_care") and not inv.vehicle:
+                    flash("Vehicle is required for Auto Repair estimates.", "error")
+                    return render_template(
+                        "invoice_form.html",
+                        mode="edit",
+                        inv=inv,
+                        doc_type="estimate",
+                        form=request.form,
+                        tmpl=tmpl,
+                        tmpl_key=tmpl_key,
+                        customers=customers,
+                        customers_for_js=customers_for_js,
+                    )
+
+                inv.parts.clear()
+                inv.labor_items.clear()
+
+                for pn, pp in parts_data:
+                    inv.parts.append(InvoicePart(part_name=pn, part_price=pp))
+
+                if tmpl_key != "flipping_items":
+                    for desc, t in labor_data:
+                        inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
+
+                s.commit()
+                return redirect(url_for("estimate_view", estimate_id=inv.id))
+
+        return render_template(
+            "invoice_form.html",
+            mode="edit",
+            inv=inv,
+            doc_type="estimate",
+            tmpl=tmpl,
+            tmpl_key=tmpl_key,
+            customers=customers,
+            customers_for_js=customers_for_js,
+        )
+
+    # -----------------------------
+    # Convert estimate to invoice — GATED
+    # -----------------------------
+    @app.route("/estimates/<int:estimate_id>/convert", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_convert(estimate_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+
+            year = int(datetime.now().strftime("%Y"))
+            new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+
+            new_inv = Invoice(
+                user_id=uid,
+                customer_id=inv.customer_id,
+                invoice_number=new_no,
+                invoice_template=inv.invoice_template,
+                is_estimate=False,
+                converted_from_estimate=True,
+
+                name=inv.name,
+                vehicle=inv.vehicle,
+
+                hours=inv.hours,
+                price_per_hour=inv.price_per_hour,
+                shop_supplies=inv.shop_supplies,
+                parts_markup_percent=inv.parts_markup_percent,
+
+                notes=inv.notes,
+                useful_info=inv.useful_info,
+                paid=0.0,
+                date_in=inv.date_in or datetime.now().strftime("%m/%d/%Y"),
+
+                customer_email=inv.customer_email,
+                customer_phone=inv.customer_phone,
+
+                pdf_path=None,
+                pdf_generated_at=None,
+            )
+
+            for p in inv.parts:
+                new_inv.parts.append(InvoicePart(part_name=p.part_name, part_price=p.part_price))
+
+                for li in inv.labor_items:
+                    new_inv.labor_items.append(InvoiceLabor(labor_desc=li.labor_desc, labor_time_hours=li.labor_time_hours))
+
+            s.add(new_inv)
+            s.commit()
+
+            flash(f"Estimate converted to invoice {new_no}.", "success")
+            return redirect(url_for("invoice_edit", invoice_id=new_inv.id))
+
+    @app.route("/invoices/<int:invoice_id>/convert", methods=["POST"])
+    @login_required
+    @subscription_required
+    def invoice_convert(invoice_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            inv = _invoice_owned_or_404(s, invoice_id)
+
+            year = int(datetime.now().strftime("%Y"))
+            new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+
+            new_inv = Invoice(
+                user_id=uid,
+                customer_id=inv.customer_id,
+                invoice_number=new_no,
+                invoice_template=inv.invoice_template,
+                is_estimate=True,
+
+                name=inv.name,
+                vehicle=inv.vehicle,
+
+                hours=inv.hours,
+                price_per_hour=inv.price_per_hour,
+                shop_supplies=inv.shop_supplies,
+                parts_markup_percent=inv.parts_markup_percent,
+
+                notes=inv.notes,
+                useful_info=inv.useful_info,
+                paid=0.0,
+                date_in=inv.date_in or datetime.now().strftime("%m/%d/%Y"),
+
+                customer_email=inv.customer_email,
+                customer_phone=inv.customer_phone,
+
+                pdf_path=None,
+                pdf_generated_at=None,
+            )
+
+            for p in inv.parts:
+                new_inv.parts.append(InvoicePart(part_name=p.part_name, part_price=p.part_price))
+
+            for li in inv.labor_items:
+                new_inv.labor_items.append(InvoiceLabor(labor_desc=li.labor_desc, labor_time_hours=li.labor_time_hours))
+
+            s.add(new_inv)
+            s.commit()
+
+            flash(f"Invoice converted to estimate {new_no}.", "success")
+            return redirect(url_for("estimate_edit", estimate_id=new_inv.id))
+
+    # -----------------------------
+    # Delete estimate — GATED
+    # -----------------------------
+    @app.route("/estimates/<int:estimate_id>/delete", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_delete(estimate_id: int):
+        delete_pdf = (request.form.get("delete_pdf") or "").strip() == "1"
+
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+            pdf_path = inv.pdf_path
+            s.delete(inv)
+            s.commit()
+
+        if delete_pdf and pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+            except Exception:
+                pass
+
+        flash("Estimate deleted.", "success")
+        return redirect(url_for("customers_list"))
 
     # -----------------------------
     # View invoice
@@ -2158,8 +3192,10 @@ def create_app():
                 hours=inv.hours,
                 price_per_hour=inv.price_per_hour,
                 shop_supplies=inv.shop_supplies,
+                parts_markup_percent=inv.parts_markup_percent,
 
                 notes=inv.notes,
+                useful_info=inv.useful_info,
                 paid=0.0,
                 date_in=datetime.now().strftime("%m/%d/%Y"),
 
@@ -2219,6 +3255,7 @@ def create_app():
                         "invoice_form.html",
                         mode="edit",
                         inv=inv,
+                        doc_type="invoice",
                         form=request.form,
                         tmpl=tmpl,
                         tmpl_key=tmpl_key,
@@ -2232,13 +3269,30 @@ def create_app():
                 inv.customer_id = customer_id
                 inv.name = (c.name or "").strip()
 
+                parts_data = _parse_repeating_fields(
+                    request.form.getlist("part_name"),
+                    request.form.getlist("part_price")
+                )
+                labor_data = _parse_repeating_fields(
+                    request.form.getlist("labor_desc"),
+                    request.form.getlist("labor_time_hours")
+                )
+
                 inv.vehicle = (request.form.get("vehicle") or "").strip()
                 inv.hours = _to_float(request.form.get("hours"))
                 inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
+                inv.parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
                 inv.paid = _to_float(request.form.get("paid"))
+                if tmpl_key == "flipping_items":
+                    inv.price_per_hour = 1.0
+                    parts_total = sum(pp for _, pp in parts_data)
+                    markup_multiplier = 1 + (inv.parts_markup_percent or 0.0) / 100.0
+                    parts_total_with_markup = parts_total * markup_multiplier
+                    inv.hours = inv.paid - parts_total_with_markup - inv.shop_supplies
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = (request.form.get("notes") or "").rstrip()
+                inv.useful_info = (request.form.get("useful_info") or "").rstrip() or None
 
                 cust_email_override = (request.form.get("customer_email") or "").strip() or None
                 cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
@@ -2252,6 +3306,7 @@ def create_app():
                         "invoice_form.html",
                         mode="edit",
                         inv=inv,
+                        doc_type="invoice",
                         form=request.form,
                         tmpl=tmpl,
                         tmpl_key=tmpl_key,
@@ -2262,17 +3317,12 @@ def create_app():
                 inv.parts.clear()
                 inv.labor_items.clear()
 
-                for pn, pp in _parse_repeating_fields(
-                    request.form.getlist("part_name"),
-                    request.form.getlist("part_price")
-                ):
+                for pn, pp in parts_data:
                     inv.parts.append(InvoicePart(part_name=pn, part_price=pp))
 
-                for desc, t in _parse_repeating_fields(
-                    request.form.getlist("labor_desc"),
-                    request.form.getlist("labor_time_hours")
-                ):
-                    inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
+                if tmpl_key != "flipping_items":
+                    for desc, t in labor_data:
+                        inv.labor_items.append(InvoiceLabor(labor_desc=desc, labor_time_hours=t))
 
                 s.commit()
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
@@ -2281,6 +3331,7 @@ def create_app():
             "invoice_form.html",
             mode="edit",
             inv=inv,
+            doc_type="invoice",
             tmpl=tmpl,
             tmpl_key=tmpl_key,
             customers=customers,
@@ -2327,12 +3378,15 @@ def create_app():
         count = 0
         total_invoice_amount = 0.0
         total_labor = 0.0
+        total_labor_raw = 0.0
         total_parts = 0.0
+        total_parts_markup_profit = 0.0
         total_supplies = 0.0
 
         total_paid_invoices_amount = 0.0
         total_outstanding_unpaid = 0.0
         labor_unpaid = 0.0
+        labor_unpaid_raw = 0.0
 
         unpaid = []
 
@@ -2341,6 +3395,7 @@ def create_app():
                 s.query(Invoice)
                 .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
                 .filter(Invoice.user_id == uid)
+                .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
                 .order_by(Invoice.created_at.desc())
                 .all()
             )
@@ -2350,14 +3405,20 @@ def create_app():
                 if yr != target_year:
                     continue
 
-                parts_total = inv.parts_total()
+                parts_total_raw = inv.parts_total_raw()
+                parts_markup_profit = inv.parts_markup_amount()
                 labor_total = inv.labor_total()
+                labor_income = labor_total
+                if (inv.invoice_template or "") == "flipping_items" and labor_total < 0:
+                    labor_income = 0.0
                 invoice_total = inv.invoice_total()
                 supplies = float(inv.shop_supplies or 0.0)
                 paid = float(inv.paid or 0.0)
 
-                total_parts += parts_total
-                total_labor += labor_total
+                total_parts += parts_total_raw
+                total_parts_markup_profit += parts_markup_profit
+                total_labor += labor_income + parts_markup_profit
+                total_labor_raw += labor_total
                 total_supplies += supplies
                 total_invoice_amount += invoice_total
                 count += 1
@@ -2369,7 +3430,8 @@ def create_app():
                 else:
                     outstanding = max(0.0, invoice_total - paid)
                     total_outstanding_unpaid += outstanding
-                    labor_unpaid += labor_total
+                    labor_unpaid += labor_income + parts_markup_profit
+                    labor_unpaid_raw += labor_total
 
                     unpaid.append({
                         "id": inv.id,
@@ -2380,13 +3442,14 @@ def create_app():
                         "outstanding": outstanding,
                     })
 
-        profit_paid_labor_only = total_labor - labor_unpaid
+        profit_paid_labor_only = total_labor_raw - labor_unpaid_raw
 
         context = {
             "year": year_text,
             "count": count,
             "total_invoice_amount": total_invoice_amount,
             "total_parts": total_parts,
+            "total_parts_markup_profit": total_parts_markup_profit,
             "total_labor": total_labor,
             "total_supplies": total_supplies,
             "total_paid_invoices_amount": total_paid_invoices_amount,
@@ -2440,6 +3503,75 @@ def create_app():
     # -----------------------------
     # PDF routes — GATED
     # -----------------------------
+    @app.route("/estimates/<int:estimate_id>/pdf/generate", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_pdf_generate(estimate_id):
+        with db_session() as s:
+            _estimate_owned_or_404(s, estimate_id)
+            generate_and_store_pdf(s, estimate_id)
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+    @app.route("/estimates/<int:estimate_id>/pdf/download")
+    @login_required
+    @subscription_required
+    def estimate_pdf_download(estimate_id):
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+            if not inv.pdf_path or not os.path.exists(inv.pdf_path):
+                flash("PDF not found. Generate it first.", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+            return send_file(
+                inv.pdf_path,
+                as_attachment=True,
+                download_name=os.path.basename(inv.pdf_path),
+                mimetype="application/pdf"
+            )
+
+    @app.route("/estimates/<int:estimate_id>/send", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_send(estimate_id: int):
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            customer_name = (customer.name if customer else "").strip()
+
+            to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
+            if not to_email or "@" not in to_email:
+                flash("Customer email is missing. Add it on the estimate edit page (or customer profile).", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+            if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
+                generate_and_store_pdf(s, estimate_id)
+                inv = _estimate_owned_or_404(s, estimate_id)
+
+            subject = f"Estimate {inv.invoice_number}"
+            body = (
+                f"Hello {customer_name or 'there'},\n\n"
+                f"Attached is your estimate {inv.invoice_number}.\n"
+                f"Details: {inv.vehicle}\n"
+                f"Total: ${inv.invoice_total():,.2f}\n\n"
+                "Thank you."
+            )
+
+            try:
+                _send_invoice_pdf_email(
+                    to_email=to_email,
+                    subject=subject,
+                    body_text=body,
+                    pdf_path=inv.pdf_path,
+                )
+            except Exception as e:
+                print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={inv.invoice_number}: {repr(e)}", flush=True)
+                flash("Could not send email (SMTP / sender config issue). Check Render logs.", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+        flash("Estimate email sent.", "success")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
     @app.route("/invoices/<int:invoice_id>/pdf/generate", methods=["POST"])
     @login_required
     @subscription_required
@@ -2521,6 +3653,7 @@ def create_app():
                 s.query(Invoice)
                 .filter(Invoice.user_id == uid)
                 .filter(Invoice.pdf_path.isnot(None))
+                .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
             )
             if year.isdigit() and len(year) == 4:
                 q = q.filter(Invoice.invoice_number.startswith(year))
@@ -2541,4 +3674,3 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(debug=True, port=5001)
-
