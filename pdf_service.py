@@ -368,16 +368,11 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # Bill To + Job Details boxes
     # -----------------------------
     top_y = PAGE_H - 1.45 * inch
-    box_h = 1.35 * inch
     box_w = (PAGE_W - 2 * M - 0.35 * inch) / 2
-
-    pdf.setStrokeColor(colors.black)
-    pdf.setLineWidth(1)
-
-    # Bill To
-    pdf.roundRect(M, top_y - box_h, box_w, box_h, 8, stroke=1, fill=0)
-    pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawString(M + 10, top_y - 16, "BILL TO")
+    line_step = 12
+    name_start_y = top_y - 34
+    max_w_left = (box_w / 2) - 20
+    max_w_right = (box_w / 2) - 20
 
     # Prefer Customer.name when available (otherwise invoice legacy name parsing)
     if customer and (getattr(customer, "name", None) or "").strip():
@@ -386,29 +381,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         nameFirst, _, _tail = (inv.name or "").partition(":")
         customer_name = (nameFirst or inv.name or "").strip()
 
-    # Layout: left = contact, right = address
-    left_x = M + 10
-    right_x = M + (box_w / 2) + 5
-
-    name_start_y = top_y - 34
-    line_step = 12
-    y_bottom = top_y - box_h + 12
-
-    max_w_left = (box_w / 2) - 20
-    max_w_right = (box_w / 2) - 20
-
-    # Top-left: Customer name (up to 2 lines)
-    pdf.setFont("Helvetica", 11)
-    name_lines = _wrap_text(customer_name, "Helvetica", 11, max_w_left)
-    y_name = name_start_y
-    for ln in name_lines[:2]:
-        if y_name < y_bottom:
-            break
-        pdf.drawString(left_x, y_name, ln)
-        y_name -= line_step
-
-    # Top-right: Address (prefixed) (up to 2 lines)
-    pdf.setFont("Helvetica", 9)
+    # Build right-side content lines first so box height can expand as needed.
+    addr_lines = []
     addr_text = (customer_address or "").strip()
     if addr_text:
         addr_parts = [p.strip() for p in addr_text.split(",") if p.strip()]
@@ -421,25 +395,64 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         else:
             line1 = f"Address: {addr_text}"
             line2 = ""
-
-        y_addr = name_start_y
-        pdf.drawString(right_x, y_addr, line1)
+        addr_lines.extend(_wrap_text(line1, "Helvetica", 9, max_w_right))
         if line2:
-            if y_addr - line_step >= y_bottom:
-                pdf.drawString(right_x, y_addr - line_step, line2)
+            addr_lines.extend(_wrap_text(line2, "Helvetica", 9, max_w_right))
+
+    email_lines = _wrap_text(f"Email: {customer_email}", "Helvetica", 9, max_w_right) if customer_email else []
+    right_gap_lines = 1 if (addr_lines and email_lines) else 0
+    needed_right_lines = len(addr_lines) + len(email_lines) + right_gap_lines
+
+    # Keep all right-side lines visible inside the Bill To box.
+    min_box_h = 1.35 * inch
+    required_box_h = 32 + (needed_right_lines * line_step)
+    box_h = max(min_box_h, required_box_h)
+
+    pdf.setStrokeColor(colors.black)
+    pdf.setLineWidth(1)
+
+    # Bill To
+    pdf.roundRect(M, top_y - box_h, box_w, box_h, 8, stroke=1, fill=0)
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(M + 10, top_y - 16, "BILL TO")
+
+    # Layout: left = contact, right = address
+    left_x = M + 10
+    right_x = M + (box_w / 2) + 5
+
+    y_bottom = top_y - box_h + 12
+
+    # Top-left: Customer name (up to 2 lines)
+    pdf.setFont("Helvetica", 11)
+    name_lines = _wrap_text(customer_name, "Helvetica", 11, max_w_left)
+    y_name = name_start_y
+    for ln in name_lines[:2]:
+        if y_name < y_bottom:
+            break
+        pdf.drawString(left_x, y_name, ln)
+        y_name -= line_step
+
+    # Top-right: Address (all wrapped lines)
+    pdf.setFont("Helvetica", 9)
+    y_addr = name_start_y
+    for ln in addr_lines:
+        if y_addr < y_bottom:
+            break
+        pdf.drawString(right_x, y_addr, ln)
+        y_addr -= line_step
+    if addr_lines and email_lines:
+        y_addr -= line_step
 
     # Bottom-left: Phone (single line if present)
     if customer_phone:
         pdf.drawString(left_x, y_bottom, f"Phone: {customer_phone}")
 
-    # Bottom-right: Email (wrapped to 2 lines, anchored at bottom)
-    if customer_email:
-        email_lines = _wrap_text(f"Email: {customer_email}", "Helvetica", 9, max_w_right)
-        if len(email_lines) == 1:
-            pdf.drawString(right_x, y_bottom, email_lines[0])
-        elif len(email_lines) >= 2:
-            pdf.drawString(right_x, y_bottom, email_lines[1])
-            pdf.drawString(right_x, y_bottom + line_step, email_lines[0])
+    # Bottom-right: Email (all wrapped lines, anchored at bottom)
+    if email_lines:
+        y_email = y_bottom + ((len(email_lines) - 1) * line_step)
+        for ln in email_lines:
+            pdf.drawString(right_x, y_email, ln)
+            y_email -= line_step
 
     
     # Job Details (wrapped job/address line)
