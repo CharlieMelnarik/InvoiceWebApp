@@ -31,7 +31,33 @@ def _wrap_text(text, font, size, max_width):
     words = str(text).split()
     lines = []
     current = ""
+
+    def split_long_token(token: str):
+        """Break a single long token (like an email) into width-safe chunks."""
+        if stringWidth(token, font, size) <= max_width:
+            return [token]
+        chunks = []
+        remaining = token
+        while remaining:
+            lo, hi = 1, len(remaining)
+            fit = 1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                piece = remaining[:mid]
+                if stringWidth(piece, font, size) <= max_width:
+                    fit = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            chunks.append(remaining[:fit])
+            remaining = remaining[fit:]
+        return chunks
+
+    expanded_words = []
     for w in words:
+        expanded_words.extend(split_long_token(w))
+
+    for w in expanded_words:
         test = current + (" " if current else "") + w
         if stringWidth(test, font, size) <= max_width:
             current = test
