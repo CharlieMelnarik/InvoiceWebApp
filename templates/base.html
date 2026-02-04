@@ -185,6 +185,52 @@
       flex-wrap: wrap;
     }
 
+    @media (max-width: 768px) {
+      .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .page-header .subtitle {
+        margin-top: 0.25rem;
+      }
+      .action-group {
+        width: 100%;
+      }
+      .action-group .btn,
+      .action-group form,
+      .action-group a {
+        width: 100%;
+      }
+      .action-group form .btn {
+        width: 100%;
+      }
+      .form-panel {
+        padding: 0.85rem 1rem;
+      }
+      .card .card-body {
+        padding: 1rem;
+      }
+      .navbar-brand img {
+        height: 42px !important;
+      }
+      .table-responsive {
+        border-radius: 10px;
+      }
+      .btn {
+        width: 100%;
+      }
+      .btn-sm {
+        width: auto;
+      }
+      .modal-footer {
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .modal-footer .btn {
+        flex: 1 1 100%;
+      }
+    }
+
     .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
                    Consolas, "Liberation Mono", "Courier New", monospace;

@@ -368,7 +368,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # Bill To + Job Details boxes
     # -----------------------------
     top_y = PAGE_H - 1.45 * inch
-    box_h = 1.05 * inch
+    box_h = 1.35 * inch
     box_w = (PAGE_W - 2 * M - 0.35 * inch) / 2
 
     pdf.setStrokeColor(colors.black)
@@ -390,35 +390,48 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     left_x = M + 10
     right_x = M + (box_w / 2) + 5
 
-    name_y = top_y - 34
+    name_start_y = top_y - 34
     line_step = 12
+    y_bottom = top_y - box_h + 12
 
-    # LEFT: Name, Phone, Email
+    # LEFT: Name, Phone
+    max_w_left = (box_w / 2) - 20
     pdf.setFont("Helvetica", 11)
-    pdf.drawString(left_x, name_y, customer_name)
+    name_lines = _wrap_text(customer_name, "Helvetica", 11, max_w_left)
+    left_y = name_start_y
+    for ln in name_lines[:2]:
+        if left_y < y_bottom:
+            break
+        pdf.drawString(left_x, left_y, ln)
+        left_y -= line_step
 
     pdf.setFont("Helvetica", 9)
-    y_left = name_y - line_step
+    y_left = left_y
 
     if customer_phone:
-        pdf.drawString(left_x, y_left, f"Phone: {customer_phone}")
-        y_left -= line_step
-
-    if customer_email:
-        max_w_left = (box_w / 2) - 20
-        email_lines = _wrap_text(f"Email: {customer_email}", "Helvetica", 9, max_w_left)
-        for ln in email_lines[:2]:
-            pdf.drawString(left_x, y_left, ln)
+        if y_left >= y_bottom:
+            pdf.drawString(left_x, y_left, f"Phone: {customer_phone}")
             y_left -= line_step
 
-    # RIGHT: Address (stacked)
+    # RIGHT: Email + Address (stacked)
     pdf.setFont("Helvetica", 9)
-    y_right = name_y
+    y_right = name_start_y
+
+    if customer_email:
+        max_w_right = (box_w / 2) - 20
+        email_lines = _wrap_text(f"Email: {customer_email}", "Helvetica", 9, max_w_right)
+        for ln in email_lines[:2]:
+            if y_right < y_bottom:
+                break
+            pdf.drawString(right_x, y_right, ln)
+            y_right -= line_step
 
     if customer_address:
         max_w_right = (box_w / 2) - 20
         addr_lines = _wrap_text(customer_address, "Helvetica", 9, max_w_right)
-        for ln in addr_lines[:4]:
+        for ln in addr_lines[:3]:
+            if y_right < y_bottom:
+                break
             pdf.drawString(right_x, y_right, ln)
             y_right -= line_step
 
