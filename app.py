@@ -2480,6 +2480,52 @@ def create_app():
 
         return render_template("customer_form.html", mode="edit", c=c)
 
+    @app.post("/customers/<int:customer_id>/delete")
+    @login_required
+    @subscription_required
+    def customer_delete(customer_id: int):
+        uid = _current_user_id_int()
+        pdf_paths = []
+        deleted_docs = 0
+
+        with db_session() as s:
+            c = _customer_owned_or_404(s, customer_id)
+
+            docs = (
+                s.query(Invoice)
+                .filter(Invoice.user_id == uid)
+                .filter(Invoice.customer_id == c.id)
+                .all()
+            )
+            deleted_docs = len(docs)
+
+            for inv in docs:
+                if inv.pdf_path:
+                    pdf_paths.append(inv.pdf_path)
+                s.delete(inv)
+
+            # Also remove calendar items attached to this customer.
+            s.query(ScheduleEvent).filter(
+                ScheduleEvent.user_id == uid,
+                ScheduleEvent.customer_id == c.id,
+            ).delete(synchronize_session=False)
+
+            s.delete(c)
+            s.commit()
+
+        for p in pdf_paths:
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+
+        flash(
+            f"Customer deleted. Removed {deleted_docs} associated invoice/estimate record(s).",
+            "success",
+        )
+        return redirect(url_for("customers_list"))
+
     # -----------------------------
     # NEW: Discontinue recurring schedule for a customer (button)
     # -----------------------------
