@@ -184,11 +184,44 @@
       gap: 0.5rem;
       flex-wrap: wrap;
     }
+    .mobile-actions-toggle {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      border: 1px solid rgba(15, 23, 42, 0.25);
+      background: rgba(15, 23, 42, 0.05);
+      color: #1f2937;
+      font-size: 1.15rem;
+      line-height: 1;
+    }
 
     @media (max-width: 768px) {
       .page-header {
-        flex-direction: column;
+        flex-direction: row;
+        justify-content: space-between;
         align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .page-header > div:first-child {
+        flex: 1;
+        min-width: 0;
+      }
+      .mobile-actions-toggle {
+        display: inline-flex;
+        flex: 0 0 auto;
+      }
+      .page-header.mobile-actions-open .action-group {
+        display: flex;
+      }
+      .page-header .action-group {
+        display: none;
+        align-items: flex-start;
+        border-top: 1px solid var(--app-line);
+        margin-top: 0.65rem;
+        padding-top: 0.65rem;
       }
       .page-header .subtitle {
         margin-top: 0.25rem;
@@ -338,6 +371,36 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  (function () {
+    const isMobile = window.matchMedia("(max-width: 768px)").matches;
+    if (!isMobile) return;
+
+    document.querySelectorAll(".page-header").forEach((header) => {
+      const actions = header.querySelector(".action-group");
+      if (!actions || !actions.children.length) return;
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "mobile-actions-toggle";
+      toggle.setAttribute("aria-label", "Toggle page actions");
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.textContent = "☰";
+
+      toggle.addEventListener("click", () => {
+        const open = header.classList.toggle("mobile-actions-open");
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+
+      const firstBlock = header.querySelector("div");
+      if (firstBlock && firstBlock.nextSibling) {
+        header.insertBefore(toggle, firstBlock.nextSibling);
+      } else {
+        header.appendChild(toggle);
+      }
+    });
+  })();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
