@@ -904,7 +904,12 @@ def _migrate_user_logo(engine):
             conn.execute(text("ALTER TABLE users ADD COLUMN logo_path VARCHAR(300)"))
     if not _column_exists(engine, "users", "logo_blob"):
         with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN logo_blob BLOB"))
+            try:
+                # Postgres
+                conn.execute(text("ALTER TABLE users ADD COLUMN logo_blob BYTEA"))
+            except Exception:
+                # SQLite fallback
+                conn.execute(text("ALTER TABLE users ADD COLUMN logo_blob BLOB"))
     if not _column_exists(engine, "users", "logo_blob_mime"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE users ADD COLUMN logo_blob_mime VARCHAR(50)"))
