@@ -16,7 +16,7 @@
 {% set total = inv.invoice_total() %}
 {% set tmpl_key = inv.invoice_template or "auto_repair" %}
 
-<div class="d-flex justify-content-between align-items-end mb-3">
+<div class="page-header">
   <div>
     <h1 class="h3 fw-bold mb-1">
       Estimate <span class="mono">{{ doc_number }}</span>
@@ -38,7 +38,7 @@
     </div>
   </div>
 
-  <div class="d-flex gap-2">
+  <div class="action-group">
     <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
     {% if customer %}
       <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=customer.id) }}">Back to Customer</a>

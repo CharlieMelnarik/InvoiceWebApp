@@ -30,7 +30,7 @@
   {% endif %}
 {% endif %}
 
-<div class="d-flex justify-content-between align-items-end mb-3">
+<div class="page-header">
   <div>
     <h1 class="h3 fw-bold mb-1">
       {% if doc_type == "estimate" %}
@@ -39,7 +39,7 @@
         {% if mode == "new" %}New Invoice{% else %}Edit Invoice{% endif %}
       {% endif %}
     </h1>
-    <div class="small-muted">
+    <div class="subtitle">
       {% if mode == "new" %}
         Creates a new {{ "estimate" if doc_type == "estimate" else "invoice" }} number automatically.
       {% else %}
@@ -47,7 +47,7 @@
       {% endif %}
     </div>
   </div>
-  <div class="d-flex gap-2">
+  <div class="action-group">
     <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
     <a class="btn btn-outline-secondary"
        href="{{ url_for('estimates') if doc_type == 'estimate' else url_for('invoices') }}">
@@ -178,7 +178,7 @@
     <!-- Parts / Materials -->
     <div class="d-flex justify-content-between align-items-center mb-2">
       <h2 class="h5 fw-bold mb-0">{{ parts_title }}</h2>
-      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addPartRow()">
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addPartRow()">
         Add Item
       </button>
     </div>
@@ -222,7 +222,7 @@
     {% if tmpl_key != "flipping_items" %}
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h2 class="h5 fw-bold mb-0">{{ labor_title }}</h2>
-        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLaborRow()">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addLaborRow()">
           Add Item
         </button>
       </div>

@@ -1864,7 +1864,9 @@ def create_app():
     # -----------------------------
     @app.route("/")
     def index():
-        return redirect(url_for("customers_list" if current_user.is_authenticated else "login"))
+        if current_user.is_authenticated:
+            return redirect(url_for("customers_list"))
+        return render_template("landing.html", title="InvoiceRunner")
 
     # -----------------------------
     # Scheduler

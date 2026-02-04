@@ -3,19 +3,19 @@
 
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-end mb-3">
+<div class="page-header">
   <div>
     <h1 class="h3 fw-bold mb-1">Customers</h1>
-    <div class="small-muted">Select a customer to view invoices.</div>
+    <div class="subtitle">Select a customer to view invoices.</div>
   </div>
-  <div class="d-flex gap-2">
+  <div class="action-group">
     <a class="btn btn-primary" href="{{ url_for('customer_new') }}">New Customer</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('invoice_new') }}">New Invoice</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('estimate_new') }}">New Estimate</a>
   </div>
 </div>
 
-<form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('customers_list') }}">
+<form class="row g-2 align-items-end form-panel" method="get" action="{{ url_for('customers_list') }}">
   <div class="col-12 col-md-8">
     <label class="form-label">Search</label>
     <input class="form-control" name="q" value="{{ q or '' }}" placeholder="Search name, email, or phone…">
