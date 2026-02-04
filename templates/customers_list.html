@@ -49,7 +49,7 @@
                   </a>
                 </td>
                 <td class="mono">{{ c.email or "" }}</td>
-                <td class="mono">{{ c.phone or "" }}</td>
+                <td class="mono">{{ format_phone(c.phone) }}</td>
                 <td>
                   {% if c.address_line1 %}
                     {{ c.address_line1 }}

@@ -87,7 +87,7 @@
           </div>
           <div class="col-12 col-md-6">
             <div class="small-muted">Phone</div>
-            <div class="mono">{{ inv.customer_phone or (customer.phone if customer else "") }}</div>
+            <div class="mono">{{ format_phone(inv.customer_phone or (customer.phone if customer else "")) }}</div>
           </div>
         </div>
 

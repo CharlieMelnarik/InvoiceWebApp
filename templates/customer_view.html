@@ -8,7 +8,7 @@
     <h1 class="h3 fw-bold mb-1">{{ c.name }}</h1>
     <div class="subtitle">
       {% if c.email %}<span class="mono">{{ c.email }}</span>{% endif %}
-      {% if c.phone %}{% if c.email %} · {% endif %}<span class="mono">{{ c.phone }}</span>{% endif %}
+      {% if c.phone %}{% if c.email %} · {% endif %}<span class="mono">{{ format_phone(c.phone) }}</span>{% endif %}
       {% if c.address_line1 %}
         <div class="mt-1">{{ c.address_line1 }}</div>
         {% if c.address_line2 %}<div>{{ c.address_line2 }}</div>{% endif %}

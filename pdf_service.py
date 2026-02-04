@@ -27,6 +27,18 @@ def _safe_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", (name or "")).strip() or "Invoice"
 
 
+def _format_phone(phone: str | None) -> str:
+    raw = (phone or "").strip()
+    if not raw:
+        return ""
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 10:
+        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+1 ({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
+    return re.sub(r"\)\s+", ") ", raw)
+
+
 def _wrap_text(text, font, size, max_width):
     words = str(text).split()
     lines = []
@@ -130,6 +142,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     customer_phone = (getattr(inv, "customer_phone", None) or "").strip() or (
         (getattr(customer, "phone", None) or "").strip() if customer else ""
     )
+    customer_phone = _format_phone(customer_phone)
     customer_address = ((getattr(customer, "address", None) or "").strip() if customer else "")
 
     # -----------------------------

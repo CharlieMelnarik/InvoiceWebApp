@@ -115,7 +115,7 @@
       <div class="col-12 col-md-6">
         <label class="form-label">Customer Phone (override)</label>
         <input class="form-control" id="customer_phone" name="customer_phone"
-               value="{% if mode=='edit' %}{{ inv.customer_phone or '' }}{% else %}{{ (form.customer_phone if form else '') }}{% endif %}"
+               value="{% if mode=='edit' %}{{ format_phone(inv.customer_phone) }}{% else %}{{ (form.customer_phone if form else '') }}{% endif %}"
                placeholder="(406) 555-1234">
         <div class="small-muted mt-1">If blank, we’ll use the customer profile phone automatically.</div>
       </div>
@@ -339,6 +339,18 @@
     const dl = document.getElementById("customers_datalist");
     const emailInput = document.getElementById("customer_email");
     const phoneInput = document.getElementById("customer_phone");
+    const formatPhone = (value) => {
+      const digits = (value || "").replace(/\D/g, "").slice(0, 10);
+      if (!digits) return "";
+      let formatted = `(${digits.slice(0, Math.min(3, digits.length))}`;
+      if (digits.length >= 4) {
+        formatted += `) ${digits.slice(3, Math.min(6, digits.length))}`;
+      }
+      if (digits.length >= 7) {
+        formatted += `-${digits.slice(6, 10)}`;
+      }
+      return formatted;
+    };
 
     const nameToId = {};
     if (dl) {
@@ -368,7 +380,7 @@
         emailInput.value = (c.email || "").trim();
       }
       if (phoneInput && !(phoneInput.value || "").trim()) {
-        phoneInput.value = (c.phone || "").trim();
+        phoneInput.value = formatPhone((c.phone || "").trim());
       }
     }
 
@@ -390,6 +402,12 @@
       nameInput.addEventListener("input", syncCustomerId);
       nameInput.addEventListener("change", syncCustomerId);
       nameInput.addEventListener("blur", syncCustomerId);
+    }
+    if (phoneInput) {
+      phoneInput.value = formatPhone(phoneInput.value);
+      phoneInput.addEventListener("input", () => {
+        phoneInput.value = formatPhone(phoneInput.value);
+      });
     }
 
     const form = document.getElementById("invoiceForm");

@@ -142,6 +142,18 @@ def _looks_like_email(email: str) -> bool:
     return bool(e) and ("@" in e) and ("." in e.split("@")[-1])
 
 
+def _format_phone_display(phone: str | None) -> str:
+    raw = (phone or "").strip()
+    if not raw:
+        return ""
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 10:
+        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+1 ({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
+    return re.sub(r"\)\s+", ") ", raw)
+
+
 def _parse_summary_time(value: str) -> str | None:
     raw = (value or "").strip()
     if not raw:
@@ -1025,7 +1037,7 @@ def create_app():
     @app.context_processor
     def inject_billing():
         if not current_user.is_authenticated:
-            return {}
+            return {"format_phone": _format_phone_display}
 
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
@@ -1037,6 +1049,7 @@ def create_app():
             "billing_status": status or None,
             "is_subscribed": is_sub,
             "trial_used": trial_used,
+            "format_phone": _format_phone_display,
         }
 
     @login_manager.user_loader
@@ -3280,8 +3293,8 @@ def create_app():
             for p in inv.parts:
                 new_inv.parts.append(InvoicePart(part_name=p.part_name, part_price=p.part_price))
 
-                for li in inv.labor_items:
-                    new_inv.labor_items.append(InvoiceLabor(labor_desc=li.labor_desc, labor_time_hours=li.labor_time_hours))
+            for li in inv.labor_items:
+                new_inv.labor_items.append(InvoiceLabor(labor_desc=li.labor_desc, labor_time_hours=li.labor_time_hours))
 
             s.add(new_inv)
             s.commit()
