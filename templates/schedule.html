@@ -304,6 +304,8 @@
   //   /schedule?customer_id=123&date=2026-01-20
   const URLP = new URLSearchParams(window.location.search);
   const PRESELECT_CUSTOMER_ID = (URLP.get("customer_id") || "").trim();
+  const PRESELECT_CUSTOMER_NAME = (URLP.get("customer_name") || "").trim();
+  const PRESELECT_OPEN_NEW = (URLP.get("open_new") || "").trim();
   const PRESELECT_DATE = (URLP.get("date") || "").trim(); // YYYY-MM-DD
 
   function pad2(n){ return String(n).padStart(2,"0"); }
@@ -792,10 +794,12 @@
 
   function _applyPreselectedCustomerIfAny(){
     // If we have a customer_id in the URL, set it so saves link correctly.
-    // NOTE: To also auto-fill the name, you'd pass pre_customer_name from app.py,
-    // or add a /api/customers/<id> endpoint. This keeps it safe without needing new routes.
+    // If customer_name is provided, prefill the search box for convenience.
     if (PRESELECT_CUSTOMER_ID && /^\d+$/.test(PRESELECT_CUSTOMER_ID) && !blockToggle.checked){
       document.getElementById("customerId").value = PRESELECT_CUSTOMER_ID;
+      if (PRESELECT_CUSTOMER_NAME){
+        document.getElementById("custSearch").value = PRESELECT_CUSTOMER_NAME;
+      }
       loadCustomerDocuments(PRESELECT_CUSTOMER_ID);
       // If user starts typing and selects someone else, this will be replaced.
     }
@@ -1219,6 +1223,12 @@
       document.getElementById("btnMonth").className = "btn btn-outline-dark btn-sm";
     }
     await refresh();
+    if (PRESELECT_OPEN_NEW === "1" || PRESELECT_OPEN_NEW.toLowerCase() === "true"){
+      const start = getDefaultStartForView();
+      const end = new Date(start);
+      end.setMinutes(end.getMinutes() + 60);
+      openModalForCreate(start, end);
+    }
   })();
 </script>
 {% endblock %}

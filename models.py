@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 from sqlalchemy import (
@@ -301,32 +302,52 @@ class Invoice(Base):
         order_by="InvoiceLabor.id",
     )
 
+    @staticmethod
+    def _money(value: float | int | str | Decimal) -> Decimal:
+        return Decimal(str(value or 0.0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    @staticmethod
+    def _dec(value: float | int | str | Decimal) -> Decimal:
+        return Decimal(str(value or 0.0))
+
     def parts_total_raw(self) -> float:
-        return round(sum((p.part_price or 0.0) for p in self.parts), 2)
+        total = sum(self._dec(p.part_price) for p in self.parts)
+        return float(self._money(total))
 
     def parts_markup_amount(self) -> float:
         markup_percent = self.parts_markup_percent or 0.0
         if not markup_percent:
             return 0.0
-        return round(self.parts_total_raw() * (markup_percent / 100.0), 2)
+        total_with_markup = self.parts_total()
+        return float(self._money(self._dec(total_with_markup) - self._dec(self.parts_total_raw())))
 
     def parts_total(self) -> float:
-        return round(self.parts_total_raw() + self.parts_markup_amount(), 2)
+        markup_percent = self.parts_markup_percent or 0.0
+        if not markup_percent:
+            return self.parts_total_raw()
+        multiplier = self._dec(1) + (self._dec(markup_percent) / self._dec(100))
+        line_totals = [self._money(self._dec(p.part_price) * multiplier) for p in self.parts]
+        total = sum(line_totals, self._dec(0))
+        return float(self._money(total))
 
     def part_price_with_markup(self, price: float) -> float:
         markup_percent = self.parts_markup_percent or 0.0
         if not markup_percent:
-            return round(price or 0.0, 2)
-        return round((price or 0.0) * (1 + markup_percent / 100.0), 2)
+            return float(self._money(price))
+        multiplier = self._dec(1) + (self._dec(markup_percent) / self._dec(100))
+        return float(self._money(self._dec(price) * multiplier))
 
     def labor_total(self) -> float:
-        return round((self.hours or 0.0) * (self.price_per_hour or 0.0), 2)
+        total = self._dec(self.hours) * self._dec(self.price_per_hour)
+        return float(self._money(total))
 
     def invoice_total(self) -> float:
-        return round(self.parts_total() + self.labor_total() + (self.shop_supplies or 0.0), 2)
+        total = self._dec(self.parts_total()) + self._dec(self.labor_total()) + self._dec(self.shop_supplies)
+        return float(self._money(total))
 
     def amount_due(self) -> float:
-        return round(self.invoice_total() - (self.paid or 0.0), 2)
+        total = self._dec(self.invoice_total()) - self._dec(self.paid)
+        return float(self._money(total))
 
 
 class InvoicePart(Base):
