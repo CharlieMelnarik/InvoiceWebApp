@@ -9,9 +9,24 @@
   .month-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:8px; }
   .dow { font-weight:600; color:#6c757d; font-size:.85rem; padding:4px 6px; }
   .day-cell { border:1px solid #e6e8ec; border-radius:10px; padding:8px; height:130px; cursor:pointer; background:#fff; overflow:hidden; }
+  .day-head { display:flex; align-items:center; justify-content:space-between; }
   .day-cell.muted { background:#fafbfc; color:#9aa0a6; }
   .day-cell.today { background:#f1f3f5; border-color:#d7dbe0; }
   .day-num { font-weight:700; font-size:.9rem; }
+  .day-indicator {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:18px;
+    height:18px;
+    border-radius:999px;
+    padding:0 5px;
+    font-size:.68rem;
+    font-weight:700;
+    color:#1d4ed8;
+    background:rgba(37, 99, 235, 0.14);
+    border:1px solid rgba(37, 99, 235, 0.25);
+  }
   .evt-pill {
     display:inline-flex;
     align-items:center;
@@ -522,8 +537,12 @@
         .filter(e => e.start.slice(0,10) <= iso && e.end.slice(0,10) >= iso)
         .slice(0,3);
 
+      const startsCount = state.events.filter(e => e.start.slice(0,10) === iso).length;
       html += `<div class="day-cell ${inMonth ? "" : "muted"}${isToday ? " today" : ""}" data-day="${iso}">
-        <div class="day-num">${d.getDate()}</div>`;
+        <div class="day-head">
+          <div class="day-num">${d.getDate()}</div>
+          ${startsCount > 0 ? `<span class="day-indicator">${startsCount}</span>` : ""}
+        </div>`;
 
       evts.forEach(e => {
         const isBlock = e.event_type === "block";
@@ -541,7 +560,6 @@
         `;
       });
 
-      const startsCount = state.events.filter(e => e.start.slice(0,10) === iso).length;
       if (startsCount > 3){
         html += `<div class="small-muted mt-1">+ more</div>`;
       }
