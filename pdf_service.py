@@ -251,6 +251,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     generated_dt = datetime.now()
     generated_str = generated_dt.strftime("%B %d, %Y")
 
+    display_no = inv.display_number or inv.invoice_number
+
     # Year from invoice_number prefix (YYYY######)
     year = (inv.invoice_number or "")[:4]
     if not (len(year) == 4 and year.isdigit()):
@@ -265,7 +267,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
     doc_label = "ESTIMATE" if is_estimate else "INVOICE"
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
-    pdf.setTitle(f"{doc_label.title()} - {inv.invoice_number}")
+    pdf.setTitle(f"{doc_label.title()} - {display_no}")
 
     # -----------------------------
     # Helpers bound to this canvas
@@ -293,7 +295,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         pdf.setFont("Helvetica-Bold", 14)
         pdf.drawString(M, PAGE_H - M, f"{doc_label} (cont.)")
         pdf.setFont("Helvetica", 10)
-        pdf.drawString(M, PAGE_H - M - 16, f"{inv.invoice_number}  •  Generated: {generated_str}")
+        pdf.drawString(M, PAGE_H - M - 16, f"{display_no}  •  Generated: {generated_str}")
 
     # -----------------------------
     # Header (white, low-ink)
@@ -358,7 +360,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # Meta (right)
     meta_x = PAGE_W - M
     meta_y = PAGE_H - 0.78 * inch
-    right_text(meta_x, meta_y, f"{doc_label.title()} #: {inv.invoice_number}", "Helvetica", 10)
+    right_text(meta_x, meta_y, f"{doc_label.title()} #: {display_no}", "Helvetica", 10)
     right_text(meta_x, meta_y - 14, f"{doc_label.title()} Date: {generated_str}", "Helvetica", 10)
     right_text(meta_x, meta_y - 28, f"Date In: {inv.date_in}", "Helvetica", 10)
 

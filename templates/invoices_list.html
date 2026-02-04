@@ -63,7 +63,7 @@
               <tr>
                 <td class="mono fw-semibold">
                   <a href="{{ url_for('invoice_view', invoice_id=inv.id) }}" class="text-decoration-none">
-                    {{ inv.invoice_number }}
+                    {{ inv.display_number or inv.invoice_number }}
                   </a>
                   {% if fully_paid %}
                     <span class="badge text-bg-success ms-2">Paid</span>
@@ -109,5 +109,4 @@
 </div>
 
 {% endblock %}
-
 

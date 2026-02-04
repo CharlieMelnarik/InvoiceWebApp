@@ -14,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     select,
     Boolean,
+    or_,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -238,6 +239,27 @@ class InvoiceSequence(Base):
 
 
 # -----------------------------
+# Invoice display sequence (per user + type)
+# -----------------------------
+class InvoiceDisplaySequence(Base):
+    __tablename__ = "invoice_display_sequences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "year", "doc_type", name="uq_invoice_display_seq_user_year_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    doc_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    last_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+# -----------------------------
 # Invoices
 # -----------------------------
 class Invoice(Base):
@@ -258,6 +280,7 @@ class Invoice(Base):
     )
 
     invoice_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
+    display_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
 
     invoice_template: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
@@ -411,6 +434,55 @@ def next_invoice_number(session, year: int, seq_width: int = 6) -> str:
 
     if seq_row is None:
         seq_row = InvoiceSequence(year=year, last_seq=0)
+        session.add(seq_row)
+        session.flush()
+
+    seq_row.last_seq += 1
+    session.flush()
+
+    return f"{year}{seq_row.last_seq:0{seq_width}d}"
+
+
+def next_display_number(
+    session,
+    user_id: int,
+    year: int,
+    doc_type: str,
+    seq_width: int = 6,
+) -> str:
+    seq_row = session.execute(
+        select(InvoiceDisplaySequence).where(
+            InvoiceDisplaySequence.user_id == user_id,
+            InvoiceDisplaySequence.year == year,
+            InvoiceDisplaySequence.doc_type == doc_type,
+        )
+    ).scalar_one_or_none()
+
+    if seq_row is None:
+        year_prefix = str(year)
+        is_estimate = (doc_type == "estimate")
+        inv_rows = session.execute(
+            select(Invoice.display_number, Invoice.invoice_number).where(
+                Invoice.user_id == user_id,
+                (Invoice.is_estimate.is_(True) if is_estimate else or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None))),
+            )
+        ).all()
+
+        max_seq = 0
+        for display_no, inv_no in inv_rows:
+            candidate = display_no or inv_no or ""
+            if not candidate.startswith(year_prefix):
+                continue
+            suffix = candidate[len(year_prefix):]
+            if suffix.isdigit():
+                max_seq = max(max_seq, int(suffix))
+
+        seq_row = InvoiceDisplaySequence(
+            user_id=user_id,
+            year=year,
+            doc_type=doc_type,
+            last_seq=max_seq,
+        )
         session.add(seq_row)
         session.flush()
 

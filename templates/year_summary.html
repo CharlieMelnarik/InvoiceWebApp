@@ -106,7 +106,7 @@
           <tbody>
             {% for u in unpaid %}
               <tr>
-                <td class="mono fw-semibold">{{ u.invoice_number }}</td>
+                <td class="mono fw-semibold">{{ u.display_number or u.invoice_number }}</td>
                 <td>{{ u.name }}</td>
                 <td>{{ u.vehicle }}</td>
                 <td>{{ u.date_in }}</td>

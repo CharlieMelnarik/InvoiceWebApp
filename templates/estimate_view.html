@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% set title = "Estimate " ~ inv.invoice_number %}
+{% set doc_number = inv.display_number or inv.invoice_number %}
+{% set title = "Estimate " ~ doc_number %}
 
 {% block content %}
 
@@ -18,7 +19,7 @@
 <div class="d-flex justify-content-between align-items-end mb-3">
   <div>
     <h1 class="h3 fw-bold mb-1">
-      Estimate <span class="mono">{{ inv.invoice_number }}</span>
+      Estimate <span class="mono">{{ doc_number }}</span>
       {% if inv.converted_to_invoice %}
         <span class="badge text-bg-info ms-2">Converted to Invoice</span>
       {% endif %}

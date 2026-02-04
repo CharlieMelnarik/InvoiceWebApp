@@ -43,7 +43,7 @@
       {% if mode == "new" %}
         Creates a new {{ "estimate" if doc_type == "estimate" else "invoice" }} number automatically.
       {% else %}
-        Editing {{ "estimate" if doc_type == "estimate" else "invoice" }} <span class="mono">{{ inv.invoice_number }}</span>
+        Editing {{ "estimate" if doc_type == "estimate" else "invoice" }} <span class="mono">{{ inv.display_number or inv.invoice_number }}</span>
       {% endif %}
     </div>
   </div>

@@ -30,7 +30,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from config import Config
 from models import (
     Base, make_engine, make_session_factory,
-    User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number,
+    User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
     ScheduleEvent,
 )
 from pdf_service import generate_and_store_pdf
@@ -722,6 +722,43 @@ def _migrate_invoice_parts_markup_percent(engine):
             pass
 
 
+def _migrate_invoice_display_number(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "display_number"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN display_number VARCHAR(32)"))
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE invoices SET display_number = invoice_number WHERE display_number IS NULL"))
+        except Exception:
+            pass
+
+
+def _migrate_invoice_display_sequences(engine):
+    if _table_exists(engine, "invoice_display_sequences"):
+        return
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS invoice_display_sequences (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    year INTEGER NOT NULL,
+                    doc_type VARCHAR(20) NOT NULL,
+                    last_seq INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_display_seq_user_year_type
+                ON invoice_display_sequences (user_id, year, doc_type)
+            """))
+    except Exception:
+        pass
+
+
 def _migrate_user_billing_fields(engine):
     if not _table_exists(engine, "users"):
         return
@@ -965,6 +1002,8 @@ def create_app():
     _migrate_invoice_template(engine)
     _migrate_invoice_is_estimate(engine)
     _migrate_invoice_parts_markup_percent(engine)
+    _migrate_invoice_display_number(engine)
+    _migrate_invoice_display_sequences(engine)
     _migrate_user_billing_fields(engine)
     _migrate_user_security_fields(engine)
     _migrate_customers(engine)
@@ -1878,7 +1917,7 @@ def create_app():
             return jsonify([
                 {
                     "id": inv.id,
-                    "invoice_number": inv.invoice_number,
+                    "invoice_number": (inv.display_number or inv.invoice_number),
                     "is_estimate": bool(inv.is_estimate),
                     "date_in": inv.date_in,
                     "vehicle": inv.vehicle,
@@ -1963,7 +2002,7 @@ def create_app():
                     "customer_id": e.customer_id,
                     "customer_name": customer_name,
                     "invoice_id": inv.id if inv else None,
-                    "invoice_number": inv.invoice_number if inv else "",
+                    "invoice_number": (inv.display_number or inv.invoice_number) if inv else "",
                     "invoice_is_estimate": bool(inv.is_estimate) if inv else False,
                     "invoice_url": (
                         url_for("estimate_view", estimate_id=inv.id)
@@ -2551,7 +2590,7 @@ def create_app():
             )
 
             if year.isdigit() and len(year) == 4:
-                inv_q = inv_q.filter(Invoice.invoice_number.startswith(year))
+                inv_q = inv_q.filter(Invoice.display_number.startswith(year))
 
             invoices_list = inv_q.all()
 
@@ -2565,7 +2604,7 @@ def create_app():
             )
 
             if year.isdigit() and len(year) == 4:
-                estimates_q = estimates_q.filter(Invoice.invoice_number.startswith(year))
+                estimates_q = estimates_q.filter(Invoice.display_number.startswith(year))
 
             estimates_list = estimates_q.all()
 
@@ -2635,7 +2674,7 @@ def create_app():
                 )
 
             if year.isdigit() and len(year) == 4:
-                estimates_q = estimates_q.filter(Invoice.invoice_number.startswith(year))
+                estimates_q = estimates_q.filter(Invoice.display_number.startswith(year))
 
             estimates_list = estimates_q.all()
 
@@ -2679,7 +2718,7 @@ def create_app():
                 )
 
             if year.isdigit() and len(year) == 4:
-                invoices_q = invoices_q.filter(Invoice.invoice_number.startswith(year))
+                invoices_q = invoices_q.filter(Invoice.display_number.startswith(year))
 
             invoices_list = invoices_q.all()
 
@@ -2780,6 +2819,7 @@ def create_app():
 
                 year = int(datetime.now().strftime("%Y"))
                 inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+                display_no = next_display_number(s, uid, year, "estimate", Config.INVOICE_SEQ_WIDTH)
 
                 cust_email_override = (request.form.get("customer_email") or "").strip() or None
                 cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
@@ -2806,6 +2846,7 @@ def create_app():
                     customer_id=c.id,
 
                     invoice_number=inv_no,
+                    display_number=display_no,
                     invoice_template=user_template_key,
                     is_estimate=True,
 
@@ -2929,6 +2970,7 @@ def create_app():
 
                 year = int(datetime.now().strftime("%Y"))
                 inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+                display_no = next_display_number(s, uid, year, "invoice", Config.INVOICE_SEQ_WIDTH)
 
                 cust_email_override = (request.form.get("customer_email") or "").strip() or None
                 cust_phone_override = (request.form.get("customer_phone") or "").strip() or None
@@ -2959,6 +3001,7 @@ def create_app():
                     customer_id=c.id,
 
                     invoice_number=inv_no,
+                    display_number=display_no,
                     invoice_template=user_template_key,
 
                     customer_email=(cust_email_override or (c.email or None)),
@@ -3153,11 +3196,13 @@ def create_app():
 
             year = int(datetime.now().strftime("%Y"))
             new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+            display_no = next_display_number(s, uid, year, "invoice", Config.INVOICE_SEQ_WIDTH)
 
             new_inv = Invoice(
                 user_id=uid,
                 customer_id=inv.customer_id,
                 invoice_number=new_no,
+                display_number=display_no,
                 invoice_template=inv.invoice_template,
                 is_estimate=False,
                 converted_from_estimate=True,
@@ -3193,7 +3238,7 @@ def create_app():
             s.add(new_inv)
             s.commit()
 
-            flash(f"Estimate converted to invoice {new_no}.", "success")
+            flash(f"Estimate converted to invoice {display_no}.", "success")
             return redirect(url_for("invoice_edit", invoice_id=new_inv.id))
 
     @app.route("/invoices/<int:invoice_id>/convert", methods=["POST"])
@@ -3206,11 +3251,13 @@ def create_app():
 
             year = int(datetime.now().strftime("%Y"))
             new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+            display_no = next_display_number(s, uid, year, "estimate", Config.INVOICE_SEQ_WIDTH)
 
             new_inv = Invoice(
                 user_id=uid,
                 customer_id=inv.customer_id,
                 invoice_number=new_no,
+                display_number=display_no,
                 invoice_template=inv.invoice_template,
                 is_estimate=True,
 
@@ -3243,7 +3290,7 @@ def create_app():
             s.add(new_inv)
             s.commit()
 
-            flash(f"Invoice converted to estimate {new_no}.", "success")
+            flash(f"Invoice converted to estimate {display_no}.", "success")
             return redirect(url_for("estimate_edit", estimate_id=new_inv.id))
 
     # -----------------------------
@@ -3295,11 +3342,13 @@ def create_app():
 
             year = int(datetime.now().strftime("%Y"))
             new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
+            display_no = next_display_number(s, uid, year, "invoice", Config.INVOICE_SEQ_WIDTH)
 
             new_inv = Invoice(
                 user_id=uid,
                 customer_id=inv.customer_id,
                 invoice_number=new_no,
+                display_number=display_no,
                 invoice_template=inv.invoice_template,
 
                 name=inv.name,
@@ -3331,7 +3380,7 @@ def create_app():
             s.add(new_inv)
             s.commit()
 
-            flash(f"Duplicated invoice as {new_no}.", "success")
+            flash(f"Duplicated invoice as {display_no}.", "success")
             return redirect(url_for("invoice_edit", invoice_id=new_inv.id))
 
     # -----------------------------
@@ -3555,7 +3604,7 @@ def create_app():
 
                     unpaid.append({
                         "id": inv.id,
-                        "invoice_number": inv.invoice_number,
+                        "invoice_number": (inv.display_number or inv.invoice_number),
                         "name": inv.name,
                         "vehicle": inv.vehicle,
                         "date_in": inv.date_in,
@@ -3668,10 +3717,11 @@ def create_app():
                 generate_and_store_pdf(s, estimate_id)
                 inv = _estimate_owned_or_404(s, estimate_id)
 
-            subject = f"Estimate {inv.invoice_number}"
+            display_no = inv.display_number or inv.invoice_number
+            subject = f"Estimate {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
-                f"Attached is your estimate {inv.invoice_number}.\n"
+                f"Attached is your estimate {display_no}.\n"
                 f"Details: {inv.vehicle}\n"
                 f"Total: ${inv.invoice_total():,.2f}\n\n"
                 "Thank you."
@@ -3685,7 +3735,7 @@ def create_app():
                     pdf_path=inv.pdf_path,
                 )
             except Exception as e:
-                print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={inv.invoice_number}: {repr(e)}", flush=True)
+                print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={display_no}: {repr(e)}", flush=True)
                 flash("Could not send email (SMTP / sender config issue). Check Render logs.", "error")
                 return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
@@ -3737,10 +3787,11 @@ def create_app():
                 generate_and_store_pdf(s, invoice_id)
                 inv = _invoice_owned_or_404(s, invoice_id)
 
-            subject = f"Invoice {inv.invoice_number}"
+            display_no = inv.display_number or inv.invoice_number
+            subject = f"Invoice {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
-                f"Attached is your invoice {inv.invoice_number}.\n"
+                f"Attached is your invoice {display_no}.\n"
                 f"Details: {inv.vehicle}\n"
                 f"Total: ${inv.invoice_total():,.2f}\n\n"
                 "Thank you."
@@ -3754,7 +3805,7 @@ def create_app():
                     pdf_path=inv.pdf_path,
                 )
             except Exception as e:
-                print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={inv.invoice_number}: {repr(e)}", flush=True)
+                print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={display_no}: {repr(e)}", flush=True)
                 flash("Could not send email (SMTP / sender config issue). Check Render logs.", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
@@ -3776,7 +3827,7 @@ def create_app():
                 .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
             )
             if year.isdigit() and len(year) == 4:
-                q = q.filter(Invoice.invoice_number.startswith(year))
+                q = q.filter(Invoice.display_number.startswith(year))
             invoices = q.all()
 
         mem = io.BytesIO()
