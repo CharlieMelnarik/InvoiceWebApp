@@ -3734,15 +3734,17 @@ def create_app():
     @subscription_required
     def estimate_pdf_download(estimate_id):
         with db_session() as s:
-            inv = _estimate_owned_or_404(s, estimate_id)
-            if not inv.pdf_path or not os.path.exists(inv.pdf_path):
-                flash("PDF not found. Generate it first.", "error")
+            _estimate_owned_or_404(s, estimate_id)
+            try:
+                pdf_path = generate_and_store_pdf(s, estimate_id)
+            except Exception as exc:
+                flash(f"Could not generate estimate PDF: {exc}", "error")
                 return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
             return send_file(
-                inv.pdf_path,
+                pdf_path,
                 as_attachment=True,
-                download_name=os.path.basename(inv.pdf_path),
+                download_name=os.path.basename(pdf_path),
                 mimetype="application/pdf"
             )
 
@@ -3804,15 +3806,17 @@ def create_app():
     @subscription_required
     def invoice_pdf_download(invoice_id):
         with db_session() as s:
-            inv = _invoice_owned_or_404(s, invoice_id)
-            if not inv.pdf_path or not os.path.exists(inv.pdf_path):
-                flash("PDF not found. Generate it first.", "error")
+            _invoice_owned_or_404(s, invoice_id)
+            try:
+                pdf_path = generate_and_store_pdf(s, invoice_id)
+            except Exception as exc:
+                flash(f"Could not generate invoice PDF: {exc}", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
             return send_file(
-                inv.pdf_path,
+                pdf_path,
                 as_attachment=True,
-                download_name=os.path.basename(inv.pdf_path),
+                download_name=os.path.basename(pdf_path),
                 mimetype="application/pdf"
             )
 
