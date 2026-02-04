@@ -102,10 +102,23 @@
   }
 
   @media (max-width: 768px) {
-    .month-scroll { margin: 0 -12px; padding: 0 12px; }
-    .month-grid { min-width: 980px; }
-    .evt-pill { white-space:normal; line-height:1.2; }
-    .day-cell { min-height:90px; }
+    .month-scroll { margin: 0; padding: 0; overflow-x: hidden; }
+    .month-grid { min-width: 0; gap: 4px; }
+    .dow { font-size: .72rem; padding: 2px 1px; text-align: center; }
+    .day-cell { min-height: 72px; height: 72px; padding: 4px; border-radius: 8px; }
+    .day-num { font-size: .78rem; }
+    .evt-full { display: none; }
+    .evt-pill { display: inline-flex; font-size: .66rem; margin-top: 3px; padding: 2px 5px; line-height: 1.15; }
+
+    /* Keep Day view timeline readable on phones (times on the left, not stacked on top). */
+    .day-wrap { flex-direction: row; gap: 8px; }
+    .time-col { width: 54px; display: block; flex-wrap: nowrap; font-size: .72rem; }
+    .time-row { height: 44px; justify-content: flex-end; padding-top: 1px; }
+    .timeline { flex: 1; min-width: 0; }
+    .slot { height: 44px; }
+    .event-block { left: 6px; right: 6px; padding: 6px; }
+    .event-title { font-size: .82rem; }
+    .event-sub { font-size: .72rem; }
   }
 </style>
 
