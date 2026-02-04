@@ -163,10 +163,14 @@
               Recommended: transparent PNG, about 600px wide. It will be scaled down on the invoice.
             </div>
 
-            {% if u.logo_path %}
+            {% if u.logo_path or u.logo_blob %}
               <div class="mt-2">
-                <div class="small-muted">Current logo file:</div>
-                <div class="mono">{{ u.logo_path }}</div>
+                <div class="small-muted">Current logo:</div>
+                {% if u.logo_blob %}
+                  <div class="mono">Stored in database (optimized image).</div>
+                {% else %}
+                  <div class="mono">{{ u.logo_path }}</div>
+                {% endif %}
               </div>
 
               <div class="form-check mt-2">

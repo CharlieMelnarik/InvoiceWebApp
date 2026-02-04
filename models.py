@@ -15,6 +15,7 @@ from sqlalchemy import (
     select,
     Boolean,
     or_,
+    LargeBinary,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -70,6 +71,9 @@ class User(Base):
 
     # Logo for PDF header (relative path under instance/, e.g. "uploads/logos/user_1.png")
     logo_path: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    # Resized logo image stored in DB (preferred over logo_path for persistence across deploys)
+    logo_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    logo_blob_mime: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     schedule_summary_frequency: Mapped[str] = mapped_column(
         String(20),

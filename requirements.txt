@@ -5,6 +5,7 @@ psycopg[binary]
 python-dotenv
 gunicorn
 reportlab
+Pillow
 
 itsdangerous
 

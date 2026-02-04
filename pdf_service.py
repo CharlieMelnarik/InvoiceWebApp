@@ -1,6 +1,7 @@
 # pdf_service.py
 import os
 import re
+import io
 from datetime import datetime
 from pathlib import Path
 
@@ -277,6 +278,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # Owner logo (stored relative to instance/)
     owner_logo_rel = (getattr(owner, "logo_path", None) or "").strip() if owner else ""
     owner_logo_abs = ""
+    owner_logo_blob = (getattr(owner, "logo_blob", None) if owner else None)
     if owner_logo_rel:
         owner_logo_abs = str((Path("instance") / owner_logo_rel).resolve())
 
@@ -352,7 +354,23 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
     # Optional logo on far left
     logo_w = 0
-    if owner_logo_abs and os.path.exists(owner_logo_abs):
+    if owner_logo_blob:
+        try:
+            img = ImageReader(io.BytesIO(owner_logo_blob))
+            iw, ih = img.getSize()
+
+            max_h = 0.4 * inch
+            max_w = 1.05 * inch
+            scale = min(max_w / iw, max_h / ih)
+            logo_w = iw * scale
+            logo_h = ih * scale
+
+            logo_x = M
+            logo_y = PAGE_H - 0.86 * inch - (logo_h / 2)
+            pdf.drawImage(img, logo_x, logo_y, width=logo_w, height=logo_h, mask='auto')
+        except Exception:
+            pass
+    elif owner_logo_abs and os.path.exists(owner_logo_abs):
         try:
             img = ImageReader(owner_logo_abs)
             iw, ih = img.getSize()
@@ -400,8 +418,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     meta_x = PAGE_W - M
     meta_y = PAGE_H - 0.78 * inch
     right_text(meta_x, meta_y, f"{doc_label.title()} #: {display_no}", "Helvetica", 10)
-    right_text(meta_x, meta_y - 14, f"{doc_label.title()} Date: {generated_str}", "Helvetica", 10)
-    right_text(meta_x, meta_y - 28, f"Date In: {inv.date_in}", "Helvetica", 10)
+    right_text(meta_x, meta_y - 14, f"Date: {inv.date_in}", "Helvetica", 10)
 
     # -----------------------------
     # Bill To + Job Details boxes

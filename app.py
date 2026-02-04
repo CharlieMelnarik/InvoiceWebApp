@@ -26,6 +26,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from PIL import Image, UnidentifiedImageError
 
 from config import Config
 from models import (
@@ -37,6 +38,7 @@ from pdf_service import generate_and_store_pdf
 
 login_manager = LoginManager()
 login_manager.login_view = "login"
+_IMG_RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 
 
 # -----------------------------
@@ -87,6 +89,38 @@ def _logo_upload_dir() -> Path:
     d = Path("instance") / "uploads" / "logos"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _process_logo_upload_to_png_bytes(file_storage) -> bytes:
+    """
+    Resize/compress uploaded logo for DB storage.
+    - Keeps dimensions reasonable for PDF header use.
+    - Stores as optimized PNG bytes.
+    """
+    raw = file_storage.read()
+    file_storage.stream.seek(0)
+    if not raw:
+        raise ValueError("Empty logo file.")
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError("Logo file is too large. Please use an image under 8MB.")
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except UnidentifiedImageError:
+        raise ValueError("Logo must be a valid .png, .jpg, or .jpeg image.")
+
+    # Fit into a compact header-friendly box.
+    max_w, max_h = 700, 260
+    img.thumbnail((max_w, max_h), _IMG_RESAMPLE)
+
+    # Normalize to RGBA so transparency works consistently.
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGBA")
+
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True, compress_level=9)
+    return out.getvalue()
 
 
 def _current_user_id_int() -> int:
@@ -868,6 +902,55 @@ def _migrate_user_logo(engine):
     if not _column_exists(engine, "users", "logo_path"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE users ADD COLUMN logo_path VARCHAR(300)"))
+    if not _column_exists(engine, "users", "logo_blob"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN logo_blob BLOB"))
+    if not _column_exists(engine, "users", "logo_blob_mime"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN logo_blob_mime VARCHAR(50)"))
+
+
+def _migrate_user_logo_backfill_blob(engine):
+    """
+    Best-effort backfill of existing file-based logos into DB blob storage.
+    Safe to skip on any error.
+    """
+    if not _table_exists(engine, "users"):
+        return
+    if not _column_exists(engine, "users", "logo_path") or not _column_exists(engine, "users", "logo_blob"):
+        return
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text("""
+                SELECT id, logo_path
+                FROM users
+                WHERE logo_path IS NOT NULL
+                  AND logo_path != ''
+                  AND logo_blob IS NULL
+            """)).fetchall()
+
+            for uid, rel in rows:
+                try:
+                    abs_path = (Path("instance") / str(rel)).resolve()
+                    if not abs_path.exists():
+                        continue
+                    with open(abs_path, "rb") as f:
+                        raw = f.read()
+                    img = Image.open(io.BytesIO(raw))
+                    img.load()
+                    img.thumbnail((700, 260), _IMG_RESAMPLE)
+                    if img.mode not in ("RGB", "RGBA"):
+                        img = img.convert("RGBA")
+                    out = io.BytesIO()
+                    img.save(out, format="PNG", optimize=True, compress_level=9)
+                    conn.execute(
+                        text("UPDATE users SET logo_blob = :blob, logo_blob_mime = 'image/png' WHERE id = :uid"),
+                        {"blob": out.getvalue(), "uid": uid},
+                    )
+                except Exception:
+                    continue
+    except Exception:
+        pass
 
 
 def _migrate_schedule_events(engine):
@@ -1022,6 +1105,7 @@ def create_app():
     _migrate_customers_unique_name_ci(engine)
     _migrate_invoice_customer_id(engine)
     _migrate_user_logo(engine)
+    _migrate_user_logo_backfill_blob(engine)
     _migrate_schedule_events(engine)
     _migrate_schedule_event_auto_fields(engine)   # <-- schedule is_auto/recurring_token
     _migrate_schedule_event_type(engine)
@@ -1556,6 +1640,8 @@ def create_app():
                         except Exception:
                             pass
                     u.logo_path = None
+                    u.logo_blob = None
+                    u.logo_blob_mime = None
 
                 elif logo_file and getattr(logo_file, "filename", ""):
                     filename = secure_filename(logo_file.filename or "")
@@ -1563,6 +1649,12 @@ def create_app():
 
                     if ext not in (".png", ".jpg", ".jpeg"):
                         flash("Logo must be a .png, .jpg, or .jpeg file.", "error")
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+
+                    try:
+                        png_bytes = _process_logo_upload_to_png_bytes(logo_file)
+                    except ValueError as exc:
+                        flash(str(exc), "error")
                         return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
 
                     d = _logo_upload_dir()
@@ -1578,8 +1670,17 @@ def create_app():
                         except Exception:
                             pass
 
-                    logo_file.save(out_path)
-                    u.logo_path = str(Path("uploads") / "logos" / out_name)
+                    # Keep writing a file as a backward-compatible fallback for old flows.
+                    try:
+                        logo_file.stream.seek(0)
+                        logo_file.save(out_path)
+                        u.logo_path = str(Path("uploads") / "logos" / out_name)
+                    except Exception:
+                        u.logo_path = None
+
+                    # Primary persistence: DB-stored compressed PNG.
+                    u.logo_blob = png_bytes
+                    u.logo_blob_mime = "image/png"
 
                 tmpl = (request.form.get("invoice_template") or "").strip()
                 tmpl = _template_key_fallback(tmpl)
