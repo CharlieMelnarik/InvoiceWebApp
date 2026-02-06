@@ -2066,6 +2066,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     total_parts = inv.parts_total()
     total_labor = inv.labor_total()
     total_price = inv.invoice_total()
+    tax_amount = inv.tax_amount()
     price_owed = inv.amount_due()
 
     # ✅ Right-align all $ values to the right edge of the summary box
