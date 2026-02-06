@@ -534,6 +534,38 @@ def _template_config_for(key: str | None) -> dict:
 
 
 # -----------------------------
+# PDF layout templates
+# -----------------------------
+PDF_TEMPLATES = {
+    "classic": {
+        "label": "Classic",
+        "desc": "Clean, low-ink layout with traditional sections.",
+        "preview": "images/pdf_template_classic.svg",
+    },
+    "modern": {
+        "label": "Modern",
+        "desc": "Bold header band, refined table styling, and a polished summary.",
+        "preview": "images/pdf_template_modern.svg",
+    },
+    "split_panel": {
+        "label": "Split Panel",
+        "desc": "Left summary rail with a wide, airy content layout.",
+        "preview": "images/pdf_template_split.svg",
+    },
+    "strip": {
+        "label": "Invoice Strip",
+        "desc": "Header-led layout with a bold total strip and clean rows.",
+        "preview": "images/pdf_template_strip.svg",
+    },
+}
+
+
+def _pdf_template_key_fallback(key: str | None) -> str:
+    key = (key or "").strip()
+    return key if key in PDF_TEMPLATES else "classic"
+
+
+# -----------------------------
 # Password reset token helpers
 # -----------------------------
 def _reset_serializer():
@@ -876,6 +908,71 @@ def _migrate_invoice_template(engine):
     if not _column_exists(engine, "invoices", "invoice_template"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE invoices ADD COLUMN invoice_template VARCHAR(50)"))
+
+
+def _migrate_user_pdf_template(engine):
+    if not _table_exists(engine, "users"):
+        return
+    if not _column_exists(engine, "users", "pdf_template"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN pdf_template VARCHAR(50)"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET pdf_template='classic' WHERE pdf_template IS NULL"))
+
+
+def _migrate_invoice_pdf_template(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "pdf_template"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN pdf_template VARCHAR(50)"))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE invoices "
+                "SET pdf_template = COALESCE("
+                "pdf_template, "
+                "(SELECT pdf_template FROM users WHERE users.id = invoices.user_id), "
+                "'classic'"
+                ") "
+                "WHERE pdf_template IS NULL"
+            ))
+    except Exception:
+        pass
+
+
+def _migrate_user_tax_rate(engine):
+    if not _table_exists(engine, "users"):
+        return
+    if not _column_exists(engine, "users", "tax_rate"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN tax_rate FLOAT"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET tax_rate=0 WHERE tax_rate IS NULL"))
+
+
+def _migrate_invoice_tax_fields(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "tax_rate"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN tax_rate FLOAT"))
+    if not _column_exists(engine, "invoices", "tax_override"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN tax_override FLOAT"))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE invoices "
+                "SET tax_rate = COALESCE("
+                "tax_rate, "
+                "(SELECT tax_rate FROM users WHERE users.id = invoices.user_id), "
+                "0"
+                ") "
+                "WHERE tax_rate IS NULL"
+            ))
+    except Exception:
+        pass
 
 
 def _migrate_invoice_is_estimate(engine):
@@ -1236,6 +1333,10 @@ def create_app():
     _migrate_estimate_converted_flag(engine)
     _migrate_user_invoice_template(engine)
     _migrate_invoice_template(engine)
+    _migrate_user_pdf_template(engine)
+    _migrate_invoice_pdf_template(engine)
+    _migrate_user_tax_rate(engine)
+    _migrate_invoice_tax_fields(engine)
     _migrate_invoice_is_estimate(engine)
     _migrate_invoice_parts_markup_percent(engine)
     _migrate_invoice_display_number(engine)
@@ -1752,7 +1853,7 @@ def create_app():
                 new_email = _normalize_email(request.form.get("email") or "")
                 if not _looks_like_email(new_email):
                     flash("Please enter a valid email address.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
 
                 if (u.email or "").strip().lower() != new_email:
                     taken_email = (
@@ -1763,7 +1864,7 @@ def create_app():
                     )
                     if taken_email:
                         flash("That email is already in use.", "error")
-                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
 
                     u.email = new_email
 
@@ -1790,13 +1891,13 @@ def create_app():
 
                     if ext not in (".png", ".jpg", ".jpeg"):
                         flash("Logo must be a .png, .jpg, or .jpeg file.", "error")
-                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
 
                     try:
                         png_bytes = _process_logo_upload_to_png_bytes(logo_file)
                     except ValueError as exc:
                         flash(str(exc), "error")
-                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
 
                     d = _logo_upload_dir()
                     out_name = f"user_{u.id}{ext}"
@@ -1827,6 +1928,11 @@ def create_app():
                 tmpl = _template_key_fallback(tmpl)
                 u.invoice_template = tmpl
 
+                pdf_tmpl = _pdf_template_key_fallback(request.form.get("pdf_template"))
+                u.pdf_template = pdf_tmpl
+
+                u.tax_rate = _to_float(request.form.get("tax_rate"), 0.0)
+
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
                 u.address = (request.form.get("address") or "").strip() or None
@@ -1841,18 +1947,18 @@ def create_app():
                         summary_tz_offset = int(summary_tz_offset_raw)
                     except ValueError:
                         flash("Invalid schedule summary time zone offset.", "error")
-                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
                 if summary_tz_offset < -720 or summary_tz_offset > 840:
                     flash("Invalid schedule summary time zone offset.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
 
                 if summary_freq not in ("none", "day", "week", "month"):
                     flash("Invalid schedule summary frequency.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
 
                 if summary_freq != "none" and not summary_time:
                     flash("Please choose a time for schedule summaries.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
 
                 u.schedule_summary_frequency = summary_freq
                 u.schedule_summary_time = summary_time if summary_freq != "none" else None
@@ -1862,7 +1968,7 @@ def create_app():
                 flash("Settings saved.", "success")
                 return redirect(url_for("settings"))
 
-            return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES)
+            return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
 
     @app.post("/settings/schedule-summary/test")
     @login_required
@@ -3136,6 +3242,8 @@ def create_app():
         with db_session() as s:
             u = s.get(User, uid)
             user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
+            user_pdf_template = _pdf_template_key_fallback(getattr(u, "pdf_template", None) if u else None)
+            user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
             tmpl = _template_config_for(user_template_key)
 
             customers = (
@@ -3172,6 +3280,7 @@ def create_app():
                     form=request.form,
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
+                    user_tax_rate=user_tax_rate,
                     customers=customers,
                     customers_for_js=customers_for_js,
                     pre_customer=pre_customer,
@@ -3188,6 +3297,7 @@ def create_app():
                     form=request.form,
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
+                    user_tax_rate=user_tax_rate,
                     customers=customers,
                     customers_for_js=customers_for_js,
                     pre_customer=pre_customer,
@@ -3216,6 +3326,9 @@ def create_app():
                 hours = _to_float(request.form.get("hours"))
                 shop_supplies = _to_float(request.form.get("shop_supplies"))
                 parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                tax_rate = _to_float(request.form.get("tax_rate"), user_tax_rate)
+                tax_override_raw = (request.form.get("tax_override") or "").strip()
+                tax_override = _to_float(tax_override_raw, 0.0) if tax_override_raw else None
                 if user_template_key == "flipping_items":
                     price_per_hour = 1.0
                     hours = 0.0
@@ -3229,6 +3342,7 @@ def create_app():
                     invoice_number=inv_no,
                     display_number=display_no,
                     invoice_template=user_template_key,
+                    pdf_template=user_pdf_template,
                     is_estimate=True,
 
                     customer_email=(cust_email_override or (c.email or None)),
@@ -3241,6 +3355,8 @@ def create_app():
                     price_per_hour=price_per_hour,
                     shop_supplies=shop_supplies,
                     parts_markup_percent=parts_markup_percent,
+                    tax_rate=tax_rate,
+                    tax_override=tax_override,
                     paid=0.0,
                     date_in=request.form.get("date_in", "").strip(),
                     notes=request.form.get("notes", "").rstrip(),
@@ -3271,6 +3387,7 @@ def create_app():
             default_date=datetime.now().strftime("%B %d, %Y"),
             tmpl=tmpl,
             tmpl_key=user_template_key,
+            user_tax_rate=user_tax_rate,
             customers=customers,
             customers_for_js=customers_for_js,
             pre_customer=pre_customer,
@@ -3289,6 +3406,8 @@ def create_app():
         with db_session() as s:
             u = s.get(User, uid)
             user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
+            user_pdf_template = _pdf_template_key_fallback(getattr(u, "pdf_template", None) if u else None)
+            user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
             tmpl = _template_config_for(user_template_key)
 
             customers = (
@@ -3325,6 +3444,7 @@ def create_app():
                     form=request.form,
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
+                    user_tax_rate=user_tax_rate,
                     customers=customers,
                     customers_for_js=customers_for_js,
                     pre_customer=pre_customer,
@@ -3341,6 +3461,7 @@ def create_app():
                     form=request.form,
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
+                    user_tax_rate=user_tax_rate,
                     customers=customers,
                     customers_for_js=customers_for_js,
                     pre_customer=pre_customer,
@@ -3370,6 +3491,9 @@ def create_app():
                 shop_supplies = _to_float(request.form.get("shop_supplies"))
                 paid_val = _to_float(request.form.get("paid"))
                 parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                tax_rate = _to_float(request.form.get("tax_rate"), user_tax_rate)
+                tax_override_raw = (request.form.get("tax_override") or "").strip()
+                tax_override = _to_float(tax_override_raw, 0.0) if tax_override_raw else None
                 if user_template_key == "flipping_items":
                     price_per_hour = 1.0
                     parts_total = sum(pp for _, pp in parts_data)
@@ -3386,6 +3510,7 @@ def create_app():
                     invoice_number=inv_no,
                     display_number=display_no,
                     invoice_template=user_template_key,
+                    pdf_template=user_pdf_template,
 
                     customer_email=(cust_email_override or (c.email or None)),
                     customer_phone=(cust_phone_override or (c.phone or None)),
@@ -3397,6 +3522,8 @@ def create_app():
                     price_per_hour=price_per_hour,
                     shop_supplies=shop_supplies,
                     parts_markup_percent=parts_markup_percent,
+                    tax_rate=tax_rate,
+                    tax_override=tax_override,
                     paid=paid_val,
                     date_in=request.form.get("date_in", "").strip(),
                     notes=request.form.get("notes", "").rstrip(),
@@ -3427,6 +3554,7 @@ def create_app():
             doc_type="invoice",
             tmpl=tmpl,
             tmpl_key=user_template_key,
+            user_tax_rate=user_tax_rate,
             customers=customers,
             customers_for_js=customers_for_js,
             pre_customer=pre_customer,
@@ -3485,6 +3613,7 @@ def create_app():
                         form=request.form,
                         tmpl=tmpl,
                         tmpl_key=tmpl_key,
+                        user_tax_rate=inv.tax_rate or 0.0,
                         customers=customers,
                         customers_for_js=customers_for_js,
                     )
@@ -3509,6 +3638,9 @@ def create_app():
                 inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
                 inv.parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                inv.tax_rate = _to_float(request.form.get("tax_rate"), inv.tax_rate or 0.0)
+                tax_override_raw = (request.form.get("tax_override") or "").strip()
+                inv.tax_override = _to_float(tax_override_raw, 0.0) if tax_override_raw else None
                 if tmpl_key == "flipping_items":
                     inv.price_per_hour = 1.0
                     inv.hours = 0.0
@@ -3536,6 +3668,7 @@ def create_app():
                         form=request.form,
                         tmpl=tmpl,
                         tmpl_key=tmpl_key,
+                        user_tax_rate=inv.tax_rate or 0.0,
                         customers=customers,
                         customers_for_js=customers_for_js,
                     )
@@ -3564,6 +3697,7 @@ def create_app():
             doc_type="estimate",
             tmpl=tmpl,
             tmpl_key=tmpl_key,
+            user_tax_rate=inv.tax_rate or 0.0,
             customers=customers,
             customers_for_js=customers_for_js,
         )
@@ -3589,6 +3723,7 @@ def create_app():
                 invoice_number=new_no,
                 display_number=display_no,
                 invoice_template=inv.invoice_template,
+                pdf_template=inv.pdf_template,
                 is_estimate=False,
                 converted_from_estimate=True,
 
@@ -3599,6 +3734,8 @@ def create_app():
                 price_per_hour=inv.price_per_hour,
                 shop_supplies=inv.shop_supplies,
                 parts_markup_percent=inv.parts_markup_percent,
+                tax_rate=inv.tax_rate,
+                tax_override=inv.tax_override,
 
                 notes=inv.notes,
                 useful_info=inv.useful_info,
@@ -3644,6 +3781,7 @@ def create_app():
                 invoice_number=new_no,
                 display_number=display_no,
                 invoice_template=inv.invoice_template,
+                pdf_template=inv.pdf_template,
                 is_estimate=True,
 
                 name=inv.name,
@@ -3653,6 +3791,8 @@ def create_app():
                 price_per_hour=inv.price_per_hour,
                 shop_supplies=inv.shop_supplies,
                 parts_markup_percent=inv.parts_markup_percent,
+                tax_rate=inv.tax_rate,
+                tax_override=inv.tax_override,
 
                 notes=inv.notes,
                 useful_info=inv.useful_info,
@@ -3735,6 +3875,7 @@ def create_app():
                 invoice_number=new_no,
                 display_number=display_no,
                 invoice_template=inv.invoice_template,
+                pdf_template=inv.pdf_template,
 
                 name=inv.name,
                 vehicle=inv.vehicle,
@@ -3743,6 +3884,8 @@ def create_app():
                 price_per_hour=inv.price_per_hour,
                 shop_supplies=inv.shop_supplies,
                 parts_markup_percent=inv.parts_markup_percent,
+                tax_rate=inv.tax_rate,
+                tax_override=inv.tax_override,
 
                 notes=inv.notes,
                 useful_info=inv.useful_info,
@@ -3809,6 +3952,7 @@ def create_app():
                         form=request.form,
                         tmpl=tmpl,
                         tmpl_key=tmpl_key,
+                        user_tax_rate=inv.tax_rate or 0.0,
                         customers=customers,
                         customers_for_js=customers_for_js,
                     )
@@ -3833,6 +3977,9 @@ def create_app():
                 inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
                 inv.parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                inv.tax_rate = _to_float(request.form.get("tax_rate"), inv.tax_rate or 0.0)
+                tax_override_raw = (request.form.get("tax_override") or "").strip()
+                inv.tax_override = _to_float(tax_override_raw, 0.0) if tax_override_raw else None
                 inv.paid = _to_float(request.form.get("paid"))
                 if tmpl_key == "flipping_items":
                     inv.price_per_hour = 1.0
@@ -3862,6 +4009,7 @@ def create_app():
                         form=request.form,
                         tmpl=tmpl,
                         tmpl_key=tmpl_key,
+                        user_tax_rate=inv.tax_rate or 0.0,
                         customers=customers,
                         customers_for_js=customers_for_js,
                     )
@@ -3890,6 +4038,7 @@ def create_app():
             doc_type="invoice",
             tmpl=tmpl,
             tmpl_key=tmpl_key,
+            user_tax_rate=inv.tax_rate or 0.0,
             customers=customers,
             customers_for_js=customers_for_js,
         )
@@ -3962,6 +4111,7 @@ def create_app():
         total_parts = 0.0
         total_parts_markup_profit = 0.0
         total_supplies = 0.0
+        total_tax_collected = 0.0
 
         total_paid_invoices_amount = 0.0
         total_outstanding_unpaid = 0.0
@@ -3996,6 +4146,7 @@ def create_app():
                 if (inv.invoice_template or "") == "flipping_items" and labor_total < 0:
                     labor_income = 0.0
                 invoice_total = inv.invoice_total()
+                tax_amount = inv.tax_amount()
                 supplies = float(inv.shop_supplies or 0.0)
                 paid = float(inv.paid or 0.0)
 
@@ -4011,6 +4162,7 @@ def create_app():
 
                 if fully_paid:
                     total_paid_invoices_amount += invoice_total
+                    total_tax_collected += tax_amount
                 else:
                     outstanding = max(0.0, invoice_total - paid)
                     total_outstanding_unpaid += outstanding
@@ -4037,6 +4189,7 @@ def create_app():
             "total_parts_markup_profit": total_parts_markup_profit,
             "total_labor": total_labor,
             "total_supplies": total_supplies,
+            "total_tax_collected": total_tax_collected,
             "total_paid_invoices_amount": total_paid_invoices_amount,
             "total_outstanding_unpaid": total_outstanding_unpaid,
             "unpaid_count": len(unpaid),

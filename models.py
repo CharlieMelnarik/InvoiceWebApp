@@ -48,6 +48,12 @@ class User(Base):
     # Default invoice template for NEW invoices
     invoice_template: Mapped[str] = mapped_column(String(50), nullable=False, default="auto_repair")
 
+    # Default PDF layout template for NEW invoices/estimates
+    pdf_template: Mapped[str] = mapped_column(String(50), nullable=False, default="classic")
+
+    # Default tax rate percentage for NEW invoices/estimates
+    tax_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
     # Profile / business info (for PDF header)
     business_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -287,6 +293,9 @@ class Invoice(Base):
     display_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
 
     invoice_template: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    pdf_template: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tax_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tax_override: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     customer_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     customer_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -368,8 +377,19 @@ class Invoice(Base):
         total = self._dec(self.hours) * self._dec(self.price_per_hour)
         return float(self._money(total))
 
-    def invoice_total(self) -> float:
+    def subtotal_before_tax(self) -> float:
         total = self._dec(self.parts_total()) + self._dec(self.labor_total()) + self._dec(self.shop_supplies)
+        return float(self._money(total))
+
+    def tax_amount(self) -> float:
+        if self.tax_override is not None:
+            return float(self._money(self._dec(self.tax_override)))
+        rate = self._dec(self.tax_rate or 0.0) / self._dec(100)
+        total = self._dec(self.subtotal_before_tax()) * rate
+        return float(self._money(total))
+
+    def invoice_total(self) -> float:
+        total = self._dec(self.subtotal_before_tax()) + self._dec(self.tax_amount())
         return float(self._money(total))
 
     def amount_due(self) -> float:

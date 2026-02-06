@@ -40,6 +40,15 @@ def _format_phone(phone: str | None) -> str:
     return re.sub(r"\)\s+", ") ", raw)
 
 
+def _tax_label(inv: Invoice) -> str:
+    if getattr(inv, "tax_override", None) is not None:
+        return "Tax (override)"
+    rate = float(getattr(inv, "tax_rate", 0.0) or 0.0)
+    if rate:
+        return f"Tax ({rate:g}%)"
+    return "Tax"
+
+
 def _wrap_text(text, font, size, max_width):
     words = str(text).split()
     lines = []
@@ -104,6 +113,1273 @@ def _split_notes_into_lines(notes_text: str, max_width, font="Helvetica", size=1
     while out and out[-1] == "__SPACER__":
         out.pop()
     return out
+
+
+def _pdf_template_key_fallback(key: str | None) -> str:
+    key = (key or "").strip().lower()
+    return key if key in {"classic", "modern", "split_panel", "strip"} else "classic"
+
+
+def _render_modern_pdf(
+    *,
+    session,
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    customer_email: str,
+    customer_phone: str,
+    customer_address: str,
+    cfg: dict,
+    template_key: str,
+    pdf_path: str,
+    display_no: str,
+    doc_label: str,
+    generated_dt: datetime,
+    generated_str: str,
+    owner_logo_abs: str,
+    owner_logo_blob: bytes | None,
+    is_estimate: bool,
+):
+    PAGE_W, PAGE_H = LETTER
+    M = 0.65 * inch
+
+    pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
+    pdf.setTitle(f"{doc_label.title()} - {display_no}")
+
+    brand_dark = colors.HexColor("#0f172a")
+    brand_accent = colors.HexColor("#2563eb")
+    brand_muted = colors.HexColor("#64748b")
+    line_color = colors.HexColor("#e2e8f0")
+    soft_bg = colors.HexColor("#f8fafc")
+
+    def right_text(x, y, text, font="Helvetica", size=10, color=colors.black):
+        pdf.setFont(font, size)
+        pdf.setFillColor(color)
+        w = pdf.stringWidth(str(text), font, size)
+        pdf.drawString(x - w, y, str(text))
+
+    def label_right_value(x_left, x_right, y, label, value, label_font=("Helvetica-Bold", 9), value_font=("Helvetica", 10)):
+        pdf.setFont(*label_font)
+        pdf.setFillColor(colors.black)
+        pdf.drawString(x_left, y, label)
+        right_text(x_right, y, str(value), value_font[0], value_font[1], colors.black)
+
+    header_h = 1.35 * inch
+    pdf.setFillColor(brand_dark)
+    pdf.rect(0, PAGE_H - header_h, PAGE_W, header_h, stroke=0, fill=1)
+
+    # Optional logo
+    logo_w = 0
+    if owner_logo_blob:
+        try:
+            img = ImageReader(io.BytesIO(owner_logo_blob))
+            iw, ih = img.getSize()
+            max_h = 0.5 * inch
+            max_w = 1.4 * inch
+            scale = min(max_w / iw, max_h / ih)
+            logo_w = iw * scale
+            logo_h = ih * scale
+            logo_x = M
+            logo_y = PAGE_H - (header_h / 2) - (logo_h / 2)
+            pdf.drawImage(img, logo_x, logo_y, width=logo_w, height=logo_h, mask="auto")
+        except Exception:
+            logo_w = 0
+    elif owner_logo_abs and os.path.exists(owner_logo_abs):
+        try:
+            img = ImageReader(owner_logo_abs)
+            iw, ih = img.getSize()
+            max_h = 0.5 * inch
+            max_w = 1.4 * inch
+            scale = min(max_w / float(iw), max_h / float(ih))
+            logo_w = float(iw) * scale
+            logo_h = float(ih) * scale
+            logo_x = M
+            logo_y = PAGE_H - (header_h / 2) - (logo_h / 2)
+            pdf.drawImage(img, logo_x, logo_y, width=logo_w, height=logo_h, mask="auto")
+        except Exception:
+            logo_w = 0
+
+    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
+    username = (getattr(owner, "username", None) or "").strip() if owner else ""
+    header_name = business_name or username or ""
+    header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
+    header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+
+    left_x = M + (logo_w + 10 if logo_w else 0)
+    pdf.setFillColor(colors.white)
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(left_x, PAGE_H - 0.55 * inch, header_name or "InvoiceRunner")
+
+    pdf.setFont("Helvetica", 9)
+    info_lines = []
+    if header_address:
+        info_lines.extend(_wrap_text(header_address, "Helvetica", 9, 3.6 * inch))
+    if header_phone:
+        info_lines.append(header_phone)
+    info_y = PAGE_H - 0.82 * inch
+    for ln in info_lines[:2]:
+        pdf.drawString(left_x, info_y, ln)
+        info_y -= 12
+
+    right_x = PAGE_W - M
+    right_text(right_x, PAGE_H - 0.48 * inch, doc_label, "Helvetica-Bold", 18, colors.white)
+    right_text(right_x, PAGE_H - 0.80 * inch, f"{doc_label.title()} #: {display_no}", "Helvetica", 10, colors.white)
+    right_text(right_x, PAGE_H - 1.02 * inch, f"Date: {inv.date_in}", "Helvetica", 10, colors.white)
+
+    # Info cards
+    top_y = PAGE_H - header_h - 0.35 * inch
+    box_w = (PAGE_W - 2 * M - 0.35 * inch) / 2
+    box_h = 1.6 * inch
+
+    def draw_card(x, y, title):
+        pdf.setFillColor(soft_bg)
+        pdf.roundRect(x, y - box_h, box_w, box_h, 10, stroke=1, fill=1)
+        pdf.setStrokeColor(line_color)
+        pdf.setLineWidth(1)
+        pdf.roundRect(x, y - box_h, box_w, box_h, 10, stroke=1, fill=0)
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.setFillColor(brand_muted)
+        pdf.drawString(x + 12, y - 16, title)
+        pdf.setFillColor(colors.black)
+
+    # Customer name
+    if customer and (getattr(customer, "name", None) or "").strip():
+        customer_name = (customer.name or "").strip()
+    else:
+        nameFirst, _, _tail = (inv.name or "").partition(":")
+        customer_name = (nameFirst or inv.name or "").strip()
+
+    # Address formatting
+    addr_lines = []
+    addr_text = (customer_address or "").strip()
+    if addr_text:
+        addr_parts = [p.strip() for p in addr_text.split(",") if p.strip()]
+        if len(addr_parts) >= 3:
+            line1 = f"{', '.join(addr_parts[:-2])}"
+            line2 = f"{addr_parts[-2]}, {addr_parts[-1]}"
+        elif len(addr_parts) == 2:
+            line1 = addr_parts[0]
+            line2 = addr_parts[1]
+        else:
+            line1 = addr_text
+            line2 = ""
+        addr_lines.extend(_wrap_text(line1, "Helvetica", 10, box_w - 24))
+        if line2:
+            addr_lines.extend(_wrap_text(line2, "Helvetica", 10, box_w - 24))
+
+    draw_card(M, top_y, "BILL TO")
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(M + 12, top_y - 36, customer_name)
+
+    pdf.setFont("Helvetica", 10)
+    y_cursor = top_y - 54
+    if customer_phone:
+        pdf.drawString(M + 12, y_cursor, f"Phone: {customer_phone}")
+        y_cursor -= 14
+    if customer_email:
+        email_lines = _wrap_text(f"Email: {customer_email}", "Helvetica", 10, box_w - 24)
+        for ln in email_lines[:2]:
+            pdf.drawString(M + 12, y_cursor, ln)
+            y_cursor -= 14
+    for ln in addr_lines[:2]:
+        pdf.drawString(M + 12, y_cursor, ln)
+        y_cursor -= 14
+
+    x2 = M + box_w + 0.35 * inch
+    draw_card(x2, top_y, cfg.get("job_box_title", "DETAILS"))
+    pdf.setFont("Helvetica", 10)
+    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}"
+    job_lines = _wrap_text(job_text, "Helvetica", 10, box_w - 24)
+    y_job = top_y - 36
+    for ln in job_lines[:2]:
+        pdf.drawString(x2 + 12, y_job, ln)
+        y_job -= 14
+
+    if template_key == "flipping_items":
+        pdf.drawString(x2 + 12, y_job, f"Profit: {_money(inv.labor_total())}")
+        y_job -= 14
+        pdf.drawString(x2 + 12, y_job, f"Sold For: {_money(inv.paid)}")
+    else:
+        pdf.drawString(x2 + 12, y_job, f"{cfg['job_rate_label']}: {_money(inv.price_per_hour)}")
+        y_job -= 14
+        pdf.drawString(
+            x2 + 12,
+            y_job,
+            f"{cfg['job_hours_label']}: {inv.hours} {cfg.get('hours_suffix', 'hrs')}"
+        )
+
+    # Tables
+    def draw_table(title, x, y_top, col_titles, rows, col_widths, money_cols=None):
+        money_cols = set(money_cols or [])
+        base_row_h = 16
+        title_gap = 18
+
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.setFillColor(colors.black)
+        pdf.drawString(x, y_top, title)
+        y = y_top - title_gap
+
+        table_w = sum(col_widths)
+        pdf.setFillColor(brand_dark)
+        pdf.roundRect(x, y - base_row_h + 9, table_w, base_row_h + 2, 6, stroke=0, fill=1)
+        pdf.setFont("Helvetica-Bold", 9)
+        pdf.setFillColor(colors.white)
+
+        cx = x
+        for i, h in enumerate(col_titles):
+            if i in money_cols:
+                right_text(cx + col_widths[i] - 8, y + 1, h, "Helvetica-Bold", 9, colors.white)
+            else:
+                pdf.drawString(cx + 8, y + 1, h)
+            cx += col_widths[i]
+
+        y_cursor = y - base_row_h
+        pdf.setFont("Helvetica", 10)
+        pdf.setFillColor(colors.black)
+
+        for row in rows:
+            wrapped_cells = []
+            row_height = base_row_h
+            for i, cell in enumerate(row):
+                max_w = col_widths[i] - 16
+                lines = _wrap_text(cell, "Helvetica", 10, max_w)
+                wrapped_cells.append(lines)
+                row_height = max(row_height, len(lines) * base_row_h)
+
+            cx = x
+            for i, lines in enumerate(wrapped_cells):
+                line_y = y_cursor
+                for line in lines:
+                    if i in money_cols:
+                        right_text(cx + col_widths[i] - 8, line_y, line, "Helvetica", 10, colors.black)
+                    else:
+                        pdf.drawString(cx + 8, line_y, line)
+                    line_y -= base_row_h
+                cx += col_widths[i]
+
+            pdf.setStrokeColor(line_color)
+            pdf.setLineWidth(1)
+            pdf.line(x, y_cursor - 4, x + table_w, y_cursor - 4)
+            y_cursor -= row_height
+
+        pdf.setStrokeColor(colors.black)
+        return y_cursor - 8
+
+    body_y = top_y - box_h - 0.45 * inch
+
+    labor_rows = []
+    rate = float(inv.price_per_hour or 0.0)
+    for li in inv.labor_items:
+        try:
+            t = float(li.labor_time_hours or 0.0)
+        except Exception:
+            t = 0.0
+        line_total = t * rate
+        labor_rows.append([
+            li.labor_desc or "",
+            f"{t:g} {cfg.get('hours_suffix', 'hrs')}" if t else "",
+            _money(line_total) if line_total else ""
+        ])
+
+    body_y = draw_table(
+        cfg["labor_title"],
+        M,
+        body_y,
+        [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
+        labor_rows,
+        col_widths=[PAGE_W - 2 * M - 190, 90, 100],
+        money_cols={2}
+    )
+
+    parts_rows = []
+    for p in inv.parts:
+        parts_rows.append([
+            p.part_name or "",
+            _money(inv.part_price_with_markup(p.part_price or 0.0)) if (p.part_price or 0.0) else ""
+        ])
+
+    has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
+    if has_parts_rows:
+        body_y = draw_table(
+            cfg["parts_title"],
+            M,
+            body_y - 10,
+            [cfg["parts_name_label"], cfg.get("parts_price_label", "Price")],
+            parts_rows,
+            col_widths=[PAGE_W - 2 * M - 120, 120],
+            money_cols={1}
+        )
+
+    # Notes + Summary
+    notes_box_w = PAGE_W - 2 * M - 250
+    notes_y_top = max(body_y - 10, 2.2 * inch + M)
+
+    pdf.setFont("Helvetica", 10)
+    left_padding = 12
+    right_padding = 12
+    line_height = 14
+    SPACER_GAP = 3
+    header_title_gap = 42
+    bottom_padding = 12
+
+    max_width = notes_box_w - left_padding - right_padding
+    all_note_lines = _split_notes_into_lines(inv.notes or "", max_width, font="Helvetica", size=10)
+
+    footer_y = 0.55 * inch
+    footer_clearance = 0.20 * inch
+    page_bottom_limit = footer_y + footer_clearance
+
+    needed_text_h = 0
+    for ln in all_note_lines:
+        needed_text_h += SPACER_GAP if ln == "__SPACER__" else line_height
+    needed_box_h = header_title_gap + needed_text_h + bottom_padding
+
+    max_box_h_this_page = notes_y_top - page_bottom_limit
+    notes_box_h = min(max_box_h_this_page, needed_box_h)
+
+    pdf.setFillColor(soft_bg)
+    pdf.roundRect(M, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 10, stroke=1, fill=1)
+    pdf.setStrokeColor(line_color)
+    pdf.roundRect(M, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 10, stroke=1, fill=0)
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.setFillColor(brand_muted)
+    pdf.drawString(M + 12, notes_y_top - 18, "NOTES")
+
+    pdf.setFont("Helvetica", 10)
+    pdf.setFillColor(colors.black)
+    y_note = notes_y_top - header_title_gap
+    bottom_limit = notes_y_top - notes_box_h + bottom_padding
+
+    lines_fit = 0
+    for line in all_note_lines:
+        if y_note < bottom_limit:
+            break
+        if line == "__SPACER__":
+            y_note -= SPACER_GAP
+        else:
+            pdf.drawString(M + left_padding, y_note, line)
+            y_note -= line_height
+        lines_fit += 1
+
+    remaining_lines = all_note_lines[lines_fit:]
+
+    sum_x = PAGE_W - M - 240
+    sum_w = 240
+    sum_h = 1.9 * inch
+    pdf.setFillColor(soft_bg)
+    pdf.roundRect(sum_x, notes_y_top - sum_h, sum_w, sum_h, 10, stroke=1, fill=1)
+    pdf.setStrokeColor(line_color)
+    pdf.roundRect(sum_x, notes_y_top - sum_h, sum_w, sum_h, 10, stroke=1, fill=0)
+
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.setFillColor(brand_muted)
+    pdf.drawString(sum_x + 12, notes_y_top - 18, "SUMMARY")
+    pdf.setFillColor(colors.black)
+
+    total_parts = inv.parts_total()
+    total_labor = inv.labor_total()
+    total_price = inv.invoice_total()
+    tax_amount = inv.tax_amount()
+    price_owed = inv.amount_due()
+
+    right_edge = sum_x + sum_w - 12
+    y = notes_y_top - 44
+
+    if has_parts_rows and total_parts:
+        label_right_value(sum_x + 12, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
+    label_right_value(sum_x + 12, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
+    if inv.shop_supplies:
+        label_right_value(sum_x + 12, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
+    if tax_amount:
+        label_right_value(sum_x + 12, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 16
+
+    pdf.setStrokeColor(line_color)
+    pdf.line(sum_x + 12, y + 4, sum_x + sum_w - 12, y + 4)
+    pdf.setStrokeColor(colors.black)
+    y -= 10
+
+    label = "Estimated Total:" if is_estimate else "Total:"
+    label_right_value(sum_x + 12, right_edge, y, label, _money(total_price)); y -= 18
+
+    if not is_estimate:
+        label_right_value(sum_x + 12, right_edge, y, "Paid:", _money(inv.paid)); y -= 18
+
+    pdf.setFont("Helvetica-Bold", 12)
+    if is_estimate:
+        right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 26, f"ESTIMATED TOTAL: {_money(total_price)}", "Helvetica-Bold", 12, brand_dark)
+    elif price_owed < 0:
+        profit = abs(price_owed)
+        right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 26, f"PROFIT: {_money(profit)}", "Helvetica-Bold", 12, colors.HexColor("#15803d"))
+    else:
+        right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 26, f"AMOUNT DUE: {_money(price_owed)}", "Helvetica-Bold", 12, brand_dark)
+
+    def footer():
+        pdf.setFont("Helvetica-Oblique", 9)
+        pdf.setFillColor(brand_muted)
+        if is_estimate:
+            pdf.drawString(M, footer_y, "Total is an estimated cost of service. Actual amount may differ.")
+        else:
+            pdf.drawString(M, footer_y, "Thank you for your business.")
+        pdf.setFillColor(colors.black)
+
+    def start_new_page_with_header():
+        pdf.showPage()
+        pdf.setFillColor(soft_bg)
+        pdf.rect(0, PAGE_H - 0.8 * inch, PAGE_W, 0.8 * inch, stroke=0, fill=1)
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.setFillColor(brand_dark)
+        pdf.drawString(M, PAGE_H - 0.45 * inch, f"{doc_label} (cont.)")
+        pdf.setFont("Helvetica", 9)
+        pdf.setFillColor(brand_muted)
+        pdf.drawString(M, PAGE_H - 0.62 * inch, f"{display_no}  •  Generated: {generated_str}")
+
+    if remaining_lines:
+        footer()
+        while remaining_lines:
+            start_new_page_with_header()
+
+            notes_y_top_2 = PAGE_H - (M + 0.6 * inch)
+            page_bottom_limit_2 = footer_y + footer_clearance
+            notes_box_h_2 = notes_y_top_2 - page_bottom_limit_2
+
+            pdf.setFillColor(soft_bg)
+            pdf.roundRect(M, notes_y_top_2 - notes_box_h_2, notes_box_w, notes_box_h_2, 10, stroke=1, fill=1)
+            pdf.setStrokeColor(line_color)
+            pdf.roundRect(M, notes_y_top_2 - notes_box_h_2, notes_box_w, notes_box_h_2, 10, stroke=1, fill=0)
+            pdf.setFont("Helvetica-Bold", 10)
+            pdf.setFillColor(brand_muted)
+            pdf.drawString(M + 12, notes_y_top_2 - 18, "NOTES (cont.)")
+            pdf.setFillColor(colors.black)
+
+            pdf.setFont("Helvetica", 10)
+            y_note2 = notes_y_top_2 - header_title_gap
+            bottom2 = notes_y_top_2 - notes_box_h_2 + bottom_padding
+
+            fit2 = 0
+            for line in remaining_lines:
+                if y_note2 < bottom2:
+                    break
+                if line == "__SPACER__":
+                    y_note2 -= SPACER_GAP
+                else:
+                    pdf.drawString(M + left_padding, y_note2, line)
+                    y_note2 -= line_height
+                fit2 += 1
+
+            remaining_lines = remaining_lines[fit2:]
+            footer()
+    else:
+        footer()
+
+    pdf.save()
+
+    inv.pdf_path = pdf_path
+    inv.pdf_generated_at = generated_dt
+    session.add(inv)
+    session.commit()
+
+    return pdf_path
+
+
+def _render_split_panel_pdf(
+    *,
+    session,
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    customer_email: str,
+    customer_phone: str,
+    customer_address: str,
+    cfg: dict,
+    template_key: str,
+    pdf_path: str,
+    display_no: str,
+    doc_label: str,
+    generated_dt: datetime,
+    generated_str: str,
+    owner_logo_abs: str,
+    owner_logo_blob: bytes | None,
+    is_estimate: bool,
+):
+    PAGE_W, PAGE_H = LETTER
+    M = 0.55 * inch
+
+    pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
+    pdf.setTitle(f"{doc_label.title()} - {display_no}")
+
+    rail_color = colors.HexColor("#0f172a")
+    rail_text = colors.HexColor("#e2e8f0")
+    accent = colors.HexColor("#2563eb")
+    line_color = colors.HexColor("#e2e8f0")
+    soft_bg = colors.HexColor("#f8fafc")
+
+    def right_text(x, y, text, font="Helvetica", size=10, color=colors.black):
+        pdf.setFont(font, size)
+        pdf.setFillColor(color)
+        w = pdf.stringWidth(str(text), font, size)
+        pdf.drawString(x - w, y, str(text))
+
+    def label_right_value(x_left, x_right, y, label, value, label_font=("Helvetica-Bold", 9), value_font=("Helvetica", 10)):
+        pdf.setFont(*label_font)
+        pdf.setFillColor(colors.black)
+        pdf.drawString(x_left, y, label)
+        right_text(x_right, y, str(value), value_font[0], value_font[1], colors.black)
+
+    # Left summary rail
+    rail_w = 1.55 * inch
+    rail_x = M
+    rail_y = M
+    rail_h = PAGE_H - (2 * M)
+    pdf.setFillColor(rail_color)
+    pdf.roundRect(rail_x, rail_y, rail_w, rail_h, 14, stroke=0, fill=1)
+
+    # Logo / brand on rail
+    logo_x = rail_x + 12
+    logo_y_top = PAGE_H - M - 36
+    logo_drawn = False
+    if owner_logo_blob:
+        try:
+            img = ImageReader(io.BytesIO(owner_logo_blob))
+            iw, ih = img.getSize()
+            max_h = 0.55 * inch
+            max_w = rail_w - 24
+            scale = min(max_w / iw, max_h / ih)
+            w = iw * scale
+            h = ih * scale
+            pdf.drawImage(img, logo_x, logo_y_top - h, width=w, height=h, mask="auto")
+            logo_drawn = True
+        except Exception:
+            logo_drawn = False
+    elif owner_logo_abs and os.path.exists(owner_logo_abs):
+        try:
+            img = ImageReader(owner_logo_abs)
+            iw, ih = img.getSize()
+            max_h = 0.55 * inch
+            max_w = rail_w - 24
+            scale = min(max_w / float(iw), max_h / float(ih))
+            w = float(iw) * scale
+            h = float(ih) * scale
+            pdf.drawImage(img, logo_x, logo_y_top - h, width=w, height=h, mask="auto")
+            logo_drawn = True
+        except Exception:
+            logo_drawn = False
+
+    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
+    username = (getattr(owner, "username", None) or "").strip() if owner else ""
+    header_name = business_name or username or "InvoiceRunner"
+    header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
+    header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+
+    pdf.setFillColor(rail_text)
+    pdf.setFont("Helvetica-Bold", 10)
+    name_y = logo_y_top - (0.25 * inch if logo_drawn else 0.1 * inch)
+    for ln in _wrap_text(header_name, "Helvetica-Bold", 10, rail_w - 20)[:2]:
+        pdf.drawString(rail_x + 12, name_y, ln)
+        name_y -= 12
+
+    pdf.setFont("Helvetica", 8)
+    rail_info = []
+    if header_address:
+        rail_info.extend(_wrap_text(header_address, "Helvetica", 8, rail_w - 20))
+    if header_phone:
+        rail_info.append(header_phone)
+    info_y = name_y - 6
+    for ln in rail_info[:3]:
+        pdf.drawString(rail_x + 12, info_y, ln)
+        info_y -= 11
+
+    # Summary block on rail
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.setFillColor(rail_text)
+    pdf.drawString(rail_x + 12, rail_y + 145, "SUMMARY")
+
+    total_parts = inv.parts_total()
+    total_labor = inv.labor_total()
+    total_price = inv.invoice_total()
+    tax_amount = inv.tax_amount()
+    price_owed = inv.amount_due()
+
+    pdf.setFont("Helvetica", 9)
+    y = rail_y + 125
+    pdf.drawString(rail_x + 12, y, f"{cfg['labor_title']}: {_money(total_labor)}"); y -= 14
+    if total_parts:
+        pdf.drawString(rail_x + 12, y, f"{cfg['parts_title']}: {_money(total_parts)}"); y -= 14
+    if inv.shop_supplies:
+        pdf.drawString(rail_x + 12, y, f"{cfg['shop_supplies_label']}: {_money(inv.shop_supplies)}"); y -= 14
+    if tax_amount:
+        pdf.drawString(rail_x + 12, y, f"{_tax_label(inv)}: {_money(tax_amount)}"); y -= 14
+
+    y -= 4
+    pdf.setFont("Helvetica-Bold", 10)
+    label = "Est. Total" if is_estimate else "Total"
+    pdf.drawString(rail_x + 12, y, f"{label}: {_money(total_price)}"); y -= 16
+    if not is_estimate:
+        pdf.setFont("Helvetica", 9)
+        pdf.drawString(rail_x + 12, y, f"Paid: {_money(inv.paid)}"); y -= 14
+        pdf.setFont("Helvetica-Bold", 10)
+        if price_owed < 0:
+            pdf.drawString(rail_x + 12, y, f"Profit: {_money(abs(price_owed))}")
+        else:
+            pdf.drawString(rail_x + 12, y, f"Due: {_money(price_owed)}")
+
+    # Right content area
+    content_x = rail_x + rail_w + 0.45 * inch
+    content_w = PAGE_W - content_x - M
+
+    pdf.setFillColor(soft_bg)
+    pdf.roundRect(content_x, PAGE_H - M - 1.0 * inch, content_w, 1.0 * inch, 12, stroke=1, fill=1)
+    pdf.setStrokeColor(line_color)
+    pdf.roundRect(content_x, PAGE_H - M - 1.0 * inch, content_w, 1.0 * inch, 12, stroke=1, fill=0)
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.setFillColor(colors.black)
+    pdf.drawString(content_x + 14, PAGE_H - M - 0.55 * inch, doc_label)
+
+    right_text(content_x + content_w - 14, PAGE_H - M - 0.48 * inch, f"{doc_label.title()} #: {display_no}", "Helvetica", 9, colors.black)
+    right_text(content_x + content_w - 14, PAGE_H - M - 0.70 * inch, f"Date: {inv.date_in}", "Helvetica", 9, colors.black)
+
+    # Info cards
+    card_y_top = PAGE_H - M - 1.35 * inch
+    card_h = 1.55 * inch
+    card_w = (content_w - 0.35 * inch) / 2
+
+    def draw_card(x, y, title):
+        pdf.setFillColor(colors.white)
+        pdf.roundRect(x, y - card_h, card_w, card_h, 12, stroke=1, fill=1)
+        pdf.setStrokeColor(line_color)
+        pdf.roundRect(x, y - card_h, card_w, card_h, 12, stroke=1, fill=0)
+        pdf.setFont("Helvetica-Bold", 9)
+        pdf.setFillColor(colors.HexColor("#64748b"))
+        pdf.drawString(x + 12, y - 16, title)
+        pdf.setFillColor(colors.black)
+
+    # Customer name
+    if customer and (getattr(customer, "name", None) or "").strip():
+        customer_name = (customer.name or "").strip()
+    else:
+        nameFirst, _, _tail = (inv.name or "").partition(":")
+        customer_name = (nameFirst or inv.name or "").strip()
+
+    addr_lines = []
+    addr_text = (customer_address or "").strip()
+    if addr_text:
+        addr_parts = [p.strip() for p in addr_text.split(",") if p.strip()]
+        if len(addr_parts) >= 3:
+            line1 = f"{', '.join(addr_parts[:-2])}"
+            line2 = f"{addr_parts[-2]}, {addr_parts[-1]}"
+        elif len(addr_parts) == 2:
+            line1 = addr_parts[0]
+            line2 = addr_parts[1]
+        else:
+            line1 = addr_text
+            line2 = ""
+        addr_lines.extend(_wrap_text(line1, "Helvetica", 9, card_w - 24))
+        if line2:
+            addr_lines.extend(_wrap_text(line2, "Helvetica", 9, card_w - 24))
+
+    card1_x = content_x
+    card2_x = content_x + card_w + 0.35 * inch
+    draw_card(card1_x, card_y_top, "BILL TO")
+    draw_card(card2_x, card_y_top, cfg.get("job_box_title", "DETAILS"))
+
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(card1_x + 12, card_y_top - 36, customer_name)
+    pdf.setFont("Helvetica", 9)
+    y_cursor = card_y_top - 52
+    if customer_phone:
+        pdf.drawString(card1_x + 12, y_cursor, f"Phone: {customer_phone}"); y_cursor -= 12
+    if customer_email:
+        for ln in _wrap_text(f"Email: {customer_email}", "Helvetica", 9, card_w - 24)[:2]:
+            pdf.drawString(card1_x + 12, y_cursor, ln); y_cursor -= 12
+    for ln in addr_lines[:2]:
+        pdf.drawString(card1_x + 12, y_cursor, ln); y_cursor -= 12
+
+    pdf.setFont("Helvetica", 9)
+    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}"
+    job_lines = _wrap_text(job_text, "Helvetica", 9, card_w - 24)
+    y_job = card_y_top - 36
+    for ln in job_lines[:2]:
+        pdf.drawString(card2_x + 12, y_job, ln)
+        y_job -= 12
+    if template_key == "flipping_items":
+        pdf.drawString(card2_x + 12, y_job, f"Profit: {_money(inv.labor_total())}"); y_job -= 12
+        pdf.drawString(card2_x + 12, y_job, f"Sold For: {_money(inv.paid)}")
+    else:
+        pdf.drawString(card2_x + 12, y_job, f"{cfg['job_rate_label']}: {_money(inv.price_per_hour)}"); y_job -= 12
+        pdf.drawString(card2_x + 12, y_job, f"{cfg['job_hours_label']}: {inv.hours} {cfg.get('hours_suffix', 'hrs')}")
+
+    # Tables
+    def draw_table(title, x, y_top, col_titles, rows, col_widths, money_cols=None):
+        money_cols = set(money_cols or [])
+        base_row_h = 16
+        title_gap = 18
+
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.setFillColor(colors.black)
+        pdf.drawString(x, y_top, title)
+        y = y_top - title_gap
+
+        table_w = sum(col_widths)
+        pdf.setFillColor(accent)
+        pdf.roundRect(x, y - base_row_h + 9, table_w, base_row_h + 2, 6, stroke=0, fill=1)
+        pdf.setFont("Helvetica-Bold", 9)
+        pdf.setFillColor(colors.white)
+
+        cx = x
+        for i, h in enumerate(col_titles):
+            if i in money_cols:
+                right_text(cx + col_widths[i] - 8, y + 1, h, "Helvetica-Bold", 9, colors.white)
+            else:
+                pdf.drawString(cx + 8, y + 1, h)
+            cx += col_widths[i]
+
+        y_cursor = y - base_row_h
+        pdf.setFont("Helvetica", 10)
+        pdf.setFillColor(colors.black)
+
+        for row in rows:
+            wrapped_cells = []
+            row_height = base_row_h
+            for i, cell in enumerate(row):
+                max_w = col_widths[i] - 16
+                lines = _wrap_text(cell, "Helvetica", 10, max_w)
+                wrapped_cells.append(lines)
+                row_height = max(row_height, len(lines) * base_row_h)
+
+            cx = x
+            for i, lines in enumerate(wrapped_cells):
+                line_y = y_cursor
+                for line in lines:
+                    if i in money_cols:
+                        right_text(cx + col_widths[i] - 8, line_y, line, "Helvetica", 10, colors.black)
+                    else:
+                        pdf.drawString(cx + 8, line_y, line)
+                    line_y -= base_row_h
+                cx += col_widths[i]
+
+            pdf.setStrokeColor(line_color)
+            pdf.setLineWidth(1)
+            pdf.line(x, y_cursor - 4, x + table_w, y_cursor - 4)
+            y_cursor -= row_height
+
+        pdf.setStrokeColor(colors.black)
+        return y_cursor - 8
+
+    body_y = card_y_top - card_h - 0.4 * inch
+
+    labor_rows = []
+    rate = float(inv.price_per_hour or 0.0)
+    for li in inv.labor_items:
+        try:
+            t = float(li.labor_time_hours or 0.0)
+        except Exception:
+            t = 0.0
+        line_total = t * rate
+        labor_rows.append([
+            li.labor_desc or "",
+            f"{t:g} {cfg.get('hours_suffix', 'hrs')}" if t else "",
+            _money(line_total) if line_total else ""
+        ])
+
+    body_y = draw_table(
+        cfg["labor_title"],
+        content_x,
+        body_y,
+        [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
+        labor_rows,
+        col_widths=[content_w - 190, 90, 100],
+        money_cols={2}
+    )
+
+    parts_rows = []
+    for p in inv.parts:
+        parts_rows.append([
+            p.part_name or "",
+            _money(inv.part_price_with_markup(p.part_price or 0.0)) if (p.part_price or 0.0) else ""
+        ])
+
+    has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
+    if has_parts_rows:
+        body_y = draw_table(
+            cfg["parts_title"],
+            content_x,
+            body_y - 10,
+            [cfg["parts_name_label"], cfg.get("parts_price_label", "Price")],
+            parts_rows,
+            col_widths=[content_w - 120, 120],
+            money_cols={1}
+        )
+
+    # Notes box
+    notes_box_w = content_w
+    notes_y_top = max(body_y - 8, 2.2 * inch + M)
+
+    left_padding = 12
+    right_padding = 12
+    line_height = 14
+    SPACER_GAP = 3
+    header_title_gap = 42
+    bottom_padding = 12
+
+    max_width = notes_box_w - left_padding - right_padding
+    all_note_lines = _split_notes_into_lines(inv.notes or "", max_width, font="Helvetica", size=10)
+
+    footer_y = 0.55 * inch
+    footer_clearance = 0.2 * inch
+    page_bottom_limit = footer_y + footer_clearance
+
+    needed_text_h = 0
+    for ln in all_note_lines:
+        needed_text_h += SPACER_GAP if ln == "__SPACER__" else line_height
+    needed_box_h = header_title_gap + needed_text_h + bottom_padding
+
+    max_box_h_this_page = notes_y_top - page_bottom_limit
+    notes_box_h = min(max_box_h_this_page, needed_box_h)
+
+    pdf.setFillColor(soft_bg)
+    pdf.roundRect(content_x, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 12, stroke=1, fill=1)
+    pdf.setStrokeColor(line_color)
+    pdf.roundRect(content_x, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 12, stroke=1, fill=0)
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.setFillColor(colors.HexColor("#64748b"))
+    pdf.drawString(content_x + 12, notes_y_top - 18, "NOTES")
+
+    pdf.setFont("Helvetica", 10)
+    pdf.setFillColor(colors.black)
+    y_note = notes_y_top - header_title_gap
+    bottom_limit = notes_y_top - notes_box_h + bottom_padding
+
+    lines_fit = 0
+    for line in all_note_lines:
+        if y_note < bottom_limit:
+            break
+        if line == "__SPACER__":
+            y_note -= SPACER_GAP
+        else:
+            pdf.drawString(content_x + left_padding, y_note, line)
+            y_note -= line_height
+        lines_fit += 1
+
+    remaining_lines = all_note_lines[lines_fit:]
+
+    def footer():
+        pdf.setFont("Helvetica-Oblique", 9)
+        pdf.setFillColor(colors.HexColor("#94a3b8"))
+        if is_estimate:
+            pdf.drawString(content_x, footer_y, "Total is an estimated cost of service. Actual amount may differ.")
+        else:
+            pdf.drawString(content_x, footer_y, "Thank you for your business.")
+        pdf.setFillColor(colors.black)
+
+    def start_new_page_with_header():
+        pdf.showPage()
+        pdf.setFillColor(soft_bg)
+        pdf.rect(0, PAGE_H - 0.8 * inch, PAGE_W, 0.8 * inch, stroke=0, fill=1)
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.setFillColor(rail_color)
+        pdf.drawString(M, PAGE_H - 0.45 * inch, f"{doc_label} (cont.)")
+        pdf.setFont("Helvetica", 9)
+        pdf.setFillColor(colors.HexColor("#94a3b8"))
+        pdf.drawString(M, PAGE_H - 0.62 * inch, f"{display_no}  •  Generated: {generated_str}")
+
+    if remaining_lines:
+        footer()
+        while remaining_lines:
+            start_new_page_with_header()
+
+            notes_y_top_2 = PAGE_H - (M + 0.6 * inch)
+            page_bottom_limit_2 = footer_y + footer_clearance
+            notes_box_h_2 = notes_y_top_2 - page_bottom_limit_2
+
+            pdf.setFillColor(soft_bg)
+            pdf.roundRect(M, notes_y_top_2 - notes_box_h_2, PAGE_W - 2 * M, notes_box_h_2, 12, stroke=1, fill=1)
+            pdf.setStrokeColor(line_color)
+            pdf.roundRect(M, notes_y_top_2 - notes_box_h_2, PAGE_W - 2 * M, notes_box_h_2, 12, stroke=1, fill=0)
+            pdf.setFont("Helvetica-Bold", 10)
+            pdf.setFillColor(colors.HexColor("#64748b"))
+            pdf.drawString(M + 12, notes_y_top_2 - 18, "NOTES (cont.)")
+            pdf.setFillColor(colors.black)
+
+            pdf.setFont("Helvetica", 10)
+            y_note2 = notes_y_top_2 - header_title_gap
+            bottom2 = notes_y_top_2 - notes_box_h_2 + bottom_padding
+
+            fit2 = 0
+            for line in remaining_lines:
+                if y_note2 < bottom2:
+                    break
+                if line == "__SPACER__":
+                    y_note2 -= SPACER_GAP
+                else:
+                    pdf.drawString(M + left_padding, y_note2, line)
+                    y_note2 -= line_height
+                fit2 += 1
+
+            remaining_lines = remaining_lines[fit2:]
+            footer()
+    else:
+        footer()
+
+    pdf.save()
+    inv.pdf_path = pdf_path
+    inv.pdf_generated_at = generated_dt
+    session.add(inv)
+    session.commit()
+
+    return pdf_path
+
+
+def _render_strip_pdf(
+    *,
+    session,
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    customer_email: str,
+    customer_phone: str,
+    customer_address: str,
+    cfg: dict,
+    template_key: str,
+    pdf_path: str,
+    display_no: str,
+    doc_label: str,
+    generated_dt: datetime,
+    generated_str: str,
+    owner_logo_abs: str,
+    owner_logo_blob: bytes | None,
+    is_estimate: bool,
+):
+    PAGE_W, PAGE_H = LETTER
+    M = 0.7 * inch
+
+    pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
+    pdf.setTitle(f"{doc_label.title()} - {display_no}")
+
+    accent = colors.HexColor("#0ea5a4")
+    accent_dark = colors.HexColor("#0f172a")
+    line_color = colors.HexColor("#e5e7eb")
+    muted = colors.HexColor("#6b7280")
+
+    def right_text(x, y, text, font="Helvetica", size=10, color=colors.black):
+        pdf.setFont(font, size)
+        pdf.setFillColor(color)
+        w = pdf.stringWidth(str(text), font, size)
+        pdf.drawString(x - w, y, str(text))
+
+    def label_value(x, y, label, value, label_font=("Helvetica-Bold", 9), value_font=("Helvetica", 10)):
+        pdf.setFont(*label_font)
+        pdf.setFillColor(colors.black)
+        pdf.drawString(x, y, label)
+        pdf.setFont(*value_font)
+        pdf.drawString(x + 70, y, str(value))
+
+    def label_right_value(x_left, x_right, y, label, value, label_font=("Helvetica-Bold", 9), value_font=("Helvetica", 10)):
+        pdf.setFont(*label_font)
+        pdf.setFillColor(colors.black)
+        pdf.drawString(x_left, y, label)
+        right_text(x_right, y, str(value), value_font[0], value_font[1], colors.black)
+
+    # Header
+    header_h = 1.1 * inch
+    pdf.setFillColor(colors.white)
+    pdf.rect(0, PAGE_H - header_h, PAGE_W, header_h, stroke=0, fill=1)
+    pdf.setStrokeColor(line_color)
+    pdf.setLineWidth(1)
+    pdf.line(M, PAGE_H - header_h - 6, PAGE_W - M, PAGE_H - header_h - 6)
+
+    # Logo / business name left
+    logo_w = 0
+    if owner_logo_blob:
+        try:
+            img = ImageReader(io.BytesIO(owner_logo_blob))
+            iw, ih = img.getSize()
+            max_h = 0.45 * inch
+            max_w = 1.1 * inch
+            scale = min(max_w / iw, max_h / ih)
+            w = iw * scale
+            h = ih * scale
+            pdf.drawImage(img, M, PAGE_H - 0.7 * inch - (h / 2), width=w, height=h, mask="auto")
+            logo_w = w + 10
+        except Exception:
+            logo_w = 0
+    elif owner_logo_abs and os.path.exists(owner_logo_abs):
+        try:
+            img = ImageReader(owner_logo_abs)
+            iw, ih = img.getSize()
+            max_h = 0.45 * inch
+            max_w = 1.1 * inch
+            scale = min(max_w / float(iw), max_h / float(ih))
+            w = float(iw) * scale
+            h = float(ih) * scale
+            pdf.drawImage(img, M, PAGE_H - 0.7 * inch - (h / 2), width=w, height=h, mask="auto")
+            logo_w = w + 10
+        except Exception:
+            logo_w = 0
+
+    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
+    username = (getattr(owner, "username", None) or "").strip() if owner else ""
+    header_name = business_name or username or "InvoiceRunner"
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.setFillColor(colors.black)
+    pdf.drawString(M + logo_w, PAGE_H - 0.72 * inch, header_name)
+
+    pdf.setFont("Helvetica", 9)
+    pdf.setFillColor(muted)
+    header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
+    header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+    info_lines = []
+    if header_address:
+        info_lines.extend(_wrap_text(header_address, "Helvetica", 9, 3.6 * inch))
+    if header_phone:
+        info_lines.append(header_phone)
+    info_y = PAGE_H - 0.95 * inch
+    for ln in info_lines[:2]:
+        pdf.drawString(M + logo_w, info_y, ln)
+        info_y -= 12
+
+    # Invoice label right
+    right_x = PAGE_W - M
+    right_text(right_x, PAGE_H - 0.55 * inch, f"{doc_label.title()} {display_no}", "Helvetica-Bold", 12, accent_dark)
+    template_labels = {
+        "auto_repair": "Auto Repair",
+        "general_service": "General Service",
+        "accountant": "Accountant",
+        "computer_repair": "Computer Repair",
+        "lawn_care": "Lawn Care",
+        "flipping_items": "Flipping Items",
+    }
+    prof_label = template_labels.get(template_key, "Service")
+    right_text(right_x, PAGE_H - 0.74 * inch, f"{prof_label} {doc_label.lower()}", "Helvetica", 9, muted)
+
+    # Bill to + meta
+    top_y = PAGE_H - header_h - 0.35 * inch
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.setFillColor(colors.black)
+    pdf.drawString(M, top_y, "BILL TO")
+
+    # Customer name
+    if customer and (getattr(customer, "name", None) or "").strip():
+        customer_name = (customer.name or "").strip()
+    else:
+        nameFirst, _, _tail = (inv.name or "").partition(":")
+        customer_name = (nameFirst or inv.name or "").strip()
+
+    pdf.setFont("Helvetica", 9)
+    pdf.setFillColor(colors.black)
+    y_bill = top_y - 14
+    for ln in _wrap_text(customer_name, "Helvetica", 9, 3.2 * inch):
+        pdf.drawString(M, y_bill, ln)
+        y_bill -= 12
+
+    if customer_address:
+        for ln in _wrap_text(customer_address, "Helvetica", 9, 3.2 * inch)[:3]:
+            pdf.drawString(M, y_bill, ln)
+            y_bill -= 12
+
+    if customer_email:
+        pdf.drawString(M, y_bill, f"Email: {customer_email}")
+        y_bill -= 12
+    if customer_phone:
+        pdf.drawString(M, y_bill, f"Phone: {customer_phone}")
+        y_bill -= 12
+
+    # Meta block on right
+    meta_x = PAGE_W - M - 180
+    meta_y = top_y - 4
+    label_value(meta_x, meta_y, "Issue date:", inv.date_in)
+    label_value(meta_x, meta_y - 14, "Reference:", display_no)
+
+    # Summary strip
+    strip_y = top_y - 70
+    strip_h = 0.55 * inch
+    strip_x = M
+    strip_w = PAGE_W - 2 * M
+    pdf.setFillColor(accent)
+    pdf.rect(strip_x, strip_y - strip_h, strip_w, strip_h, stroke=0, fill=1)
+
+    box_w = strip_w / 4
+    pdf.setFillColor(colors.white)
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawString(strip_x + 10, strip_y - 16, "Invoice No.")
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(strip_x + 10, strip_y - 34, display_no)
+
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawString(strip_x + box_w + 10, strip_y - 16, "Issue date")
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(strip_x + box_w + 10, strip_y - 34, inv.date_in)
+
+    total_price = inv.invoice_total()
+    pdf.setFillColor(accent_dark)
+    pdf.rect(strip_x + (2 * box_w), strip_y - strip_h, box_w * 2, strip_h, stroke=0, fill=1)
+    pdf.setFillColor(colors.white)
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawString(strip_x + (2 * box_w) + 10, strip_y - 16, "Total due")
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.drawString(strip_x + (2 * box_w) + 10, strip_y - 36, _money(total_price))
+
+    # Table
+    def draw_table(title, x, y_top, col_titles, rows, col_widths, money_cols=None):
+        money_cols = set(money_cols or [])
+        base_row_h = 16
+        title_gap = 18
+
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.setFillColor(colors.black)
+        pdf.drawString(x, y_top, title)
+        y = y_top - title_gap
+
+        table_w = sum(col_widths)
+        pdf.setStrokeColor(line_color)
+        pdf.setLineWidth(1)
+        pdf.line(x, y - 6, x + table_w, y - 6)
+
+        pdf.setFont("Helvetica-Bold", 9)
+        pdf.setFillColor(colors.black)
+        cx = x
+        for i, h in enumerate(col_titles):
+            if i in money_cols:
+                right_text(cx + col_widths[i] - 6, y, h, "Helvetica-Bold", 9)
+            else:
+                pdf.drawString(cx + 6, y, h)
+            cx += col_widths[i]
+
+        y_cursor = y - base_row_h
+        pdf.setFont("Helvetica", 10)
+
+        for row in rows:
+            wrapped_cells = []
+            row_height = base_row_h
+            for i, cell in enumerate(row):
+                max_w = col_widths[i] - 12
+                lines = _wrap_text(cell, "Helvetica", 10, max_w)
+                wrapped_cells.append(lines)
+                row_height = max(row_height, len(lines) * base_row_h)
+
+            cx = x
+            for i, lines in enumerate(wrapped_cells):
+                line_y = y_cursor
+                for line in lines:
+                    if i in money_cols:
+                        right_text(cx + col_widths[i] - 6, line_y, line, "Helvetica", 10)
+                    else:
+                        pdf.drawString(cx + 6, line_y, line)
+                    line_y -= base_row_h
+                cx += col_widths[i]
+
+            pdf.setStrokeColor(line_color)
+            pdf.line(x, y_cursor - 4, x + table_w, y_cursor - 4)
+            y_cursor -= row_height
+
+        pdf.setStrokeColor(colors.black)
+        return y_cursor - 6
+
+    body_y = strip_y - strip_h - 0.35 * inch
+
+    labor_rows = []
+    rate = float(inv.price_per_hour or 0.0)
+    for li in inv.labor_items:
+        try:
+            t = float(li.labor_time_hours or 0.0)
+        except Exception:
+            t = 0.0
+        line_total = t * rate
+        labor_rows.append([
+            li.labor_desc or "",
+            f"{t:g} {cfg.get('hours_suffix', 'hrs')}" if t else "",
+            _money(line_total) if line_total else ""
+        ])
+
+    body_y = draw_table(
+        cfg["labor_title"],
+        M,
+        body_y,
+        [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
+        labor_rows,
+        col_widths=[PAGE_W - 2 * M - 190, 90, 100],
+        money_cols={2}
+    )
+
+    parts_rows = []
+    for p in inv.parts:
+        parts_rows.append([
+            p.part_name or "",
+            _money(inv.part_price_with_markup(p.part_price or 0.0)) if (p.part_price or 0.0) else ""
+        ])
+
+    has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
+    if has_parts_rows:
+        body_y = draw_table(
+            cfg["parts_title"],
+            M,
+            body_y - 10,
+            [cfg["parts_name_label"], cfg.get("parts_price_label", "Price")],
+            parts_rows,
+            col_widths=[PAGE_W - 2 * M - 120, 120],
+            money_cols={1}
+        )
+
+    # Summary block at bottom right
+    total_parts = inv.parts_total()
+    total_labor = inv.labor_total()
+    tax_amount = inv.tax_amount()
+    price_owed = inv.amount_due()
+
+    sum_w = 2.5 * inch
+    sum_x = PAGE_W - M - sum_w
+    row_count = 2  # labor + total
+    if has_parts_rows and total_parts:
+        row_count += 1
+    if inv.shop_supplies:
+        row_count += 1
+    if tax_amount:
+        row_count += 1
+    if not is_estimate:
+        row_count += 1  # paid
+        row_count += 1  # amount due
+    sum_h = max(1.2 * inch, (0.48 * inch + (row_count * 0.22 * inch)))
+    sum_y = max(body_y - 12, (sum_h + 0.4 * inch))
+    pdf.setStrokeColor(line_color)
+    pdf.roundRect(sum_x, sum_y - sum_h, sum_w, sum_h, 8, stroke=1, fill=0)
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(sum_x + 10, sum_y - 16, "Summary")
+
+    y = sum_y - 36
+    right_edge = sum_x + sum_w - 10
+    label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 14
+    if has_parts_rows and total_parts:
+        label_right_value(sum_x + 10, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 14
+    if inv.shop_supplies:
+        label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 14
+    if tax_amount:
+        label_right_value(sum_x + 10, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 14
+
+    pdf.setStrokeColor(line_color)
+    pdf.line(sum_x + 10, y + 4, sum_x + sum_w - 10, y + 4)
+    pdf.setStrokeColor(colors.black)
+    y -= 8
+    label = "Estimated Total:" if is_estimate else "Total:"
+    label_right_value(sum_x + 10, right_edge, y, label, _money(total_price)); y -= 16
+    if not is_estimate:
+        label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(inv.paid)); y -= 16
+        label_right_value(sum_x + 10, right_edge, y, "Amount Due:", _money(price_owed))
+
+    # Footer
+    pdf.setFont("Helvetica-Oblique", 9)
+    pdf.setFillColor(muted)
+    if is_estimate:
+        pdf.drawString(M, 0.55 * inch, "Total is an estimated cost of service. Actual amount may differ.")
+    else:
+        pdf.drawString(M, 0.55 * inch, "Thank you for your business.")
+    pdf.setFillColor(colors.black)
+
+    pdf.save()
+    inv.pdf_path = pdf_path
+    inv.pdf_generated_at = generated_dt
+    session.add(inv)
+    session.commit()
+
+    return pdf_path
 
 
 def generate_and_store_pdf(session, invoice_id: int) -> str:
@@ -267,6 +1543,12 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         template_key = "auto_repair"
     cfg = TEMPLATE_CFG[template_key]
 
+    owner_pdf_template = (getattr(owner, "pdf_template", None) or "").strip() if owner else ""
+    inv_pdf_template = (getattr(inv, "pdf_template", None) or "").strip()
+    if owner_pdf_template:
+        inv.pdf_template = owner_pdf_template
+    pdf_template_key = _pdf_template_key_fallback(owner_pdf_template or inv_pdf_template)
+
     # Determine header identity lines (left side)
     business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
@@ -307,6 +1589,68 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     pdf_path = os.path.abspath(os.path.join(year_dir, pdf_filename))
 
     doc_label = "ESTIMATE" if is_estimate else "INVOICE"
+
+    if pdf_template_key == "modern":
+        return _render_modern_pdf(
+            session=session,
+            inv=inv,
+            owner=owner,
+            customer=customer,
+            customer_email=customer_email,
+            customer_phone=customer_phone,
+            customer_address=customer_address,
+            cfg=cfg,
+            template_key=template_key,
+            pdf_path=pdf_path,
+            display_no=display_no,
+            doc_label=doc_label,
+            generated_dt=generated_dt,
+            generated_str=generated_str,
+            owner_logo_abs=owner_logo_abs,
+            owner_logo_blob=owner_logo_blob,
+            is_estimate=is_estimate,
+        )
+    if pdf_template_key == "split_panel":
+        return _render_split_panel_pdf(
+            session=session,
+            inv=inv,
+            owner=owner,
+            customer=customer,
+            customer_email=customer_email,
+            customer_phone=customer_phone,
+            customer_address=customer_address,
+            cfg=cfg,
+            template_key=template_key,
+            pdf_path=pdf_path,
+            display_no=display_no,
+            doc_label=doc_label,
+            generated_dt=generated_dt,
+            generated_str=generated_str,
+            owner_logo_abs=owner_logo_abs,
+            owner_logo_blob=owner_logo_blob,
+            is_estimate=is_estimate,
+        )
+    if pdf_template_key == "strip":
+        return _render_strip_pdf(
+            session=session,
+            inv=inv,
+            owner=owner,
+            customer=customer,
+            customer_email=customer_email,
+            customer_phone=customer_phone,
+            customer_address=customer_address,
+            cfg=cfg,
+            template_key=template_key,
+            pdf_path=pdf_path,
+            display_no=display_no,
+            doc_label=doc_label,
+            generated_dt=generated_dt,
+            generated_str=generated_str,
+            owner_logo_abs=owner_logo_abs,
+            owner_logo_blob=owner_logo_blob,
+            is_estimate=is_estimate,
+        )
+
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
 
@@ -733,6 +2077,8 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
     if inv.shop_supplies:
         label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
+    if tax_amount:
+        label_right_value(sum_x + 10, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 16
 
     pdf.setStrokeColor(colors.HexColor("#DDDDDD"))
     pdf.line(sum_x + 10, y + 4, sum_x + sum_w - 10, y + 4)
@@ -765,7 +2111,10 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     def footer():
         pdf.setFont("Helvetica-Oblique", 9)
         pdf.setFillColor(colors.grey)
-        pdf.drawString(M, footer_y, "Thank you for your business.")
+        if is_estimate:
+            pdf.drawString(M, footer_y, "Total is an estimated cost of service. Actual amount may differ.")
+        else:
+            pdf.drawString(M, footer_y, "Thank you for your business.")
         pdf.setFillColorRGB(0, 0, 0)
 
     if remaining_lines:

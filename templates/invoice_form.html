@@ -157,6 +157,19 @@
         <div class="small-muted mt-1">Applies to each part price (shown on web only).</div>
       </div>
 
+      <div class="col-6 col-md-3">
+        <label class="form-label">Tax (%)</label>
+        <input class="form-control" name="tax_rate" inputmode="decimal"
+               value="{% if mode=='edit' %}{{ inv.tax_rate if inv.tax_rate is not none else '0' }}{% else %}{{ (form.tax_rate if form else (user_tax_rate if user_tax_rate is defined else '0')) }}{% endif %}">
+      </div>
+
+      <div class="col-6 col-md-3">
+        <label class="form-label">Tax Override ($)</label>
+        <input class="form-control" name="tax_override" inputmode="decimal"
+               value="{% if mode=='edit' %}{{ inv.tax_override if inv.tax_override is not none else '' }}{% else %}{{ (form.tax_override if form else '') }}{% endif %}">
+        <div class="small-muted mt-1">Optional. Overrides the tax % for this invoice.</div>
+      </div>
+
       {% if doc_type != "estimate" %}
         <div class="col-6 col-md-3">
           <label class="form-label">

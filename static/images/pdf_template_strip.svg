@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <rect width="800" height="520" fill="#ffffff"/>
+  <rect x="40" y="40" width="720" height="90" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="40" y="150" width="720" height="50" fill="#f8b84a"/>
+  <rect x="40" y="220" width="720" height="140" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="40" y="370" width="720" height="90" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="60" y="90" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#0f172a">Invoice Strip</text>
+  <text x="60" y="185" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#ffffff">Totals Strip</text>
+</svg>

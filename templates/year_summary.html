@@ -66,6 +66,10 @@
         <div class="fw-semibold">{{ money(total_supplies) }}</div>
       </div>
       <div class="col-6 col-md-3">
+        <div class="small-muted">Total Taxes Collected</div>
+        <div class="fw-semibold">{{ money(total_tax_collected) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
         <div class="small-muted">Total Invoiced Expenses</div>
         <div class="fw-semibold">{{ money(total_invoice_amount - total_labor) }}</div>
       </div>

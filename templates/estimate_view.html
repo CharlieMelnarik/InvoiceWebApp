@@ -14,6 +14,7 @@
 {% set shop_supplies_label = _tmpl.get('shop_supplies_label', 'Shop Supplies') %}
 
 {% set total = inv.invoice_total() %}
+{% set tax_amount = inv.tax_amount() %}
 {% set tmpl_key = inv.invoice_template or "auto_repair" %}
 
 <div class="page-header">
@@ -63,6 +64,13 @@
           <div class="small-muted">{{ job_label }}</div>
           <div>{{ inv.vehicle }}</div>
         </div>
+
+        {% if tax_amount and tax_amount > 0 %}
+          <div class="mb-2">
+            <div class="small-muted">Tax</div>
+            <div class="mono">${{ "%.2f"|format(tax_amount) }}</div>
+          </div>
+        {% endif %}
 
         <div class="mb-0">
           <div class="small-muted">Estimated Total</div>

@@ -184,6 +184,46 @@
       gap: 0.5rem;
       flex-wrap: wrap;
     }
+
+    .pdf-template-card {
+      display: block;
+      cursor: pointer;
+    }
+    .pdf-template-card input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .pdf-template-body {
+      border: 1px solid var(--app-line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #ffffff;
+      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      height: 100%;
+    }
+    .pdf-template-card input:checked + .pdf-template-body {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+    }
+    .pdf-template-preview img {
+      width: 100%;
+      height: 150px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--app-line);
+      background: #f8fafc;
+    }
+    .pdf-template-title {
+      margin-top: 10px;
+      font-weight: 700;
+    }
+    .pdf-template-desc {
+      margin-top: 4px;
+      font-size: 0.85rem;
+      color: var(--app-muted);
+    }
     .mobile-actions-toggle {
       display: none;
       align-items: center;

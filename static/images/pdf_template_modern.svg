@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <rect width="800" height="520" fill="#f1f5f9"/>
+  <rect x="0" y="0" width="800" height="120" fill="#0f172a"/>
+  <rect x="40" y="150" width="340" height="120" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="420" y="150" width="340" height="120" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="40" y="300" width="720" height="46" rx="8" fill="#2563eb"/>
+  <rect x="40" y="350" width="720" height="130" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="500" y="430" width="260" height="60" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="60" y="70" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#ffffff">Modern Layout</text>
+  <text x="60" y="225" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#64748b">Client</text>
+  <text x="440" y="225" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#64748b">Details</text>
+</svg>
