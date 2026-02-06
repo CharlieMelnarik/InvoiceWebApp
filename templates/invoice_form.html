@@ -132,8 +132,10 @@
       {% else %}
         <div class="col-6 col-md-3">
           <label class="form-label">Hours (Total)</label>
-          <input class="form-control" name="hours" inputmode="decimal"
+          <input class="form-control" id="laborHoursTotal" inputmode="decimal" disabled>
+          <input type="hidden" name="hours" id="laborHoursHidden"
                  value="{% if mode=='edit' %}{{ inv.hours }}{% else %}{{ (form.hours if form else '') }}{% endif %}">
+          <div class="small-muted mt-1">Calculated from labor line items.</div>
         </div>
         <div class="col-6 col-md-3">
           <label class="form-label">Rate / Hour</label>
@@ -178,9 +180,14 @@
     <!-- Parts / Materials -->
     <div class="d-flex justify-content-between align-items-center mb-2">
       <h2 class="h5 fw-bold mb-0">{{ parts_title }}</h2>
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addPartRow()">
-        Add Item
-      </button>
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addPartRow()">
+          Add Item
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#receiptModal">
+          Scan Receipt
+        </button>
+      </div>
     </div>
 
     <div class="table-responsive">
@@ -296,11 +303,78 @@
   </div>
 </form>
 
+<!-- Receipt Scan Modal -->
+<div class="modal fade" id="receiptModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Scan Receipt</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12 col-md-6">
+            <label class="form-label">Receipt Image</label>
+            <input class="form-control" type="file" id="receiptFile" accept="image/*" capture="environment">
+            <div class="small-muted mt-2">
+              You can upload an image or use your device camera.
+            </div>
+            <button class="btn btn-outline-primary mt-3 w-100" id="btnScanReceipt" type="button" disabled>
+              Scan Receipt
+            </button>
+          </div>
+          <div class="col-12 col-md-6">
+            <div class="small-muted mb-2">Preview</div>
+            <div class="border rounded p-2 bg-light" style="min-height: 200px;">
+              <img id="receiptPreview" alt="Receipt preview" style="max-width:100%; display:none;">
+              <div id="receiptPreviewEmpty" class="small-muted">No image selected.</div>
+            </div>
+          </div>
+        </div>
+
+        <hr class="my-3">
+
+        <div>
+          <div class="fw-semibold mb-2">Detected Items</div>
+          <div id="receiptItemsEmpty" class="small-muted">No items detected yet.</div>
+          <div id="receiptItemsList" class="list-group" style="display:none;"></div>
+          <details class="mt-3">
+            <summary class="small-muted">Show raw OCR text</summary>
+            <pre id="receiptOcrText" class="mt-2 p-2 bg-light border rounded" style="white-space: pre-wrap; max-height: 220px; overflow:auto;"></pre>
+          </details>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal" type="button">Close</button>
+        <button class="btn btn-primary" id="btnAddReceiptItems" type="button" disabled>
+          Add Selected Items
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   function removeRow(btn) {
     const tr = btn.closest("tr");
     if (!tr) return;
     tr.remove();
+  }
+
+  function titleCaseWords(value) {
+    const acronyms = new Set([
+      "OEM", "ACD", "ACDELCO", "GM", "FORD", "MOPAR", "VW", "BMW", "AUDI", "NAPA",
+      "O2", "OBD", "OBD2", "ABS", "TPMS", "HVAC", "CV", "ATF", "DOT", "PS", "DIY",
+      "LED", "HID", "DRL", "AWD", "RWD", "FWD", "4WD", "2WD", "12V", "24V", "EV",
+      "AGM", "EGR", "PCV", "MAF", "MAP", "TPS", "IAC", "IAT", "ECU", "PCM", "TCM"
+    ]);
+    return (value || "")
+      .toLowerCase()
+      .replace(/\b([a-z])([a-z]*)/g, (m, first, rest) => first.toUpperCase() + rest)
+      .replace(/\b([A-Za-z0-9]+)\b/g, (m) => {
+        const key = m.toUpperCase();
+        return acronyms.has(key) ? key : m;
+      });
   }
 
   function addPartRow() {
@@ -309,6 +383,19 @@
     tr.innerHTML = `
       <td><input class="form-control" name="part_name" placeholder="{{ parts_name_label|e }}"></td>
       <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="0.00"></td>
+      <td class="text-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  function addPartRowWithValues(name, price) {
+    const tbody = document.querySelector("#partsTable tbody");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input class="form-control" name="part_name" value="${titleCaseWords(name || "")}"></td>
+      <td><input class="form-control" name="part_price" inputmode="decimal" value="${price || ""}"></td>
       <td class="text-end">
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
       </td>
@@ -457,6 +544,159 @@
 
     input.addEventListener("input", updateLinks);
     updateLinks();
+  })();
+
+  (function () {
+    const fileInput = document.getElementById("receiptFile");
+    const preview = document.getElementById("receiptPreview");
+    const previewEmpty = document.getElementById("receiptPreviewEmpty");
+    const scanBtn = document.getElementById("btnScanReceipt");
+    const itemsList = document.getElementById("receiptItemsList");
+    const itemsEmpty = document.getElementById("receiptItemsEmpty");
+    const addBtn = document.getElementById("btnAddReceiptItems");
+    const ocrTextEl = document.getElementById("receiptOcrText");
+
+    if (!fileInput || !scanBtn) return;
+
+    let parsedItems = [];
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files && fileInput.files[0];
+      parsedItems = [];
+      itemsList.style.display = "none";
+      itemsList.innerHTML = "";
+      itemsEmpty.style.display = "";
+      addBtn.disabled = true;
+
+      if (!file) {
+        preview.style.display = "none";
+        previewEmpty.style.display = "";
+        scanBtn.disabled = true;
+        return;
+      }
+
+      preview.src = URL.createObjectURL(file);
+      preview.style.display = "";
+      previewEmpty.style.display = "none";
+      scanBtn.disabled = false;
+    });
+
+    scanBtn.addEventListener("click", async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      scanBtn.disabled = true;
+      scanBtn.textContent = "Scanning...";
+
+      try {
+        const fd = new FormData();
+        fd.append("image", file);
+        const res = await fetch("/api/receipts/scan", { method: "POST", body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(data.error || "Receipt scan failed.");
+          return;
+        }
+
+        parsedItems = Array.isArray(data.items) ? data.items : [];
+        if (ocrTextEl) {
+          ocrTextEl.textContent = (data.text || "").trim();
+        }
+        itemsList.innerHTML = "";
+
+        if (!parsedItems.length) {
+          itemsEmpty.textContent = "No items detected. Try a clearer image.";
+          itemsEmpty.style.display = "";
+          itemsList.style.display = "none";
+          addBtn.disabled = true;
+          return;
+        }
+
+        parsedItems.forEach((item, idx) => {
+          const label = `${item.name} — $${item.price}`;
+          const row = document.createElement("label");
+          row.className = "list-group-item d-flex align-items-center gap-2";
+          row.innerHTML = `
+            <input class="form-check-input me-1" type="checkbox" checked data-index="${idx}">
+            <span>${label}</span>
+          `;
+          itemsList.appendChild(row);
+        });
+
+        itemsEmpty.style.display = "none";
+        itemsList.style.display = "";
+        addBtn.disabled = false;
+      } finally {
+        scanBtn.disabled = false;
+        scanBtn.textContent = "Scan Receipt";
+      }
+    });
+
+    addBtn.addEventListener("click", () => {
+      const checks = itemsList.querySelectorAll("input[type='checkbox']");
+      let added = 0;
+      checks.forEach((chk) => {
+        if (!chk.checked) return;
+        const idx = Number(chk.dataset.index || "-1");
+        if (!Number.isNaN(idx) && parsedItems[idx]) {
+          const item = parsedItems[idx];
+          addPartRowWithValues(item.name, item.price);
+          added += 1;
+        }
+      });
+
+      if (added > 0) {
+        const modalEl = document.getElementById("receiptModal");
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        if (modal) modal.hide();
+      }
+    });
+  })();
+
+  (function () {
+    const totalInput = document.getElementById("laborHoursTotal");
+    const hiddenInput = document.getElementById("laborHoursHidden");
+    if (!totalInput || !hiddenInput) return;
+
+    function parseHours(val) {
+      const n = parseFloat(String(val || "").replace(",", "."));
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function recalcLaborHours() {
+      const inputs = document.querySelectorAll("input[name='labor_time_hours']");
+      let sum = 0;
+      inputs.forEach((inp) => {
+        sum += parseHours(inp.value);
+      });
+      const rounded = Math.round(sum * 100) / 100;
+      totalInput.value = rounded ? String(rounded) : "0";
+      hiddenInput.value = String(rounded);
+    }
+
+    document.addEventListener("input", (e) => {
+      if (e.target && e.target.name === "labor_time_hours") {
+        recalcLaborHours();
+      }
+    });
+
+    recalcLaborHours();
+  })();
+
+  (function () {
+    function applyTitleCaseInput(e) {
+      if (!e.target || e.target.name !== "part_name") return;
+      const start = e.target.selectionStart;
+      const end = e.target.selectionEnd;
+      const updated = titleCaseWords(e.target.value);
+      if (updated !== e.target.value) {
+        e.target.value = updated;
+        if (typeof start === "number" && typeof end === "number") {
+          e.target.setSelectionRange(start, end);
+        }
+      }
+    }
+
+    document.addEventListener("input", applyTitleCaseInput);
   })();
 </script>
 

@@ -26,7 +26,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError, ImageFile
+import pytesseract
 
 from config import Config
 from models import (
@@ -121,6 +122,141 @@ def _process_logo_upload_to_png_bytes(file_storage) -> bytes:
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True, compress_level=9)
     return out.getvalue()
+
+
+def _parse_receipt_text_to_items(text: str) -> list[dict]:
+    """
+    Parse OCR receipt text into line items.
+    Heuristic: lines with a price near the end (e.g. $12.34 or 12.34).
+    """
+    items = []
+    if not text:
+        return items
+
+    prev_item_name = ""
+    last_item_index = -1
+    in_items_section = False
+    items_section_hits = 0
+    noisy_chars_re = re.compile(r"[^\w\s\-\./#@]")
+
+    for raw_line in text.splitlines():
+        line = (raw_line or "").strip()
+        if not line:
+            continue
+
+        # Drop obviously noisy/long lines unless they contain a price we can parse
+        if len(line) > 80 and not re.search(r"\d{1,5}[.,]\d{2}\s*[A-Z]?\s*$", line):
+            continue
+
+        # Skip common non-item descriptor lines (often after item line on auto parts receipts)
+        if any(k in line.lower() for k in ("manufacturer", "warranty", "returned")):
+            continue
+
+        # Ignore common totals/taxes
+        lower = line.lower()
+        if any(k in lower for k in ("subtotal", "tax", "total", "change", "balance", "visa", "mastercard", "amex", "approval", "ref #", "trans", "tend", "debit", "aid ", "terminal", "signature", "customer copy", "items sold", "st#", "op#", "te#", "tr#", "store", "manager", "philadelphia", "address", "invoice #", "drawer", "counter #", "reprint", "store hours", "receipt", "reg #", "csr", "rewards", "member", "auth", "chip", "payment", "autozone", "how did we do", "program terms", "www.")):
+            continue
+        if "wages" in lower:
+            continue
+        if re.match(r"^date[:\s]", lower):
+            continue
+
+        # Price patterns (prefer rightmost, allow optional trailing flags)
+        m = re.search(r"(-?\$?\d{1,5}(?:[.,]\d{2})?)\s*[A-Z]?\s*$", line)
+        if m:
+            in_items_section = True
+            items_section_hits += 1
+            price_raw = m.group(1).replace(",", ".").replace("$", "").strip()
+            try:
+                price_val = float(price_raw)
+            except Exception:
+                continue
+            if price_val == 0 or abs(price_val) > 5000:
+                continue
+
+            name_part = line[: m.start(1)].strip(" -\t")
+            if not name_part:
+                continue
+            # Require some letters in the name to avoid phone/IDs
+            if not re.search(r"[A-Za-z]", name_part):
+                continue
+            # Drop lines that are mostly digits/ids
+            if re.fullmatch(r"[\d\s\-/().#]+", name_part):
+                continue
+            # Strip common UPC/ID blocks at end of line
+            name_part = re.sub(r"\s+\d{6,}[A-Z0-9]*$", "", name_part).strip()
+            # Strip leading IDs / account-like tokens
+            name_part = re.sub(r"^[A-Z0-9]{6,}\s+", "", name_part).strip()
+            # Remove trailing quantity markers like "X" or "F"
+            name_part = re.sub(r"\b[XF]\b$", "", name_part).strip()
+            if len(name_part) < 3:
+                continue
+            if len(name_part) > 60:
+                continue
+            if re.search(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", name_part):
+                continue
+            # Ignore lines that are clearly headers even if they have a price
+            if re.search(r"\b(invoice|date|drawer|counter)\b", name_part.lower()):
+                continue
+            # Filter noisy lines (too many symbols vs letters)
+            if noisy_chars_re.search(name_part):
+                letters = len(re.findall(r"[A-Za-z]", name_part))
+                if letters < 3:
+                    continue
+                non_alnum = len(re.findall(r"[^\w\s\-./#@]", name_part))
+                if non_alnum / max(1, len(name_part)) > 0.15:
+                    continue
+
+            items.append({
+                "name": name_part,
+                "price": f"{price_val:.2f}",
+                "raw": line,
+            })
+            prev_item_name = ""
+            last_item_index = len(items) - 1
+            continue
+
+        # If the previous line was an item with price, append description-only lines to it.
+        if last_item_index >= 0:
+            if re.search(r"[A-Za-z]", line):
+                if not re.search(r"\b(subtotal|tax|total|change|balance|invoice|date|drawer|counter|reprint|receipt|reg|csr|rewards|member|auth|chip|payment)\b", line.lower()):
+                    if len(line) <= 40:
+                        # Skip noisy descriptor lines
+                        non_alnum = len(re.findall(r"[^\w\s\-./#@]", line))
+                        if non_alnum / max(1, len(line)) <= 0.15:
+                            items[last_item_index]["name"] = f"{items[last_item_index]['name']} {line}".strip()
+                        continue
+
+        # Handle receipt lines split across two lines (e.g. name line followed by price line)
+        if prev_item_name:
+            m_price_only = re.search(r"^\$?\d{1,4}(?:[.,]\d{2})\s*[A-Z]?\s*$", line)
+            if m_price_only:
+                price_raw = m_price_only.group(0).replace(",", ".").replace("$", "").strip()
+                try:
+                    price_val = float(price_raw)
+                except Exception:
+                    continue
+                if price_val <= 0 or price_val > 5000:
+                    continue
+                items.append({
+                    "name": prev_item_name,
+                    "price": f"{price_val:.2f}",
+                    "raw": f"{prev_item_name} {price_val:.2f}",
+                })
+                prev_item_name = ""
+                last_item_index = len(items) - 1
+                continue
+
+        # Capture multi-line item descriptions: keep building name until price line appears.
+        if re.search(r"[A-Za-z]", line) and len(line) >= 3:
+            if not in_items_section and items_section_hits < 1:
+                continue
+            if prev_item_name:
+                prev_item_name = f"{prev_item_name} {line}".strip()
+            else:
+                prev_item_name = line
+
+    return items
 
 
 def _current_user_id_int() -> int:
@@ -2253,6 +2389,82 @@ def create_app():
 
             return jsonify({"ok": True, "id": ev.id})
 
+    @app.post("/api/receipts/scan")
+    @login_required
+    @subscription_required
+    def api_receipts_scan():
+        """
+        Accepts a receipt image and returns parsed line items.
+        """
+        img_file = request.files.get("image")
+        if not img_file or not getattr(img_file, "filename", ""):
+            return jsonify({"error": "Image is required."}), 400
+
+        try:
+            raw = img_file.read()
+            img_file.stream.seek(0)
+            if not raw:
+                return jsonify({"error": "Empty image file."}), 400
+            ImageFile.LOAD_TRUNCATED_IMAGES = True
+            img = Image.open(io.BytesIO(raw))
+            img.load()
+        except UnidentifiedImageError:
+            return jsonify({
+                "error": "Invalid image file. If this is HEIC, please convert to JPG/PNG first."
+            }), 400
+        except Exception:
+            return jsonify({"error": "Invalid image file."}), 400
+
+        try:
+            # Preprocess for better receipt OCR
+            img = img.convert("L")
+            img = img.resize((img.width * 2, img.height * 2))
+            # contrast boost
+            img = Image.eval(img, lambda x: 0 if x < 40 else 255 if x > 220 else x)
+            # adaptive-ish threshold: use a slightly lower cutoff to preserve faint text
+            img = img.point(lambda x: 0 if x < 150 else 255, mode="1")
+
+            text_psm4 = pytesseract.image_to_string(img, config="--oem 1 --psm 4")
+            text_psm6 = pytesseract.image_to_string(img, config="--oem 1 --psm 6")
+            text_psm11 = pytesseract.image_to_string(img, config="--oem 1 --psm 11")
+        except Exception:
+            return jsonify({"error": "OCR failed. Check Tesseract installation."}), 500
+
+        items4 = _parse_receipt_text_to_items(text_psm4)
+        items6 = _parse_receipt_text_to_items(text_psm6)
+        items11 = _parse_receipt_text_to_items(text_psm11)
+
+        # Merge passes: keep duplicates based on counts
+        def _count_items(items):
+            counts = {}
+            for it in items:
+                key = (it.get("name", "").lower(), it.get("price", ""))
+                counts[key] = counts.get(key, 0) + 1
+            return counts
+
+        out_items = list(items4)
+        count_out = _count_items(items4)
+
+        for it in items6:
+            key = (it.get("name", "").lower(), it.get("price", ""))
+            if _count_items(items6).get(key, 0) > count_out.get(key, 0):
+                out_items.append(it)
+                count_out[key] = count_out.get(key, 0) + 1
+
+        for it in items11:
+            key = (it.get("name", "").lower(), it.get("price", ""))
+            if _count_items(items11).get(key, 0) > count_out.get(key, 0):
+                out_items.append(it)
+                count_out[key] = count_out.get(key, 0) + 1
+
+        combined_text = (
+            "=== OCR (PSM 4) ===\n" + (text_psm4 or "").strip() +
+            "\n\n=== OCR (PSM 6) ===\n" + (text_psm6 or "").strip() +
+            "\n\n=== OCR (PSM 11) ===\n" + (text_psm11 or "").strip()
+        ).strip()
+
+        return jsonify({"items": out_items, "text": combined_text})
+
     @app.put("/api/schedule/events/<int:event_id>")
     @login_required
     @subscription_required
@@ -3007,6 +3219,8 @@ def create_app():
                 if user_template_key == "flipping_items":
                     price_per_hour = 1.0
                     hours = 0.0
+                else:
+                    hours = sum(t for _, t in labor_data)
 
                 inv = Invoice(
                     user_id=uid,
@@ -3162,6 +3376,8 @@ def create_app():
                     markup_multiplier = 1 + (parts_markup_percent or 0.0) / 100.0
                     parts_total_with_markup = parts_total * markup_multiplier
                     hours = paid_val - parts_total_with_markup - shop_supplies
+                else:
+                    hours = sum(t for _, t in labor_data)
 
                 inv = Invoice(
                     user_id=uid,
@@ -3296,6 +3512,8 @@ def create_app():
                 if tmpl_key == "flipping_items":
                     inv.price_per_hour = 1.0
                     inv.hours = 0.0
+                else:
+                    inv.hours = sum(t for _, t in labor_data)
                 inv.paid = 0.0
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = (request.form.get("notes") or "").rstrip()
@@ -3622,6 +3840,8 @@ def create_app():
                     markup_multiplier = 1 + (inv.parts_markup_percent or 0.0) / 100.0
                     parts_total_with_markup = parts_total * markup_multiplier
                     inv.hours = inv.paid - parts_total_with_markup - inv.shop_supplies
+                else:
+                    inv.hours = sum(t for _, t in labor_data)
                 inv.date_in = request.form.get("date_in", "").strip()
                 inv.notes = (request.form.get("notes") or "").rstrip()
                 inv.useful_info = (request.form.get("useful_info") or "").rstrip() or None
@@ -3693,6 +3913,26 @@ def create_app():
                 pass
         return None
 
+    def _parse_month_from_datein(date_in: str):
+        s = (date_in or "").strip()
+        if not s:
+            return None
+        m = re.search(r"(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})", s)
+        if m:
+            try:
+                month = int(m.group(1))
+            except Exception:
+                return None
+            if 1 <= month <= 12:
+                return month
+            return None
+        for fmt in ("%m/%d/%Y", "%m-%d-%Y", "%Y-%m-%d", "%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(s, fmt).month
+            except Exception:
+                pass
+        return None
+
     def _money(x: float) -> str:
         try:
             return f"${float(x):,.2f}"
@@ -3704,9 +3944,13 @@ def create_app():
     @subscription_required
     def year_summary():
         year_text = (request.args.get("year") or "").strip()
+        month_text = (request.args.get("month") or "").strip()
         if not (year_text.isdigit() and len(year_text) == 4):
             year_text = datetime.now().strftime("%Y")
         target_year = int(year_text)
+        target_month = int(month_text) if month_text.isdigit() else None
+        if target_month is not None and not (1 <= target_month <= 12):
+            target_month = None
 
         EPS = 0.01
         uid = _current_user_id_int()
@@ -3740,6 +3984,10 @@ def create_app():
                 yr = _parse_year_from_datein(inv.date_in)
                 if yr != target_year:
                     continue
+                if target_month is not None:
+                    mo = _parse_month_from_datein(inv.date_in)
+                    if mo != target_month:
+                        continue
 
                 parts_total_raw = inv.parts_total_raw()
                 parts_markup_profit = inv.parts_markup_amount()
@@ -3782,6 +4030,7 @@ def create_app():
 
         context = {
             "year": year_text,
+            "month": (str(target_month) if target_month else ""),
             "count": count,
             "total_invoice_amount": total_invoice_amount,
             "total_parts": total_parts,
@@ -3988,6 +4237,10 @@ def create_app():
     @subscription_required
     def pdfs_download_all():
         year = (request.args.get("year") or "").strip()
+        month_text = (request.args.get("month") or "").strip()
+        target_month = int(month_text) if month_text.isdigit() else None
+        if target_month is not None and not (1 <= target_month <= 12):
+            target_month = None
         uid = _current_user_id_int()
 
         with db_session() as s:
@@ -4004,6 +4257,10 @@ def create_app():
         mem = io.BytesIO()
         with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as z:
             for inv in invoices:
+                if target_month is not None:
+                    mo = _parse_month_from_datein(inv.date_in)
+                    if mo != target_month:
+                        continue
                 if inv.pdf_path and os.path.exists(inv.pdf_path):
                     z.write(inv.pdf_path, arcname=os.path.basename(inv.pdf_path))
 

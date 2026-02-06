@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% set title = "Year Summary" %}
+{% set title = "Financial Summary" %}
 
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
   <div>
-    <h1 class="h3 fw-bold mb-1">Year Summary</h1>
-    <div class="small-muted">Totals for invoices where “Date In” falls within the selected year.</div>
+    <h1 class="h3 fw-bold mb-1">Financial Summary</h1>
+    <div class="small-muted">Totals for invoices where “Date” falls within the selected range.</div>
   </div>
 </div>
 
@@ -13,14 +13,27 @@
   <div class="card-body">
     <div class="row g-2 align-items-end">
       <div class="col-6 col-md-3">
+        <label class="form-label">Month (optional)</label>
+        <select class="form-select" name="month">
+          <option value="" {% if not month %}selected{% endif %}>Year Summary</option>
+          {% for m in range(1, 13) %}
+            <option value="{{ m }}" {% if month and month|int == m %}selected{% endif %}>
+              {{ ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1] }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
         <label class="form-label">Year (e.g. 2025)</label>
         <input class="form-control" name="year" value="{{ year }}" />
       </div>
-      <div class="col-6 col-md-3 d-grid">
+      <div class="col-12 col-md-3 d-grid">
         <button class="btn btn-dark" type="submit">Calculate</button>
       </div>
-      <div class="col-12 col-md-6 text-md-end">
-        <a class="btn btn-outline-secondary" href="{{ url_for('pdfs_download_all', year=year) }}">Download PDFs (ZIP) for {{ year }}</a>
+      <div class="col-12 col-md-3 text-md-end">
+        <a class="btn btn-outline-secondary" href="{{ url_for('pdfs_download_all', year=year, month=month) }}">
+          Download PDFs (ZIP) for {{ month and (["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][month|int-1] ~ " ") or "" }}{{ year }}
+        </a>
       </div>
     </div>
   </div>
@@ -98,7 +111,7 @@
               <th>Invoice #</th>
               <th>Name</th>
               <th>Vehicle</th>
-              <th>Date In</th>
+              <th>Date</th>
               <th class="text-end">Outstanding</th>
               <th class="text-end">Open</th>
             </tr>
@@ -120,7 +133,7 @@
         </table>
       </div>
     {% else %}
-      <div class="small-muted">No unpaid invoices found for {{ year }}.</div>
+      <div class="small-muted">No unpaid invoices found for {{ month and (["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][month|int-1] ~ " ") or "" }}{{ year }}.</div>
     {% endif %}
   </div>
 </div>
