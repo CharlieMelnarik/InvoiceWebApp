@@ -140,7 +140,7 @@
         <div class="col-6 col-md-3">
           <label class="form-label">Rate / Hour</label>
           <input class="form-control" name="price_per_hour" inputmode="decimal"
-                 value="{% if mode=='edit' %}{{ inv.price_per_hour }}{% else %}{{ (form.price_per_hour if form else '') }}{% endif %}">
+                 value="{% if mode=='edit' %}{{ inv.price_per_hour }}{% else %}{{ (form.price_per_hour if form else (user_default_hourly_rate if user_default_hourly_rate is defined else '')) }}{% endif %}">
         </div>
       {% endif %}
 
@@ -153,7 +153,7 @@
       <div class="col-6 col-md-3">
         <label class="form-label">Parts Markup (%)</label>
         <input class="form-control" name="parts_markup_percent" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ inv.parts_markup_percent }}{% else %}{{ (form.parts_markup_percent if form else '0') }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.parts_markup_percent }}{% else %}{{ (form.parts_markup_percent if form else (user_default_parts_markup if user_default_parts_markup is defined else '0')) }}{% endif %}">
         <div class="small-muted mt-1">Applies to each part price (shown on web only).</div>
       </div>
 
@@ -161,13 +161,6 @@
         <label class="form-label">Tax (%)</label>
         <input class="form-control" name="tax_rate" inputmode="decimal"
                value="{% if mode=='edit' %}{{ inv.tax_rate if inv.tax_rate is not none else '0' }}{% else %}{{ (form.tax_rate if form else (user_tax_rate if user_tax_rate is defined else '0')) }}{% endif %}">
-      </div>
-
-      <div class="col-6 col-md-3">
-        <label class="form-label">Tax Override ($)</label>
-        <input class="form-control" name="tax_override" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ inv.tax_override if inv.tax_override is not none else '' }}{% else %}{{ (form.tax_override if form else '') }}{% endif %}">
-        <div class="small-muted mt-1">Optional. Overrides the tax % for this invoice.</div>
       </div>
 
       {% if doc_type != "estimate" %}

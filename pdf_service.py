@@ -42,7 +42,7 @@ def _format_phone(phone: str | None) -> str:
 
 def _tax_label(inv: Invoice) -> str:
     if getattr(inv, "tax_override", None) is not None:
-        return "Tax (override)"
+        return "Tax"
     rate = float(getattr(inv, "tax_rate", 0.0) or 0.0)
     if rate:
         return f"Tax ({rate:g}%)"

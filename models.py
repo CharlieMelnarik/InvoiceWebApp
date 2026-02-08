@@ -54,6 +54,10 @@ class User(Base):
     # Default tax rate percentage for NEW invoices/estimates
     tax_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
+    # Default hourly rate and parts markup for NEW invoices/estimates
+    default_hourly_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    default_parts_markup: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
     # Profile / business info (for PDF header)
     business_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)

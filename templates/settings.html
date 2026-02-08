@@ -88,7 +88,7 @@
               {% endfor %}
             </div>
             <div class="small-muted mt-2">
-              Applies to new invoices and estimates. Existing PDFs keep their original layout.
+              Applies to all invoices and estimates, new and existing, downloaded after this selection.
             </div>
           </div>
 
@@ -104,6 +104,36 @@
             >
             <div class="small-muted mt-1">
               This tax rate is applied to invoices and estimates unless overridden.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Default Hourly Rate</label>
+            <input
+              type="text"
+              class="form-control"
+              name="default_hourly_rate"
+              inputmode="decimal"
+              value="{{ u.default_hourly_rate if u.default_hourly_rate is not none else '0' }}"
+              placeholder="0.00"
+            >
+            <div class="small-muted mt-1">
+              This rate pre-fills new invoices and estimates.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Default Parts Markup (%)</label>
+            <input
+              type="text"
+              class="form-control"
+              name="default_parts_markup"
+              inputmode="decimal"
+              value="{{ u.default_parts_markup if u.default_parts_markup is not none else '0' }}"
+              placeholder="0.0"
+            >
+            <div class="small-muted mt-1">
+              This markup pre-fills new invoices and estimates.
             </div>
           </div>
 

@@ -951,6 +951,21 @@ def _migrate_user_tax_rate(engine):
             conn.execute(text("UPDATE users SET tax_rate=0 WHERE tax_rate IS NULL"))
 
 
+def _migrate_user_default_rates(engine):
+    if not _table_exists(engine, "users"):
+        return
+    if not _column_exists(engine, "users", "default_hourly_rate"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN default_hourly_rate FLOAT"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET default_hourly_rate=0 WHERE default_hourly_rate IS NULL"))
+    if not _column_exists(engine, "users", "default_parts_markup"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN default_parts_markup FLOAT"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET default_parts_markup=0 WHERE default_parts_markup IS NULL"))
+
+
 def _migrate_invoice_tax_fields(engine):
     if not _table_exists(engine, "invoices"):
         return
@@ -1336,6 +1351,7 @@ def create_app():
     _migrate_user_pdf_template(engine)
     _migrate_invoice_pdf_template(engine)
     _migrate_user_tax_rate(engine)
+    _migrate_user_default_rates(engine)
     _migrate_invoice_tax_fields(engine)
     _migrate_invoice_is_estimate(engine)
     _migrate_invoice_parts_markup_percent(engine)
@@ -1932,6 +1948,8 @@ def create_app():
                 u.pdf_template = pdf_tmpl
 
                 u.tax_rate = _to_float(request.form.get("tax_rate"), 0.0)
+                u.default_hourly_rate = _to_float(request.form.get("default_hourly_rate"), 0.0)
+                u.default_parts_markup = _to_float(request.form.get("default_parts_markup"), 0.0)
 
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
@@ -3244,6 +3262,8 @@ def create_app():
             user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
             user_pdf_template = _pdf_template_key_fallback(getattr(u, "pdf_template", None) if u else None)
             user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
+            user_default_hourly_rate = float(getattr(u, "default_hourly_rate", 0.0) or 0.0) if u else 0.0
+            user_default_parts_markup = float(getattr(u, "default_parts_markup", 0.0) or 0.0) if u else 0.0
             tmpl = _template_config_for(user_template_key)
 
             customers = (
@@ -3281,6 +3301,8 @@ def create_app():
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
                     user_tax_rate=user_tax_rate,
+                    user_default_hourly_rate=user_default_hourly_rate,
+                    user_default_parts_markup=user_default_parts_markup,
                     customers=customers,
                     customers_for_js=customers_for_js,
                     pre_customer=pre_customer,
@@ -3298,6 +3320,8 @@ def create_app():
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
                     user_tax_rate=user_tax_rate,
+                    user_default_hourly_rate=user_default_hourly_rate,
+                    user_default_parts_markup=user_default_parts_markup,
                     customers=customers,
                     customers_for_js=customers_for_js,
                     pre_customer=pre_customer,
@@ -3322,10 +3346,10 @@ def create_app():
                     request.form.getlist("labor_time_hours")
                 )
 
-                price_per_hour = _to_float(request.form.get("price_per_hour"))
+                price_per_hour = _to_float(request.form.get("price_per_hour"), user_default_hourly_rate)
                 hours = _to_float(request.form.get("hours"))
                 shop_supplies = _to_float(request.form.get("shop_supplies"))
-                parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                parts_markup_percent = _to_float(request.form.get("parts_markup_percent"), user_default_parts_markup)
                 tax_rate = _to_float(request.form.get("tax_rate"), user_tax_rate)
                 tax_override_raw = (request.form.get("tax_override") or "").strip()
                 tax_override = _to_float(tax_override_raw, 0.0) if tax_override_raw else None
@@ -3388,6 +3412,8 @@ def create_app():
             tmpl=tmpl,
             tmpl_key=user_template_key,
             user_tax_rate=user_tax_rate,
+            user_default_hourly_rate=user_default_hourly_rate,
+            user_default_parts_markup=user_default_parts_markup,
             customers=customers,
             customers_for_js=customers_for_js,
             pre_customer=pre_customer,
@@ -3408,6 +3434,8 @@ def create_app():
             user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
             user_pdf_template = _pdf_template_key_fallback(getattr(u, "pdf_template", None) if u else None)
             user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
+            user_default_hourly_rate = float(getattr(u, "default_hourly_rate", 0.0) or 0.0) if u else 0.0
+            user_default_parts_markup = float(getattr(u, "default_parts_markup", 0.0) or 0.0) if u else 0.0
             tmpl = _template_config_for(user_template_key)
 
             customers = (
@@ -3445,6 +3473,8 @@ def create_app():
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
                     user_tax_rate=user_tax_rate,
+                    user_default_hourly_rate=user_default_hourly_rate,
+                    user_default_parts_markup=user_default_parts_markup,
                     customers=customers,
                     customers_for_js=customers_for_js,
                     pre_customer=pre_customer,
@@ -3462,6 +3492,8 @@ def create_app():
                     tmpl=tmpl,
                     tmpl_key=user_template_key,
                     user_tax_rate=user_tax_rate,
+                    user_default_hourly_rate=user_default_hourly_rate,
+                    user_default_parts_markup=user_default_parts_markup,
                     customers=customers,
                     customers_for_js=customers_for_js,
                     pre_customer=pre_customer,
@@ -3486,11 +3518,11 @@ def create_app():
                     request.form.getlist("labor_time_hours")
                 )
 
-                price_per_hour = _to_float(request.form.get("price_per_hour"))
+                price_per_hour = _to_float(request.form.get("price_per_hour"), user_default_hourly_rate)
                 hours = _to_float(request.form.get("hours"))
                 shop_supplies = _to_float(request.form.get("shop_supplies"))
                 paid_val = _to_float(request.form.get("paid"))
-                parts_markup_percent = _to_float(request.form.get("parts_markup_percent"))
+                parts_markup_percent = _to_float(request.form.get("parts_markup_percent"), user_default_parts_markup)
                 tax_rate = _to_float(request.form.get("tax_rate"), user_tax_rate)
                 tax_override_raw = (request.form.get("tax_override") or "").strip()
                 tax_override = _to_float(tax_override_raw, 0.0) if tax_override_raw else None
@@ -3555,6 +3587,8 @@ def create_app():
             tmpl=tmpl,
             tmpl_key=user_template_key,
             user_tax_rate=user_tax_rate,
+            user_default_hourly_rate=user_default_hourly_rate,
+            user_default_parts_markup=user_default_parts_markup,
             customers=customers,
             customers_for_js=customers_for_js,
             pre_customer=pre_customer,
