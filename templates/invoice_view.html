@@ -250,6 +250,10 @@
             <button class="btn btn-outline-success" type="submit">Email PDF</button>
           </form>
 
+          <form method="post" action="{{ url_for('invoice_text', invoice_id=inv.id) }}">
+            <button class="btn btn-outline-success" type="submit">Text PDF</button>
+          </form>
+
           <form method="post" action="{{ url_for('invoice_convert', invoice_id=inv.id) }}">
             <button class="btn btn-outline-primary" type="submit">Convert to Estimate</button>
           </form>

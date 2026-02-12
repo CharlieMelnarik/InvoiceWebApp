@@ -2,7 +2,7 @@
 import os
 import re
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from reportlab.pdfgen import canvas
@@ -1571,7 +1571,9 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     PAGE_W, PAGE_H = LETTER
     M = 0.75 * inch
 
-    generated_dt = datetime.now()
+    owner_offset_minutes = int(getattr(owner, "schedule_summary_tz_offset_minutes", 0) or 0) if owner else 0
+    owner_offset_minutes = max(-720, min(840, owner_offset_minutes))
+    generated_dt = datetime.utcnow() + timedelta(minutes=owner_offset_minutes)
     generated_str = generated_dt.strftime("%B %d, %Y")
 
     display_no = inv.display_number or inv.invoice_number

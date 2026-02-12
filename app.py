@@ -6,6 +6,10 @@ import re
 import io
 import zipfile
 import smtplib
+import base64
+import json
+import urllib.parse
+import urllib.request
 from email.message import EmailMessage
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -369,6 +373,33 @@ def _parse_dt_local(s: str) -> datetime | None:
         return None
 
 
+def _clamp_tz_offset_minutes(value: int) -> int:
+    return max(-720, min(840, int(value)))
+
+
+def _request_tz_offset_minutes(user: User | None = None) -> int:
+    """
+    Resolve user's timezone offset in minutes from request first, then user profile.
+    Positive values are east of UTC (same sign as JS: -getTimezoneOffset()).
+    """
+    fallback = _clamp_tz_offset_minutes(int(getattr(user, "schedule_summary_tz_offset_minutes", 0) or 0))
+    raw = (
+        (request.form.get("client_tz_offset_minutes") if request.form is not None else None)
+        or request.args.get("client_tz_offset_minutes")
+        or ""
+    ).strip()
+    if not raw:
+        return fallback
+    try:
+        return _clamp_tz_offset_minutes(int(raw))
+    except Exception:
+        return fallback
+
+
+def _user_local_now(user: User | None = None) -> datetime:
+    return datetime.utcnow() + timedelta(minutes=_request_tz_offset_minutes(user))
+
+
 def _format_customer_address(
     line1: str | None,
     line2: str | None,
@@ -585,6 +616,99 @@ def read_password_reset_token(token: str, max_age_seconds: int) -> int | None:
         return int(uid)
     except (SignatureExpired, BadSignature, TypeError, ValueError):
         return None
+
+
+def _share_serializer():
+    secret = current_app.config.get("SECRET_KEY")
+    salt = current_app.config.get("PDF_SHARE_SALT", "pdf-share")
+    return URLSafeTimedSerializer(secret, salt=salt)
+
+
+def make_pdf_share_token(user_id: int, invoice_id: int) -> str:
+    return _share_serializer().dumps({"uid": int(user_id), "iid": int(invoice_id)})
+
+
+def read_pdf_share_token(token: str, max_age_seconds: int) -> tuple[int, int] | None:
+    try:
+        data = _share_serializer().loads(token, max_age=max_age_seconds)
+        uid = int(data.get("uid"))
+        iid = int(data.get("iid"))
+        return uid, iid
+    except (SignatureExpired, BadSignature, TypeError, ValueError):
+        return None
+
+
+def _normalize_phone(phone: str | None) -> str:
+    return (phone or "").strip()
+
+
+def _to_e164_phone(phone: str | None) -> str | None:
+    raw = _normalize_phone(phone)
+    if not raw:
+        return None
+    if raw.startswith("+"):
+        digits = "+" + re.sub(r"\D", "", raw)
+        if len(digits) >= 8:
+            return digits
+        return None
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return None
+
+
+def _public_base_url() -> str:
+    return (
+        current_app.config.get("APP_BASE_URL")
+        or os.getenv("APP_BASE_URL")
+        or current_app.config.get("PUBLIC_APP_URL")
+        or os.getenv("PUBLIC_APP_URL")
+        or ""
+    ).strip().rstrip("/")
+
+
+def _public_url(path: str) -> str:
+    base = _public_base_url()
+    if base:
+        return f"{base}{path}"
+    return url_for("landing", _external=True).rstrip("/") + path
+
+
+def _send_sms_via_twilio(to_phone_e164: str, body_text: str) -> None:
+    account_sid = (current_app.config.get("TWILIO_ACCOUNT_SID") or os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
+    auth_token = (current_app.config.get("TWILIO_AUTH_TOKEN") or os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
+    from_phone = (current_app.config.get("TWILIO_FROM_NUMBER") or os.getenv("TWILIO_FROM_NUMBER") or "").strip()
+
+    if not all([account_sid, auth_token, from_phone]):
+        raise RuntimeError("Twilio is not configured (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER).")
+
+    endpoint = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+    payload = urllib.parse.urlencode({
+        "From": from_phone,
+        "To": to_phone_e164,
+        "Body": body_text,
+    }).encode("utf-8")
+
+    auth = base64.b64encode(f"{account_sid}:{auth_token}".encode("utf-8")).decode("ascii")
+    req = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={
+            "Authorization": f"Basic {auth}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+        if resp.status < 200 or resp.status >= 300:
+            raise RuntimeError(f"Twilio send failed ({resp.status}): {raw[:300]}")
+        data = json.loads(raw or "{}")
+        if data.get("error_code") or data.get("status") == "failed":
+            raise RuntimeError(f"Twilio error: {data.get('error_message') or data.get('message') or 'Unknown error'}")
 
 
 def _send_reset_email(to_email: str, reset_url: str) -> None:
@@ -2568,16 +2692,18 @@ def create_app():
 
         out_items = list(items4)
         count_out = _count_items(items4)
+        count6 = _count_items(items6)
+        count11 = _count_items(items11)
 
         for it in items6:
             key = (it.get("name", "").lower(), it.get("price", ""))
-            if _count_items(items6).get(key, 0) > count_out.get(key, 0):
+            if count6.get(key, 0) > count_out.get(key, 0):
                 out_items.append(it)
                 count_out[key] = count_out.get(key, 0) + 1
 
         for it in items11:
             key = (it.get("name", "").lower(), it.get("price", ""))
-            if _count_items(items11).get(key, 0) > count_out.get(key, 0):
+            if count11.get(key, 0) > count_out.get(key, 0):
                 out_items.append(it)
                 count_out[key] = count_out.get(key, 0) + 1
 
@@ -3256,9 +3382,11 @@ def create_app():
     def estimate_new():
         uid = _current_user_id_int()
         pre_customer_id = (request.args.get("customer_id") or "").strip()
+        default_local_now = datetime.utcnow()
 
         with db_session() as s:
             u = s.get(User, uid)
+            default_local_now = _user_local_now(u)
             user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
             user_pdf_template = _pdf_template_key_fallback(getattr(u, "pdf_template", None) if u else None)
             user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
@@ -3329,8 +3457,9 @@ def create_app():
 
             with db_session() as s:
                 c = _customer_owned_or_404(s, customer_id)
+                local_now = _user_local_now(s.get(User, uid))
 
-                year = int(datetime.now().strftime("%Y"))
+                year = int(local_now.strftime("%Y"))
                 inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
                 display_no = next_display_number(s, uid, year, "estimate", Config.INVOICE_SEQ_WIDTH)
 
@@ -3382,7 +3511,7 @@ def create_app():
                     tax_rate=tax_rate,
                     tax_override=tax_override,
                     paid=0.0,
-                    date_in=request.form.get("date_in", "").strip(),
+                    date_in=(request.form.get("date_in", "").strip() or local_now.strftime("%B %d, %Y")),
                     notes=request.form.get("notes", "").rstrip(),
                     useful_info=(request.form.get("useful_info") or "").rstrip() or None,
                 )
@@ -3408,7 +3537,7 @@ def create_app():
             "invoice_form.html",
             mode="new",
             doc_type="estimate",
-            default_date=datetime.now().strftime("%B %d, %Y"),
+            default_date=default_local_now.strftime("%B %d, %Y"),
             tmpl=tmpl,
             tmpl_key=user_template_key,
             user_tax_rate=user_tax_rate,
@@ -3428,9 +3557,11 @@ def create_app():
     def invoice_new():
         uid = _current_user_id_int()
         pre_customer_id = (request.args.get("customer_id") or "").strip()
+        default_local_now = datetime.utcnow()
 
         with db_session() as s:
             u = s.get(User, uid)
+            default_local_now = _user_local_now(u)
             user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
             user_pdf_template = _pdf_template_key_fallback(getattr(u, "pdf_template", None) if u else None)
             user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
@@ -3501,8 +3632,9 @@ def create_app():
 
             with db_session() as s:
                 c = _customer_owned_or_404(s, customer_id)
+                local_now = _user_local_now(s.get(User, uid))
 
-                year = int(datetime.now().strftime("%Y"))
+                year = int(local_now.strftime("%Y"))
                 inv_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
                 display_no = next_display_number(s, uid, year, "invoice", Config.INVOICE_SEQ_WIDTH)
 
@@ -3557,7 +3689,7 @@ def create_app():
                     tax_rate=tax_rate,
                     tax_override=tax_override,
                     paid=paid_val,
-                    date_in=request.form.get("date_in", "").strip(),
+                    date_in=(request.form.get("date_in", "").strip() or local_now.strftime("%B %d, %Y")),
                     notes=request.form.get("notes", "").rstrip(),
                     useful_info=(request.form.get("useful_info") or "").rstrip() or None,
                 )
@@ -3582,7 +3714,7 @@ def create_app():
         return render_template(
             "invoice_form.html",
             mode="new",
-            default_date=datetime.now().strftime("%B %d, %Y"),
+            default_date=default_local_now.strftime("%B %d, %Y"),
             doc_type="invoice",
             tmpl=tmpl,
             tmpl_key=user_template_key,
@@ -3746,8 +3878,9 @@ def create_app():
         uid = _current_user_id_int()
         with db_session() as s:
             inv = _estimate_owned_or_404(s, estimate_id)
+            local_now = _user_local_now(s.get(User, uid))
 
-            year = int(datetime.now().strftime("%Y"))
+            year = int(local_now.strftime("%Y"))
             new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
             display_no = next_display_number(s, uid, year, "invoice", Config.INVOICE_SEQ_WIDTH)
 
@@ -3774,7 +3907,7 @@ def create_app():
                 notes=inv.notes,
                 useful_info=inv.useful_info,
                 paid=0.0,
-                date_in=inv.date_in or datetime.now().strftime("%m/%d/%Y"),
+                date_in=inv.date_in or local_now.strftime("%m/%d/%Y"),
 
                 customer_email=inv.customer_email,
                 customer_phone=inv.customer_phone,
@@ -3804,8 +3937,9 @@ def create_app():
         uid = _current_user_id_int()
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
+            local_now = _user_local_now(s.get(User, uid))
 
-            year = int(datetime.now().strftime("%Y"))
+            year = int(local_now.strftime("%Y"))
             new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
             display_no = next_display_number(s, uid, year, "estimate", Config.INVOICE_SEQ_WIDTH)
 
@@ -3831,7 +3965,7 @@ def create_app():
                 notes=inv.notes,
                 useful_info=inv.useful_info,
                 paid=0.0,
-                date_in=inv.date_in or datetime.now().strftime("%m/%d/%Y"),
+                date_in=inv.date_in or local_now.strftime("%m/%d/%Y"),
 
                 customer_email=inv.customer_email,
                 customer_phone=inv.customer_phone,
@@ -3898,8 +4032,9 @@ def create_app():
         uid = _current_user_id_int()
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
+            local_now = _user_local_now(s.get(User, uid))
 
-            year = int(datetime.now().strftime("%Y"))
+            year = int(local_now.strftime("%Y"))
             new_no = next_invoice_number(s, year, Config.INVOICE_SEQ_WIDTH)
             display_no = next_display_number(s, uid, year, "invoice", Config.INVOICE_SEQ_WIDTH)
 
@@ -3924,7 +4059,7 @@ def create_app():
                 notes=inv.notes,
                 useful_info=inv.useful_info,
                 paid=0.0,
-                date_in=datetime.now().strftime("%m/%d/%Y"),
+                date_in=local_now.strftime("%m/%d/%Y"),
 
                 customer_email=inv.customer_email,
                 customer_phone=inv.customer_phone,
@@ -4347,6 +4482,42 @@ def create_app():
         flash("Estimate email sent.", "success")
         return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
+    @app.route("/estimates/<int:estimate_id>/text", methods=["POST"])
+    @login_required
+    @subscription_required
+    def estimate_text(estimate_id: int):
+        with db_session() as s:
+            inv = _estimate_owned_or_404(s, estimate_id)
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            customer_name = (customer.name if customer else "").strip()
+            to_phone_raw = (inv.customer_phone or (customer.phone if customer else "") or "").strip()
+            to_phone = _to_e164_phone(to_phone_raw)
+            if not to_phone:
+                flash("Customer phone is missing or invalid. Add it on the estimate edit page (or customer profile).", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+            if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
+                generate_and_store_pdf(s, estimate_id)
+                inv = _estimate_owned_or_404(s, estimate_id)
+
+            share_token = make_pdf_share_token(inv.user_id or _current_user_id_int(), inv.id)
+            share_url = _public_url(url_for("shared_pdf_download", token=share_token))
+            display_no = inv.display_number or inv.invoice_number
+            body = (
+                f"Hi {customer_name or 'there'}, your estimate {display_no} is ready. "
+                f"Total: ${inv.invoice_total():,.2f}. View PDF: {share_url}"
+            )
+
+            try:
+                _send_sms_via_twilio(to_phone_e164=to_phone, body_text=body)
+            except Exception as e:
+                print(f"[ESTIMATE SMS] TWILIO ERROR to={to_phone} estimate={display_no}: {repr(e)}", flush=True)
+                flash("Could not send text message. Check Twilio config/logs.", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+        flash("Estimate text sent.", "success")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
     @app.route("/invoices/<int:invoice_id>/pdf/generate", methods=["POST"])
     @login_required
     @subscription_required
@@ -4418,6 +4589,68 @@ def create_app():
 
         flash("Invoice email sent.", "success")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+    @app.route("/invoices/<int:invoice_id>/text", methods=["POST"])
+    @login_required
+    @subscription_required
+    def invoice_text(invoice_id: int):
+        with db_session() as s:
+            inv = _invoice_owned_or_404(s, invoice_id)
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            customer_name = (customer.name if customer else "").strip()
+            to_phone_raw = (inv.customer_phone or (customer.phone if customer else "") or "").strip()
+            to_phone = _to_e164_phone(to_phone_raw)
+            if not to_phone:
+                flash("Customer phone is missing or invalid. Add it on the invoice edit page (or customer profile).", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+            if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
+                generate_and_store_pdf(s, invoice_id)
+                inv = _invoice_owned_or_404(s, invoice_id)
+
+            share_token = make_pdf_share_token(inv.user_id or _current_user_id_int(), inv.id)
+            share_url = _public_url(url_for("shared_pdf_download", token=share_token))
+            display_no = inv.display_number or inv.invoice_number
+            body = (
+                f"Hi {customer_name or 'there'}, your invoice {display_no} is ready. "
+                f"Total: ${inv.invoice_total():,.2f}. View PDF: {share_url}"
+            )
+
+            try:
+                _send_sms_via_twilio(to_phone_e164=to_phone, body_text=body)
+            except Exception as e:
+                print(f"[INVOICE SMS] TWILIO ERROR to={to_phone} inv={display_no}: {repr(e)}", flush=True)
+                flash("Could not send text message. Check Twilio config/logs.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+        flash("Invoice text sent.", "success")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+    @app.get("/shared/p/<token>")
+    def shared_pdf_download(token: str):
+        max_age = int(current_app.config.get("PDF_SHARE_MAX_AGE_SECONDS") or os.getenv("PDF_SHARE_MAX_AGE_SECONDS") or "2592000")
+        decoded = read_pdf_share_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+        user_id, invoice_id = decoded
+        with db_session() as s:
+            inv = (
+                s.query(Invoice)
+                .filter(Invoice.id == invoice_id, Invoice.user_id == user_id)
+                .first()
+            )
+            if not inv:
+                abort(404)
+            try:
+                pdf_path = generate_and_store_pdf(s, invoice_id)
+            except Exception:
+                abort(500)
+            return send_file(
+                pdf_path,
+                as_attachment=True,
+                download_name=os.path.basename(pdf_path),
+                mimetype="application/pdf",
+            )
 
     @app.route("/pdfs/download_all")
     @login_required
