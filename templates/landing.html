@@ -320,6 +320,28 @@
       text-decoration: none;
     }
 
+    .legal-links {
+      margin-top: 20px;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .legal-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      border: 1px solid rgba(11, 15, 22, 0.18);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+
     .fade-in {
       animation: fadeInUp 0.8s ease forwards;
       opacity: 0;
@@ -452,6 +474,11 @@
         </div>
         <a href="{{ url_for('login') }}">Log In</a>
       </section>
+
+      <div class="legal-links">
+        <a class="legal-btn" href="{{ url_for('privacy') }}">Privacy</a>
+        <a class="legal-btn" href="{{ url_for('terms') }}">Terms</a>
+      </div>
     </div>
   </div>
 </body>

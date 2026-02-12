@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Privacy Policy | InvoiceRunner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --ink: #101723;
+      --muted: #4b5563;
+      --line: #e5e7eb;
+      --brand: #1b3a57;
+      --bg: #f4f7fb;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 28px 18px 52px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 28px;
+    }
+    h1, h2 { margin-top: 0; color: var(--brand); }
+    h1 { margin-bottom: 6px; }
+    h2 { margin-top: 26px; margin-bottom: 8px; font-size: 1.1rem; }
+    p { margin: 0 0 12px; }
+    ul { margin: 0 0 14px 20px; }
+    .muted { color: var(--muted); }
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .btn {
+      text-decoration: none;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 14px;
+      color: var(--ink);
+      background: #fff;
+      font-weight: 600;
+    }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="btn" href="{{ url_for('index') }}">Back to Home</a>
+      <div class="muted">Last updated: {{ last_updated }}</div>
+    </div>
+
+    <div class="card">
+      <h1>Privacy Policy</h1>
+      <p class="muted">InvoiceRunner</p>
+
+      <p>
+        InvoiceRunner helps businesses create invoices and estimates, manage customer records, and send communications by email and SMS.
+        This policy describes how information is collected, used, and shared.
+      </p>
+
+      <h2>Information We Collect</h2>
+      <ul>
+        <li>Account information for InvoiceRunner users (business users), such as username and email.</li>
+        <li>Customer contact and billing information entered by business users, including name, email, phone number, and address.</li>
+        <li>Invoice and estimate records, line items, notes, and PDF documents generated within the app.</li>
+        <li>Technical/log information necessary for security, troubleshooting, and service reliability.</li>
+      </ul>
+
+      <h2>How We Use Information</h2>
+      <ul>
+        <li>To provide and improve the InvoiceRunner service.</li>
+        <li>To generate invoices/estimates and deliver them by email or SMS when requested by the business user.</li>
+        <li>To protect the platform, prevent misuse, and enforce service terms.</li>
+      </ul>
+
+      <h2>SMS Consent and Messaging</h2>
+      <p>
+        Customers provide SMS consent to the business using InvoiceRunner when they provide their phone number directly to that business
+        for invoicing, estimate updates, payment reminders, or related service communication.
+      </p>
+      <p>
+        SMS consent is not sold or shared with third parties for their own marketing. Message frequency varies by business activity.
+        Message and data rates may apply. Customers can reply <code>STOP</code> to opt out and <code>HELP</code> for assistance.
+      </p>
+
+      <h2>Email Communications</h2>
+      <p>
+        Business users may send invoices/estimates and related service communication by email to customer addresses provided by the customer
+        or otherwise lawfully obtained by the business.
+      </p>
+
+      <h2>Service Providers</h2>
+      <p>
+        InvoiceRunner uses third-party providers to operate the service, including email and SMS delivery providers such as Twilio and
+        SMTP/mail infrastructure, and payment processors such as Stripe.
+      </p>
+
+      <h2>Data Retention</h2>
+      <p>
+        Data is retained as needed to operate the service and support business recordkeeping, unless deletion is requested or required by law.
+      </p>
+
+      <h2>Security</h2>
+      <p>
+        We use reasonable administrative and technical safeguards to protect data, but no online system can be guaranteed 100% secure.
+      </p>
+
+      <h2>Your Choices</h2>
+      <ul>
+        <li>Customers may opt out of SMS by replying <code>STOP</code>.</li>
+        <li>Business users can update or remove customer contact information in their account.</li>
+      </ul>
+
+      <h2>Contact</h2>
+      <p>
+        For privacy questions, contact the business that sent your message/invoice or reach support via the contact information published by InvoiceRunner.
+      </p>
+    </div>
+  </div>
+</body>
+</html>

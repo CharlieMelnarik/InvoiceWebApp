@@ -2371,6 +2371,14 @@ def create_app():
             return redirect(url_for("customers_list"))
         return render_template("landing.html", title="InvoiceRunner")
 
+    @app.route("/privacy")
+    def privacy():
+        return render_template("privacy.html", title="Privacy Policy", last_updated=datetime.utcnow().strftime("%B %d, %Y"))
+
+    @app.route("/terms")
+    def terms():
+        return render_template("terms.html", title="Terms and Conditions", last_updated=datetime.utcnow().strftime("%B %d, %Y"))
+
     # -----------------------------
     # Scheduler
     # -----------------------------
