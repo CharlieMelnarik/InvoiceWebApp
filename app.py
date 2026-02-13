@@ -37,7 +37,7 @@ from config import Config
 from models import (
     Base, make_engine, make_session_factory,
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
-    ScheduleEvent,
+    ScheduleEvent, AuditLog,
 )
 from pdf_service import generate_and_store_pdf
 
@@ -674,6 +674,86 @@ def _public_url(path: str) -> str:
     if base:
         return f"{base}{path}"
     return url_for("landing", _external=True).rstrip("/") + path
+
+
+def _client_ip() -> str:
+    forwarded = (request.headers.get("X-Forwarded-For") or "").strip()
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:64]
+    cf_ip = (request.headers.get("CF-Connecting-IP") or "").strip()
+    if cf_ip:
+        return cf_ip[:64]
+    return (request.remote_addr or "")[:64]
+
+
+def _audit_log(
+    session,
+    *,
+    event: str,
+    result: str,
+    user_id: int | None = None,
+    username: str | None = None,
+    email: str | None = None,
+    details: str | None = None,
+) -> None:
+    try:
+        row = AuditLog(
+            user_id=user_id,
+            event=(event or "")[:80],
+            result=(result or "")[:20],
+            method=(request.method or "")[:10],
+            path=(request.path or "")[:255],
+            ip_address=_client_ip(),
+            user_agent=(request.headers.get("User-Agent") or "")[:300],
+            username=((username or "").strip() or None),
+            email=((email or "").strip().lower() or None),
+            details=((details or "").strip()[:1000] or None),
+        )
+        session.add(row)
+    except Exception:
+        pass
+
+
+def _turnstile_enabled() -> bool:
+    site = (current_app.config.get("TURNSTILE_SITE_KEY") or os.getenv("TURNSTILE_SITE_KEY") or "").strip()
+    secret = (current_app.config.get("TURNSTILE_SECRET_KEY") or os.getenv("TURNSTILE_SECRET_KEY") or "").strip()
+    return bool(site and secret)
+
+
+def _turnstile_site_key() -> str:
+    return (current_app.config.get("TURNSTILE_SITE_KEY") or os.getenv("TURNSTILE_SITE_KEY") or "").strip()
+
+
+def _verify_turnstile(token: str) -> tuple[bool, str]:
+    secret = (current_app.config.get("TURNSTILE_SECRET_KEY") or os.getenv("TURNSTILE_SECRET_KEY") or "").strip()
+    if not secret:
+        return False, "Turnstile secret is missing."
+    if not token:
+        return False, "Captcha token missing."
+
+    payload = urllib.parse.urlencode({
+        "secret": secret,
+        "response": token,
+        "remoteip": _client_ip(),
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            body = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
+    except Exception:
+        return False, "Captcha verification failed."
+
+    if bool(body.get("success")):
+        return True, ""
+    codes = body.get("error-codes") or []
+    return False, f"Captcha rejected ({', '.join(codes) if codes else 'unknown'})."
 
 
 def _send_sms_via_twilio(to_phone_e164: str, body_text: str) -> None:
@@ -1455,6 +1535,8 @@ def create_app():
     app.config.setdefault("SMTP_USER", os.getenv("SMTP_USER"))
     app.config.setdefault("SMTP_PASS", os.getenv("SMTP_PASS"))
     app.config.setdefault("MAIL_FROM", os.getenv("MAIL_FROM", os.getenv("SMTP_USER", "no-reply@example.com")))
+    app.config.setdefault("TURNSTILE_SITE_KEY", os.getenv("TURNSTILE_SITE_KEY", ""))
+    app.config.setdefault("TURNSTILE_SECRET_KEY", os.getenv("TURNSTILE_SECRET_KEY", ""))
 
     login_manager.init_app(app)
 
@@ -1812,10 +1894,26 @@ def create_app():
                 generic_fail_msg = "Invalid username or password."
 
                 if not u:
+                    _audit_log(
+                        s,
+                        event="auth.login",
+                        result="fail",
+                        username=username,
+                        details="user_not_found",
+                    )
                     flash(generic_fail_msg, "error")
                     return render_template("login.html")
 
                 if bool(getattr(u, "password_reset_required", False)):
+                    _audit_log(
+                        s,
+                        event="auth.login",
+                        result="blocked",
+                        user_id=u.id,
+                        username=u.username,
+                        email=u.email,
+                        details="password_reset_required",
+                    )
                     flash("Too many failed login attempts. Please reset your password.", "error")
                     return redirect(url_for("forgot_password"))
 
@@ -1823,6 +1921,14 @@ def create_app():
                     u.failed_login_attempts = 0
                     u.password_reset_required = False
                     u.last_failed_login = None
+                    _audit_log(
+                        s,
+                        event="auth.login",
+                        result="success",
+                        user_id=u.id,
+                        username=u.username,
+                        email=u.email,
+                    )
                     s.commit()
 
                     login_user(AppUser(u.id, u.username))
@@ -1834,10 +1940,28 @@ def create_app():
 
                 if attempts >= 6:
                     u.password_reset_required = True
+                    _audit_log(
+                        s,
+                        event="auth.login",
+                        result="blocked",
+                        user_id=u.id,
+                        username=u.username,
+                        email=u.email,
+                        details=f"failed_attempts={attempts}",
+                    )
                     s.commit()
                     flash("Too many failed login attempts. Please reset your password.", "error")
                     return redirect(url_for("forgot_password"))
 
+                _audit_log(
+                    s,
+                    event="auth.login",
+                    result="fail",
+                    user_id=u.id,
+                    username=u.username,
+                    email=u.email,
+                    details=f"wrong_password_attempt={attempts}",
+                )
                 s.commit()
                 flash(generic_fail_msg, "error")
                 return render_template("login.html")
@@ -1848,34 +1972,65 @@ def create_app():
     def register():
         if current_user.is_authenticated:
             return redirect(url_for("customers_list"))
+        turnstile_site_key = _turnstile_site_key()
 
         if request.method == "POST":
             username = (request.form.get("username") or "").strip()
             email = _normalize_email(request.form.get("email") or "")
             password = request.form.get("password") or ""
             confirm = request.form.get("confirm") or ""
+            if _turnstile_enabled():
+                token = (request.form.get("cf-turnstile-response") or "").strip()
+                ok, reason = _verify_turnstile(token)
+                if not ok:
+                    with db_session() as s:
+                        _audit_log(
+                            s,
+                            event="auth.register",
+                            result="blocked",
+                            username=username,
+                            email=email,
+                            details=f"captcha_failed:{reason}",
+                        )
+                        s.commit()
+                    flash("Captcha verification failed. Please try again.", "error")
+                    return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
             if not username or len(username) < 3:
+                with db_session() as s:
+                    _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="invalid_username")
+                    s.commit()
                 flash("Username must be at least 3 characters.", "error")
-                return render_template("register.html")
+                return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
             if not _looks_like_email(email):
+                with db_session() as s:
+                    _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="invalid_email")
+                    s.commit()
                 flash("A valid email address is required.", "error")
-                return render_template("register.html")
+                return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
             if not password or len(password) < 6:
+                with db_session() as s:
+                    _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="short_password")
+                    s.commit()
                 flash("Password must be at least 6 characters.", "error")
-                return render_template("register.html")
+                return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
             if password != confirm:
+                with db_session() as s:
+                    _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="password_mismatch")
+                    s.commit()
                 flash("Passwords do not match.", "error")
-                return render_template("register.html")
+                return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
             with db_session() as s:
                 taken_user = s.query(User).filter(User.username == username).first()
                 if taken_user:
+                    _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="username_taken")
+                    s.commit()
                     flash("That username is already taken.", "error")
-                    return render_template("register.html")
+                    return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
                 taken_email = (
                     s.query(User)
@@ -1884,17 +2039,21 @@ def create_app():
                     .first()
                 )
                 if taken_email:
+                    _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="email_taken")
+                    s.commit()
                     flash("That email is already registered.", "error")
-                    return render_template("register.html")
+                    return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
                 u = User(username=username, email=email, password_hash=generate_password_hash(password))
                 s.add(u)
+                s.flush()
+                _audit_log(s, event="auth.register", result="success", user_id=u.id, username=u.username, email=u.email)
                 s.commit()
 
                 login_user(AppUser(u.id, u.username))
                 return redirect(url_for("customers_list"))
 
-        return render_template("register.html")
+        return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
     @app.route("/forgot-password", methods=["GET", "POST"])
     def forgot_password():
@@ -2205,11 +2364,23 @@ def create_app():
         with db_session() as s:
             u = s.get(User, uid)
             if not u:
+                _audit_log(s, event="billing.checkout", result="blocked", user_id=uid, details="user_not_found")
+                s.commit()
                 abort(403)
 
             status = (getattr(u, "subscription_status", None) or "").lower().strip()
 
             if status in ("trialing", "active", "past_due"):
+                _audit_log(
+                    s,
+                    event="billing.checkout",
+                    result="blocked",
+                    user_id=u.id,
+                    username=u.username,
+                    email=u.email,
+                    details=f"already_{status}",
+                )
+                s.commit()
                 flash("You already have an active subscription. Manage billing below.", "info")
                 return redirect(url_for("billing"))
 
@@ -2236,6 +2407,16 @@ def create_app():
                 success_url=f"{base}{url_for('billing_success')}?session_id={{CHECKOUT_SESSION_ID}}",
                 cancel_url=f"{base}{url_for('billing')}",
             )
+            _audit_log(
+                s,
+                event="billing.checkout",
+                result="success",
+                user_id=u.id,
+                username=u.username,
+                email=u.email,
+                details=f"stripe_checkout_session={cs.get('id', '')}",
+            )
+            s.commit()
 
         return redirect(cs.url, code=303)
 
@@ -2255,6 +2436,16 @@ def create_app():
             u = s.get(User, _current_user_id_int())
             cust = (getattr(u, "stripe_customer_id", None) or "").strip() if u else ""
             if not cust:
+                _audit_log(
+                    s,
+                    event="billing.portal",
+                    result="blocked",
+                    user_id=(u.id if u else None),
+                    username=(u.username if u else None),
+                    email=(u.email if u else None),
+                    details="missing_stripe_customer_id",
+                )
+                s.commit()
                 flash("No billing profile yet. Start your trial first.", "error")
                 return redirect(url_for("billing"))
 
@@ -2262,6 +2453,18 @@ def create_app():
             customer=cust,
             return_url=f"{base}{url_for('billing')}",
         )
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            _audit_log(
+                s,
+                event="billing.portal",
+                result="success",
+                user_id=(u.id if u else None),
+                username=(u.username if u else None),
+                email=(u.email if u else None),
+                details=f"stripe_portal_session={ps.get('id', '')}",
+            )
+            s.commit()
         return redirect(ps.url, code=303)
 
     # -----------------------------
@@ -2284,12 +2487,26 @@ def create_app():
             )
         except Exception as e:
             print(f"[STRIPE] Webhook signature verification failed: {repr(e)}", flush=True)
+            with db_session() as s:
+                _audit_log(
+                    s,
+                    event="billing.webhook",
+                    result="fail",
+                    details=f"signature_verification_failed:{type(e).__name__}",
+                )
+                s.commit()
             return ("bad signature", 400)
 
         etype = event["type"]
         obj = event["data"]["object"]
 
         with db_session() as s:
+            _audit_log(
+                s,
+                event="billing.webhook",
+                result="success",
+                details=f"type={etype}",
+            )
             if etype == "checkout.session.completed":
                 uid = int(obj.get("client_reference_id") or 0)
                 customer_id = obj.get("customer")
@@ -2359,6 +2576,8 @@ def create_app():
                 if u:
                     u.subscription_status = "past_due"
                     s.commit()
+
+            s.commit()
 
         return ("ok", 200)
 

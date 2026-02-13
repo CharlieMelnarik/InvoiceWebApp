@@ -33,6 +33,12 @@
             <input class="form-control" type="password" name="confirm" required />
           </div>
 
+          {% if turnstile_site_key %}
+            <div class="mb-3">
+              <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"></div>
+            </div>
+          {% endif %}
+
           <button class="btn btn-primary w-100" type="submit">Create account</button>
         </form>
 
@@ -46,4 +52,9 @@
 </div>
 {% endblock %}
 
+{% block scripts %}
+  {% if turnstile_site_key %}
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  {% endif %}
+{% endblock %}
 

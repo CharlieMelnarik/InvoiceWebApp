@@ -433,6 +433,30 @@ class InvoiceLabor(Base):
     invoice: Mapped["Invoice"] = relationship(back_populates="labor_items")
 
 
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    event: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    result: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    username: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
 # -----------------------------
 # Engine / Session factory
 # -----------------------------

@@ -77,3 +77,5 @@ class Config:
     STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
     STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
+    TURNSTILE_SITE_KEY = os.getenv("TURNSTILE_SITE_KEY", "")
+    TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "")
