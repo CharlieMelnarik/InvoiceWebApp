@@ -791,6 +791,17 @@ def _send_sms_via_twilio(to_phone_e164: str, body_text: str) -> None:
             raise RuntimeError(f"Twilio error: {data.get('error_message') or data.get('message') or 'Unknown error'}")
 
 
+def _stripe_err_msg(exc: Exception) -> str:
+    text_msg = str(exc or "")
+    if "No such customer" in text_msg:
+        return "Stripe customer record is invalid for the current mode. Please retry checkout."
+    if "No such price" in text_msg:
+        return "Stripe price is invalid for the current mode. Update STRIPE_PRICE_ID."
+    if "Invalid API Key" in text_msg or "api key" in text_msg.lower():
+        return "Stripe API key is invalid."
+    return text_msg or "Stripe request failed."
+
+
 def _send_reset_email(to_email: str, reset_url: str) -> None:
     host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
@@ -2385,28 +2396,79 @@ def create_app():
                 return redirect(url_for("billing"))
 
             cust = (getattr(u, "stripe_customer_id", None) or "").strip()
+            if cust:
+                try:
+                    stripe.Customer.retrieve(cust)
+                except Exception as e:
+                    if "No such customer" in str(e or ""):
+                        cust = ""
+                        u.stripe_customer_id = None
+                        u.stripe_subscription_id = None
+                        s.commit()
+                    else:
+                        _audit_log(
+                            s,
+                            event="billing.checkout",
+                            result="fail",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details=f"stripe_customer_retrieve_failed:{type(e).__name__}",
+                        )
+                        s.commit()
+                        flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
+                        return redirect(url_for("billing"))
+
             if not cust:
-                customer = stripe.Customer.create(
-                    email=(u.email or None),
-                    metadata={"app_user_id": str(uid)},
-                )
-                cust = customer["id"]
-                u.stripe_customer_id = cust
-                s.commit()
+                try:
+                    customer = stripe.Customer.create(
+                        email=(u.email or None),
+                        metadata={"app_user_id": str(uid)},
+                    )
+                    cust = customer["id"]
+                    u.stripe_customer_id = cust
+                    s.commit()
+                except Exception as e:
+                    _audit_log(
+                        s,
+                        event="billing.checkout",
+                        result="fail",
+                        user_id=u.id,
+                        username=u.username,
+                        email=u.email,
+                        details=f"stripe_customer_create_failed:{type(e).__name__}",
+                    )
+                    s.commit()
+                    flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
+                    return redirect(url_for("billing"))
 
             subscription_data = {}
             if getattr(u, "trial_used_at", None) is None:
                 subscription_data["trial_period_days"] = 7
 
-            cs = stripe.checkout.Session.create(
-                mode="subscription",
-                customer=cust,
-                line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
-                client_reference_id=str(uid),
-                subscription_data=subscription_data,
-                success_url=f"{base}{url_for('billing_success')}?session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"{base}{url_for('billing')}",
-            )
+            try:
+                cs = stripe.checkout.Session.create(
+                    mode="subscription",
+                    customer=cust,
+                    line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+                    client_reference_id=str(uid),
+                    subscription_data=subscription_data,
+                    success_url=f"{base}{url_for('billing_success')}?session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=f"{base}{url_for('billing')}",
+                )
+            except Exception as e:
+                _audit_log(
+                    s,
+                    event="billing.checkout",
+                    result="fail",
+                    user_id=u.id,
+                    username=u.username,
+                    email=u.email,
+                    details=f"stripe_checkout_failed:{type(e).__name__}",
+                )
+                s.commit()
+                flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
+                return redirect(url_for("billing"))
             _audit_log(
                 s,
                 event="billing.checkout",
@@ -2449,10 +2511,29 @@ def create_app():
                 flash("No billing profile yet. Start your trial first.", "error")
                 return redirect(url_for("billing"))
 
-        ps = stripe.billing_portal.Session.create(
-            customer=cust,
-            return_url=f"{base}{url_for('billing')}",
-        )
+        try:
+            ps = stripe.billing_portal.Session.create(
+                customer=cust,
+                return_url=f"{base}{url_for('billing')}",
+            )
+        except Exception as e:
+            with db_session() as s:
+                u = s.get(User, _current_user_id_int())
+                if u and "No such customer" in str(e or ""):
+                    u.stripe_customer_id = None
+                    u.stripe_subscription_id = None
+                _audit_log(
+                    s,
+                    event="billing.portal",
+                    result="fail",
+                    user_id=(u.id if u else None),
+                    username=(u.username if u else None),
+                    email=(u.email if u else None),
+                    details=f"stripe_portal_failed:{type(e).__name__}",
+                )
+                s.commit()
+            flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
+            return redirect(url_for("billing"))
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
             _audit_log(
