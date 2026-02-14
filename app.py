@@ -6,6 +6,7 @@ import re
 import io
 import zipfile
 import smtplib
+import uuid
 import base64
 import json
 import urllib.parse
@@ -552,6 +553,19 @@ INVOICE_TEMPLATES = {
         "parts_name_label": "Cost Item",
         "shop_supplies_label": "Other Expenses",
     },
+    "custom": {
+        "label": "Custom",
+        "job_label": "Job / Project",
+        "labor_title": "Services",
+        "labor_desc_label": "Service Description",
+        "parts_title": "Items",
+        "parts_name_label": "Item Name",
+        "shop_supplies_label": "Additional Fees",
+        "show_job": True,
+        "show_labor": True,
+        "show_parts": True,
+        "show_shop_supplies": True,
+    },
 }
 
 
@@ -560,8 +574,37 @@ def _template_key_fallback(key: str | None) -> str:
     return key if key in INVOICE_TEMPLATES else "auto_repair"
 
 
-def _template_config_for(key: str | None) -> dict:
-    return INVOICE_TEMPLATES[_template_key_fallback(key)]
+def _template_config_for(key: str | None, user: User | None = None) -> dict:
+    tmpl_key = _template_key_fallback(key)
+    cfg = dict(INVOICE_TEMPLATES[tmpl_key])
+    if tmpl_key != "custom":
+        cfg.setdefault("show_job", True)
+        cfg.setdefault("show_labor", True)
+        cfg.setdefault("show_parts", True)
+        cfg.setdefault("show_shop_supplies", True)
+        return cfg
+
+    if user:
+        profession_name = (getattr(user, "custom_profession_name", None) or "").strip()
+        if profession_name:
+            cfg["label"] = profession_name
+
+        def _txt(attr: str, fallback: str) -> str:
+            val = (getattr(user, attr, None) or "").strip()
+            return val or fallback
+
+        cfg["job_label"] = _txt("custom_job_label", cfg["job_label"])
+        cfg["labor_title"] = _txt("custom_labor_title", cfg["labor_title"])
+        cfg["labor_desc_label"] = _txt("custom_labor_desc_label", cfg["labor_desc_label"])
+        cfg["parts_title"] = _txt("custom_parts_title", cfg["parts_title"])
+        cfg["parts_name_label"] = _txt("custom_parts_name_label", cfg["parts_name_label"])
+        cfg["shop_supplies_label"] = _txt("custom_shop_supplies_label", cfg["shop_supplies_label"])
+        cfg["show_job"] = bool(getattr(user, "custom_show_job", True))
+        cfg["show_labor"] = bool(getattr(user, "custom_show_labor", True))
+        cfg["show_parts"] = bool(getattr(user, "custom_show_parts", True))
+        cfg["show_shop_supplies"] = bool(getattr(user, "custom_show_shop_supplies", True))
+
+    return cfg
 
 
 # -----------------------------
@@ -1117,6 +1160,49 @@ def _migrate_user_invoice_template(engine):
             conn.execute(text("UPDATE users SET invoice_template='auto_repair' WHERE invoice_template IS NULL"))
 
 
+def _migrate_user_custom_profession(engine):
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "custom_profession_name"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_profession_name VARCHAR(120)")
+    if not _column_exists(engine, "users", "custom_job_label"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_job_label VARCHAR(120)")
+    if not _column_exists(engine, "users", "custom_labor_title"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_labor_title VARCHAR(120)")
+    if not _column_exists(engine, "users", "custom_labor_desc_label"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_labor_desc_label VARCHAR(120)")
+    if not _column_exists(engine, "users", "custom_parts_title"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_parts_title VARCHAR(120)")
+    if not _column_exists(engine, "users", "custom_parts_name_label"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_parts_name_label VARCHAR(120)")
+    if not _column_exists(engine, "users", "custom_shop_supplies_label"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_shop_supplies_label VARCHAR(120)")
+    if not _column_exists(engine, "users", "custom_show_job"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_show_job BOOLEAN")
+    if not _column_exists(engine, "users", "custom_show_labor"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_show_labor BOOLEAN")
+    if not _column_exists(engine, "users", "custom_show_parts"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_show_parts BOOLEAN")
+    if not _column_exists(engine, "users", "custom_show_shop_supplies"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_show_shop_supplies BOOLEAN")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET custom_show_job = TRUE WHERE custom_show_job IS NULL"))
+            conn.execute(text("UPDATE users SET custom_show_labor = TRUE WHERE custom_show_labor IS NULL"))
+            conn.execute(text("UPDATE users SET custom_show_parts = TRUE WHERE custom_show_parts IS NULL"))
+            conn.execute(text("UPDATE users SET custom_show_shop_supplies = TRUE WHERE custom_show_shop_supplies IS NULL"))
+    except Exception:
+        pass
+
+
 def _migrate_invoice_template(engine):
     if not _table_exists(engine, "invoices"):
         return
@@ -1564,6 +1650,7 @@ def create_app():
     _migrate_invoice_converted_flag(engine)
     _migrate_estimate_converted_flag(engine)
     _migrate_user_invoice_template(engine)
+    _migrate_user_custom_profession(engine)
     _migrate_invoice_template(engine)
     _migrate_user_pdf_template(engine)
     _migrate_invoice_pdf_template(engine)
@@ -2237,6 +2324,17 @@ def create_app():
                 tmpl = (request.form.get("invoice_template") or "").strip()
                 tmpl = _template_key_fallback(tmpl)
                 u.invoice_template = tmpl
+                u.custom_profession_name = (request.form.get("custom_profession_name") or "").strip() or None
+                u.custom_job_label = (request.form.get("custom_job_label") or "").strip() or None
+                u.custom_labor_title = (request.form.get("custom_labor_title") or "").strip() or None
+                u.custom_labor_desc_label = (request.form.get("custom_labor_desc_label") or "").strip() or None
+                u.custom_parts_title = (request.form.get("custom_parts_title") or "").strip() or None
+                u.custom_parts_name_label = (request.form.get("custom_parts_name_label") or "").strip() or None
+                u.custom_shop_supplies_label = (request.form.get("custom_shop_supplies_label") or "").strip() or None
+                u.custom_show_job = (request.form.get("custom_show_job") == "1")
+                u.custom_show_labor = (request.form.get("custom_show_labor") == "1")
+                u.custom_show_parts = (request.form.get("custom_show_parts") == "1")
+                u.custom_show_shop_supplies = (request.form.get("custom_show_shop_supplies") == "1")
 
                 pdf_tmpl = _pdf_template_key_fallback(request.form.get("pdf_template"))
                 u.pdf_template = pdf_tmpl
@@ -2281,6 +2379,121 @@ def create_app():
                 return redirect(url_for("settings"))
 
             return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+
+    @app.get("/settings/preview.pdf")
+    @login_required
+    def settings_preview_pdf():
+        uid = _current_user_id_int()
+        with db_session() as s:
+            u = s.get(User, uid)
+            if not u:
+                abort(404)
+
+            tmpl = _template_key_fallback((request.args.get("invoice_template") or "").strip() or u.invoice_template)
+            pdf_tmpl = _pdf_template_key_fallback((request.args.get("pdf_template") or "").strip() or u.pdf_template)
+            custom_base = INVOICE_TEMPLATES.get("custom", {})
+
+            def _arg_text(name: str, fallback: str) -> str:
+                v = (request.args.get(name) or "").strip()
+                return v or fallback
+
+            def _arg_bool(name: str, fallback: bool = True) -> bool:
+                raw = (request.args.get(name) or "").strip().lower()
+                if raw in ("1", "true", "yes", "on"):
+                    return True
+                if raw in ("0", "false", "no", "off"):
+                    return False
+                return bool(fallback)
+
+            custom_cfg_override = None
+            if tmpl == "custom":
+                custom_cfg_override = {
+                    "profession_label": _arg_text(
+                        "custom_profession_name",
+                        (u.custom_profession_name or custom_base.get("label", "Custom")),
+                    ),
+                    "job_label": _arg_text("custom_job_label", (u.custom_job_label or custom_base.get("job_label", "Job / Project"))),
+                    "labor_title": _arg_text("custom_labor_title", (u.custom_labor_title or custom_base.get("labor_title", "Services"))),
+                    "labor_desc_label": _arg_text("custom_labor_desc_label", (u.custom_labor_desc_label or custom_base.get("labor_desc_label", "Service Description"))),
+                    "parts_title": _arg_text("custom_parts_title", (u.custom_parts_title or custom_base.get("parts_title", "Items"))),
+                    "parts_name_label": _arg_text("custom_parts_name_label", (u.custom_parts_name_label or custom_base.get("parts_name_label", "Item Name"))),
+                    "shop_supplies_label": _arg_text("custom_shop_supplies_label", (u.custom_shop_supplies_label or custom_base.get("shop_supplies_label", "Additional Fees"))),
+                    "show_job": _arg_bool("custom_show_job", getattr(u, "custom_show_job", True)),
+                    "show_labor": _arg_bool("custom_show_labor", getattr(u, "custom_show_labor", True)),
+                    "show_parts": _arg_bool("custom_show_parts", getattr(u, "custom_show_parts", True)),
+                    "show_shop_supplies": _arg_bool("custom_show_shop_supplies", getattr(u, "custom_show_shop_supplies", True)),
+                }
+
+            preview_no = f"PV{uid}{uuid.uuid4().hex[:18]}".upper()
+            preview_display_no = f"{_user_local_now(u).strftime('%Y')}PREVIEW"
+            inv = None
+            pdf_path = None
+            pdf_bytes = b""
+            try:
+                inv = Invoice(
+                    user_id=uid,
+                    customer_id=None,
+                    invoice_number=preview_no,
+                    display_number=preview_display_no,
+                    invoice_template=tmpl,
+                    pdf_template=pdf_tmpl,
+                    tax_rate=8.0,
+                    tax_override=None,
+                    customer_email="customer@example.com",
+                    customer_phone="(406) 555-1234",
+                    name="Sample Customer",
+                    vehicle="Sample Job",
+                    hours=1.5,
+                    price_per_hour=60.0,
+                    shop_supplies=12.0,
+                    parts_markup_percent=0.0,
+                    notes="Sample line item notes.\nSecond line to preview wrapping.",
+                    useful_info=None,
+                    converted_from_estimate=False,
+                    converted_to_invoice=False,
+                    paid=0.0,
+                    date_in=_user_local_now(u).strftime("%B %d, %Y"),
+                    is_estimate=False,
+                    pdf_path=None,
+                    pdf_generated_at=None,
+                )
+                s.add(inv)
+                s.flush()
+
+                inv.parts.append(InvoicePart(part_name="Sample Part", part_price=18.0))
+                if tmpl != "flipping_items":
+                    inv.labor_items.append(InvoiceLabor(labor_desc="Sample labor item", labor_time_hours=1.5))
+                else:
+                    inv.paid = 120.0
+                    inv.hours = 120.0 - inv.parts_total_raw() - inv.shop_supplies
+
+                pdf_path = generate_and_store_pdf(
+                    s,
+                    inv.id,
+                    custom_cfg_override=custom_cfg_override,
+                    pdf_template_override=pdf_tmpl,
+                )
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+            finally:
+                if inv is not None:
+                    try:
+                        s.delete(inv)
+                        s.commit()
+                    except Exception:
+                        s.rollback()
+                try:
+                    if pdf_path and os.path.exists(pdf_path):
+                        os.remove(pdf_path)
+                except Exception:
+                    pass
+
+            return send_file(
+                io.BytesIO(pdf_bytes),
+                mimetype="application/pdf",
+                as_attachment=False,
+                download_name="invoice-preview.pdf",
+            )
 
     @app.post("/settings/schedule-summary/test")
     @login_required
@@ -3701,7 +3914,7 @@ def create_app():
             user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
             user_default_hourly_rate = float(getattr(u, "default_hourly_rate", 0.0) or 0.0) if u else 0.0
             user_default_parts_markup = float(getattr(u, "default_parts_markup", 0.0) or 0.0) if u else 0.0
-            tmpl = _template_config_for(user_template_key)
+            tmpl = _template_config_for(user_template_key, u)
 
             customers = (
                 s.query(Customer)
@@ -3876,7 +4089,7 @@ def create_app():
             user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
             user_default_hourly_rate = float(getattr(u, "default_hourly_rate", 0.0) or 0.0) if u else 0.0
             user_default_parts_markup = float(getattr(u, "default_parts_markup", 0.0) or 0.0) if u else 0.0
-            tmpl = _template_config_for(user_template_key)
+            tmpl = _template_config_for(user_template_key, u)
 
             customers = (
                 s.query(Customer)
@@ -4043,7 +4256,8 @@ def create_app():
     def estimate_view(estimate_id):
         with db_session() as s:
             inv = _estimate_owned_or_404(s, estimate_id)
-            tmpl = _template_config_for(inv.invoice_template)
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            tmpl = _template_config_for(inv.invoice_template, owner)
             c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
         return render_template("estimate_view.html", inv=inv, tmpl=tmpl, customer=c)
 
@@ -4074,7 +4288,8 @@ def create_app():
             } for c in customers]
 
             tmpl_key = _template_key_fallback(inv.invoice_template)
-            tmpl = _template_config_for(tmpl_key)
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            tmpl = _template_config_for(tmpl_key, owner)
 
             if request.method == "POST":
                 customer_id_raw = (request.form.get("customer_id") or "").strip()
@@ -4327,7 +4542,8 @@ def create_app():
     def invoice_view(invoice_id):
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
-            tmpl = _template_config_for(inv.invoice_template)
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            tmpl = _template_config_for(inv.invoice_template, owner)
             c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
         return render_template("invoice_view.html", inv=inv, tmpl=tmpl, customer=c)
 
@@ -4416,7 +4632,8 @@ def create_app():
             } for c in customers]
 
             tmpl_key = _template_key_fallback(inv.invoice_template)
-            tmpl = _template_config_for(tmpl_key)
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            tmpl = _template_config_for(tmpl_key, owner)
 
             if request.method == "POST":
                 customer_id_raw = (request.form.get("customer_id") or "").strip()

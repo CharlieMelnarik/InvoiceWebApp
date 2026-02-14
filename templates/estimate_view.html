@@ -12,6 +12,10 @@
 {% set parts_title = _tmpl.get('parts_title', 'Parts') %}
 {% set parts_name_label = _tmpl.get('parts_name_label', 'Part Name') %}
 {% set shop_supplies_label = _tmpl.get('shop_supplies_label', 'Shop Supplies') %}
+{% set show_job = _tmpl.get('show_job', True) %}
+{% set show_labor = _tmpl.get('show_labor', True) %}
+{% set show_parts = _tmpl.get('show_parts', True) %}
+{% set show_shop_supplies = _tmpl.get('show_shop_supplies', True) %}
 
 {% set total = inv.invoice_total() %}
 {% set tax_amount = inv.tax_amount() %}
@@ -60,10 +64,12 @@
       <div class="card-body">
         <div class="fw-semibold mb-2">Summary</div>
 
+        {% if show_job %}
         <div class="mb-2">
           <div class="small-muted">{{ job_label }}</div>
           <div>{{ inv.vehicle }}</div>
         </div>
+        {% endif %}
 
         {% if tax_amount and tax_amount > 0 %}
           <div class="mb-2">
@@ -131,10 +137,12 @@
               <div class="small-muted">Rate / Hour</div>
               <div class="mono">${{ "%.2f"|format(inv.price_per_hour or 0) }}</div>
             </div>
+            {% if show_shop_supplies %}
             <div class="col-12 col-md-3">
               <div class="small-muted">{{ shop_supplies_label }}</div>
               <div class="mono">${{ "%.2f"|format(inv.shop_supplies or 0) }}</div>
             </div>
+            {% endif %}
             <div class="col-12 col-md-3">
               <div class="small-muted">Parts Markup</div>
               <div class="mono">
@@ -153,6 +161,7 @@
 
         <div class="row g-4">
 
+          {% if show_parts %}
           <div class="col-12 col-lg-6">
             <div class="fw-semibold mb-2">{{ parts_title }}</div>
             <div class="small-muted mb-2">Parts markup: {{ "%.2f"|format(inv.parts_markup_percent or 0) }}%</div>
@@ -173,8 +182,9 @@
               <div class="small-muted">No {{ parts_title|lower }}.</div>
             {% endif %}
           </div>
+          {% endif %}
 
-          {% if tmpl_key != "flipping_items" %}
+          {% if tmpl_key != "flipping_items" and show_labor %}
             <div class="col-12 col-lg-6">
               <div class="fw-semibold mb-2">{{ labor_title }}</div>
               {% if inv.labor_items and inv.labor_items|length > 0 %}

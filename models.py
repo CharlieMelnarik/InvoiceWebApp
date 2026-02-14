@@ -47,6 +47,17 @@ class User(Base):
 
     # Default invoice template for NEW invoices
     invoice_template: Mapped[str] = mapped_column(String(50), nullable=False, default="auto_repair")
+    custom_profession_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    custom_job_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    custom_labor_title: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    custom_labor_desc_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    custom_parts_title: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    custom_parts_name_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    custom_shop_supplies_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    custom_show_job: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    custom_show_labor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    custom_show_parts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    custom_show_shop_supplies: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     # Default PDF layout template for NEW invoices/estimates
     pdf_template: Mapped[str] = mapped_column(String(50), nullable=False, default="classic")

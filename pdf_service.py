@@ -164,6 +164,11 @@ def _render_modern_pdf(
         pdf.drawString(x_left, y, label)
         right_text(x_right, y, str(value), value_font[0], value_font[1], colors.black)
 
+    show_job = bool(cfg.get("show_job", True))
+    show_labor = bool(cfg.get("show_labor", True))
+    show_parts = bool(cfg.get("show_parts", True))
+    show_shop_supplies = bool(cfg.get("show_shop_supplies", True))
+
     header_h = 1.35 * inch
     pdf.setFillColor(brand_dark)
     pdf.rect(0, PAGE_H - header_h, PAGE_W, header_h, stroke=0, fill=1)
@@ -288,8 +293,8 @@ def _render_modern_pdf(
     x2 = M + box_w + 0.35 * inch
     draw_card(x2, top_y, cfg.get("job_box_title", "DETAILS"))
     pdf.setFont("Helvetica", 10)
-    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}"
-    job_lines = _wrap_text(job_text, "Helvetica", 10, box_w - 24)
+    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}" if show_job else ""
+    job_lines = _wrap_text(job_text, "Helvetica", 10, box_w - 24) if show_job else []
     y_job = top_y - 36
     for ln in job_lines[:2]:
         pdf.drawString(x2 + 12, y_job, ln)
@@ -381,15 +386,16 @@ def _render_modern_pdf(
             _money(line_total) if line_total else ""
         ])
 
-    body_y = draw_table(
-        cfg["labor_title"],
-        M,
-        body_y,
-        [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
-        labor_rows,
-        col_widths=[PAGE_W - 2 * M - 190, 90, 100],
-        money_cols={2}
-    )
+    if show_labor:
+        body_y = draw_table(
+            cfg["labor_title"],
+            M,
+            body_y,
+            [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
+            labor_rows,
+            col_widths=[PAGE_W - 2 * M - 190, 90, 100],
+            money_cols={2}
+        )
 
     parts_rows = []
     for p in inv.parts:
@@ -399,7 +405,7 @@ def _render_modern_pdf(
         ])
 
     has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
-    if has_parts_rows:
+    if show_parts and has_parts_rows:
         body_y = draw_table(
             cfg["parts_title"],
             M,
@@ -476,8 +482,8 @@ def _render_modern_pdf(
     pdf.drawString(sum_x + 12, notes_y_top - 18, "SUMMARY")
     pdf.setFillColor(colors.black)
 
-    total_parts = inv.parts_total()
-    total_labor = inv.labor_total()
+    total_parts = inv.parts_total() if show_parts else 0.0
+    total_labor = inv.labor_total() if show_labor else 0.0
     total_price = inv.invoice_total()
     tax_amount = inv.tax_amount()
     price_owed = inv.amount_due()
@@ -485,10 +491,11 @@ def _render_modern_pdf(
     right_edge = sum_x + sum_w - 12
     y = notes_y_top - 44
 
-    if has_parts_rows and total_parts:
+    if show_parts and has_parts_rows and total_parts:
         label_right_value(sum_x + 12, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
-    label_right_value(sum_x + 12, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
-    if inv.shop_supplies:
+    if show_labor:
+        label_right_value(sum_x + 12, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
+    if show_shop_supplies and inv.shop_supplies:
         label_right_value(sum_x + 12, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
     if tax_amount:
         label_right_value(sum_x + 12, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 16
@@ -625,6 +632,11 @@ def _render_split_panel_pdf(
         pdf.drawString(x_left, y, label)
         right_text(x_right, y, str(value), value_font[0], value_font[1], colors.black)
 
+    show_job = bool(cfg.get("show_job", True))
+    show_labor = bool(cfg.get("show_labor", True))
+    show_parts = bool(cfg.get("show_parts", True))
+    show_shop_supplies = bool(cfg.get("show_shop_supplies", True))
+
     # Left summary rail
     rail_w = 1.55 * inch
     rail_x = M
@@ -693,18 +705,19 @@ def _render_split_panel_pdf(
     pdf.setFillColor(rail_text)
     pdf.drawString(rail_x + 12, rail_y + 145, "SUMMARY")
 
-    total_parts = inv.parts_total()
-    total_labor = inv.labor_total()
+    total_parts = inv.parts_total() if show_parts else 0.0
+    total_labor = inv.labor_total() if show_labor else 0.0
     total_price = inv.invoice_total()
     tax_amount = inv.tax_amount()
     price_owed = inv.amount_due()
 
     pdf.setFont("Helvetica", 9)
     y = rail_y + 125
-    pdf.drawString(rail_x + 12, y, f"{cfg['labor_title']}: {_money(total_labor)}"); y -= 14
-    if total_parts:
+    if show_labor:
+        pdf.drawString(rail_x + 12, y, f"{cfg['labor_title']}: {_money(total_labor)}"); y -= 14
+    if show_parts and total_parts:
         pdf.drawString(rail_x + 12, y, f"{cfg['parts_title']}: {_money(total_parts)}"); y -= 14
-    if inv.shop_supplies:
+    if show_shop_supplies and inv.shop_supplies:
         pdf.drawString(rail_x + 12, y, f"{cfg['shop_supplies_label']}: {_money(inv.shop_supplies)}"); y -= 14
     if tax_amount:
         pdf.drawString(rail_x + 12, y, f"{_tax_label(inv)}: {_money(tax_amount)}"); y -= 14
@@ -795,8 +808,8 @@ def _render_split_panel_pdf(
         pdf.drawString(card1_x + 12, y_cursor, ln); y_cursor -= 12
 
     pdf.setFont("Helvetica", 9)
-    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}"
-    job_lines = _wrap_text(job_text, "Helvetica", 9, card_w - 24)
+    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}" if show_job else ""
+    job_lines = _wrap_text(job_text, "Helvetica", 9, card_w - 24) if show_job else []
     y_job = card_y_top - 36
     for ln in job_lines[:2]:
         pdf.drawString(card2_x + 12, y_job, ln)
@@ -881,15 +894,16 @@ def _render_split_panel_pdf(
             _money(line_total) if line_total else ""
         ])
 
-    body_y = draw_table(
-        cfg["labor_title"],
-        content_x,
-        body_y,
-        [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
-        labor_rows,
-        col_widths=[content_w - 190, 90, 100],
-        money_cols={2}
-    )
+    if show_labor:
+        body_y = draw_table(
+            cfg["labor_title"],
+            content_x,
+            body_y,
+            [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
+            labor_rows,
+            col_widths=[content_w - 190, 90, 100],
+            money_cols={2}
+        )
 
     parts_rows = []
     for p in inv.parts:
@@ -899,7 +913,7 @@ def _render_split_panel_pdf(
         ])
 
     has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
-    if has_parts_rows:
+    if show_parts and has_parts_rows:
         body_y = draw_table(
             cfg["parts_title"],
             content_x,
@@ -1079,6 +1093,11 @@ def _render_strip_pdf(
         pdf.drawString(x_left, y, label)
         right_text(x_right, y, str(value), value_font[0], value_font[1], colors.black)
 
+    show_job = bool(cfg.get("show_job", True))
+    show_labor = bool(cfg.get("show_labor", True))
+    show_parts = bool(cfg.get("show_parts", True))
+    show_shop_supplies = bool(cfg.get("show_shop_supplies", True))
+
     # Header
     header_h = 1.1 * inch
     pdf.setFillColor(colors.white)
@@ -1147,8 +1166,13 @@ def _render_strip_pdf(
         "computer_repair": "Computer Repair",
         "lawn_care": "Lawn Care",
         "flipping_items": "Flipping Items",
+        "custom": "Custom",
     }
-    prof_label = template_labels.get(template_key, "Service")
+    prof_label = (cfg.get("profession_label") or "").strip() or template_labels.get(template_key, "Service")
+    if template_key == "custom" and not (cfg.get("profession_label") or "").strip() and owner is not None:
+        custom_name = (getattr(owner, "custom_profession_name", None) or "").strip()
+        if custom_name:
+            prof_label = custom_name
     right_text(right_x, PAGE_H - 0.74 * inch, f"{prof_label} {doc_label.lower()}", "Helvetica", 9, muted)
 
     # Bill to + meta
@@ -1290,15 +1314,16 @@ def _render_strip_pdf(
             _money(line_total) if line_total else ""
         ])
 
-    body_y = draw_table(
-        cfg["labor_title"],
-        M,
-        body_y,
-        [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
-        labor_rows,
-        col_widths=[PAGE_W - 2 * M - 190, 90, 100],
-        money_cols={2}
-    )
+    if show_labor:
+        body_y = draw_table(
+            cfg["labor_title"],
+            M,
+            body_y,
+            [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
+            labor_rows,
+            col_widths=[PAGE_W - 2 * M - 190, 90, 100],
+            money_cols={2}
+        )
 
     parts_rows = []
     for p in inv.parts:
@@ -1308,7 +1333,7 @@ def _render_strip_pdf(
         ])
 
     has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
-    if has_parts_rows:
+    if show_parts and has_parts_rows:
         body_y = draw_table(
             cfg["parts_title"],
             M,
@@ -1320,17 +1345,19 @@ def _render_strip_pdf(
         )
 
     # Summary block at bottom right
-    total_parts = inv.parts_total()
-    total_labor = inv.labor_total()
+    total_parts = inv.parts_total() if show_parts else 0.0
+    total_labor = inv.labor_total() if show_labor else 0.0
     tax_amount = inv.tax_amount()
     price_owed = inv.amount_due()
 
     sum_w = 2.5 * inch
     sum_x = PAGE_W - M - sum_w
-    row_count = 2  # labor + total
-    if has_parts_rows and total_parts:
+    row_count = 1  # total
+    if show_labor:
         row_count += 1
-    if inv.shop_supplies:
+    if show_parts and has_parts_rows and total_parts:
+        row_count += 1
+    if show_shop_supplies and inv.shop_supplies:
         row_count += 1
     if tax_amount:
         row_count += 1
@@ -1346,10 +1373,11 @@ def _render_strip_pdf(
 
     y = sum_y - 36
     right_edge = sum_x + sum_w - 10
-    label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 14
-    if has_parts_rows and total_parts:
+    if show_labor:
+        label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 14
+    if show_parts and has_parts_rows and total_parts:
         label_right_value(sum_x + 10, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 14
-    if inv.shop_supplies:
+    if show_shop_supplies and inv.shop_supplies:
         label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 14
     if tax_amount:
         label_right_value(sum_x + 10, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 14
@@ -1382,7 +1410,12 @@ def _render_strip_pdf(
     return pdf_path
 
 
-def generate_and_store_pdf(session, invoice_id: int) -> str:
+def generate_and_store_pdf(
+    session,
+    invoice_id: int,
+    custom_cfg_override: dict | None = None,
+    pdf_template_override: str | None = None,
+) -> str:
     """
     Generates (or regenerates) a PDF for the given invoice_id.
     Saves to disk (Option A) and updates invoice.pdf_path + invoice.pdf_generated_at.
@@ -1534,6 +1567,26 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
             "shop_supplies_label": "Other Expenses",
         },
+        "custom": {
+            "job_label": "Job / Project",
+            "job_box_title": "JOB DETAILS",
+            "job_rate_label": "Rate/Hour",
+            "job_hours_label": "Total Hours",
+            "hours_suffix": "hrs",
+            "profession_label": "Custom",
+            "labor_title": "Services",
+            "labor_desc_label": "Description",
+            "labor_time_label": "Time",
+            "labor_total_label": "Line Total",
+            "parts_title": "Items",
+            "parts_name_label": "Item Name",
+            "parts_price_label": "Price",
+            "shop_supplies_label": "Additional Fees",
+            "show_job": True,
+            "show_labor": True,
+            "show_parts": True,
+            "show_shop_supplies": True,
+        },
     }
 
     template_key = (getattr(inv, "invoice_template", None) or "").strip() or (
@@ -1542,12 +1595,43 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     if template_key not in TEMPLATE_CFG:
         template_key = "auto_repair"
     cfg = TEMPLATE_CFG[template_key]
+    if template_key == "custom" and owner is not None:
+        def _txt(attr: str, fallback: str) -> str:
+            val = (getattr(owner, attr, None) or "").strip()
+            return val or fallback
 
-    owner_pdf_template = (getattr(owner, "pdf_template", None) or "").strip() if owner else ""
-    inv_pdf_template = (getattr(inv, "pdf_template", None) or "").strip()
-    if owner_pdf_template:
-        inv.pdf_template = owner_pdf_template
-    pdf_template_key = _pdf_template_key_fallback(owner_pdf_template or inv_pdf_template)
+        cfg = dict(cfg)
+        cfg["job_label"] = _txt("custom_job_label", cfg["job_label"])
+        cfg["labor_title"] = _txt("custom_labor_title", cfg["labor_title"])
+        cfg["labor_desc_label"] = _txt("custom_labor_desc_label", cfg["labor_desc_label"])
+        cfg["parts_title"] = _txt("custom_parts_title", cfg["parts_title"])
+        cfg["parts_name_label"] = _txt("custom_parts_name_label", cfg["parts_name_label"])
+        cfg["shop_supplies_label"] = _txt("custom_shop_supplies_label", cfg["shop_supplies_label"])
+        cfg["profession_label"] = _txt("custom_profession_name", cfg.get("profession_label", "Custom"))
+        cfg["show_job"] = bool(getattr(owner, "custom_show_job", True))
+        cfg["show_labor"] = bool(getattr(owner, "custom_show_labor", True))
+        cfg["show_parts"] = bool(getattr(owner, "custom_show_parts", True))
+        cfg["show_shop_supplies"] = bool(getattr(owner, "custom_show_shop_supplies", True))
+    if custom_cfg_override:
+        cfg = dict(cfg)
+        for k, v in custom_cfg_override.items():
+            if k in cfg:
+                cfg[k] = v
+
+    show_job = bool(cfg.get("show_job", True))
+    show_labor = bool(cfg.get("show_labor", True))
+    show_parts = bool(cfg.get("show_parts", True))
+    show_shop_supplies = bool(cfg.get("show_shop_supplies", True))
+
+    requested_pdf_template = (pdf_template_override or "").strip()
+    if requested_pdf_template:
+        pdf_template_key = _pdf_template_key_fallback(requested_pdf_template)
+    else:
+        owner_pdf_template = (getattr(owner, "pdf_template", None) or "").strip() if owner else ""
+        inv_pdf_template = (getattr(inv, "pdf_template", None) or "").strip()
+        if owner_pdf_template:
+            inv.pdf_template = owner_pdf_template
+        pdf_template_key = _pdf_template_key_fallback(owner_pdf_template or inv_pdf_template)
 
     # Determine header identity lines (left side)
     business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
@@ -1866,9 +1950,9 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
 
     pdf.setFont("Helvetica", 10)
 
-    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}"
+    job_text = f"{cfg['job_label']}: {inv.vehicle or ''}" if show_job else ""
     max_job_w = box_w - 20
-    job_lines = _wrap_text(job_text, "Helvetica", 10, max_job_w)
+    job_lines = _wrap_text(job_text, "Helvetica", 10, max_job_w) if show_job else []
 
     y_job = top_y - 32
     line_step = 14
@@ -1974,15 +2058,16 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
             _money(line_total) if line_total else ""
         ])
 
-    body_y = draw_table(
-        cfg["labor_title"],
-        M,
-        body_y,
-        [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
-        labor_rows,
-        col_widths=[PAGE_W - 2 * M - 190, 90, 100],
-        money_cols={2}
-    )
+    if show_labor:
+        body_y = draw_table(
+            cfg["labor_title"],
+            M,
+            body_y,
+            [cfg["labor_desc_label"], cfg.get("labor_time_label", "Time"), cfg.get("labor_total_label", "Line Total")],
+            labor_rows,
+            col_widths=[PAGE_W - 2 * M - 190, 90, 100],
+            money_cols={2}
+        )
 
     # -----------------------------
     # Parts / Materials table
@@ -1995,7 +2080,7 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
         ])
 
     has_parts_rows = any((row[0] or row[1]) for row in parts_rows)
-    if has_parts_rows:
+    if show_parts and has_parts_rows:
         body_y = draw_table(
             cfg["parts_title"],
             M,
@@ -2059,26 +2144,38 @@ def generate_and_store_pdf(session, invoice_id: int) -> str:
     # Summary box
     sum_x = PAGE_W - M - 240
     sum_w = 240
-    sum_h = 1.8 * inch
+    total_parts = inv.parts_total() if show_parts else 0.0
+    total_labor = inv.labor_total() if show_labor else 0.0
+    total_price = inv.invoice_total()
+    tax_amount = inv.tax_amount()
+    price_owed = inv.amount_due()
+
+    summary_rows = 1  # Total / Estimated Total
+    if show_parts and has_parts_rows and total_parts:
+        summary_rows += 1
+    if show_labor:
+        summary_rows += 1
+    if show_shop_supplies and inv.shop_supplies:
+        summary_rows += 1
+    if tax_amount:
+        summary_rows += 1
+    if not is_estimate:
+        summary_rows += 1  # Paid
+    sum_h = max(1.8 * inch, (0.58 * inch + (summary_rows * 0.23 * inch)))
     pdf.roundRect(sum_x, notes_y_top - sum_h, sum_w, sum_h, 8, stroke=1, fill=0)
 
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawString(sum_x + 10, notes_y_top - 18, "SUMMARY")
 
-    total_parts = inv.parts_total()
-    total_labor = inv.labor_total()
-    total_price = inv.invoice_total()
-    tax_amount = inv.tax_amount()
-    price_owed = inv.amount_due()
-
     # ✅ Right-align all $ values to the right edge of the summary box
     right_edge = sum_x + sum_w - 12
     y = notes_y_top - 42
 
-    if has_parts_rows and total_parts:
+    if show_parts and has_parts_rows and total_parts:
         label_right_value(sum_x + 10, right_edge, y, f"{cfg['parts_title']}:", _money(total_parts)); y -= 16
-    label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
-    if inv.shop_supplies:
+    if show_labor:
+        label_right_value(sum_x + 10, right_edge, y, f"{cfg['labor_title']}:", _money(total_labor)); y -= 16
+    if show_shop_supplies and inv.shop_supplies:
         label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
     if tax_amount:
         label_right_value(sum_x + 10, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 16

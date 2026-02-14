@@ -2,6 +2,25 @@
 {% set title = "Settings" %}
 
 {% block content %}
+<style>
+  .live-preview-wrap {
+    border: 1px solid #dbe3ee;
+    border-radius: 14px;
+    background: #f7f9fc;
+    padding: 14px;
+  }
+  .live-preview-title {
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .live-preview-frame {
+    width: 100%;
+    height: 620px;
+    border: 1px solid #cfd8e5;
+    border-radius: 10px;
+    background: #fff;
+  }
+</style>
 
 <div class="page-header">
   <div>
@@ -48,7 +67,7 @@
           <!-- Profession / Template -->
           <div class="mb-3">
             <label class="form-label req">Business Type / Profession</label>
-            <select class="form-select" name="invoice_template" required>
+            <select class="form-select" id="invoiceTemplateSelect" name="invoice_template" required>
               {% for key, cfg in templates.items() %}
                 <option value="{{ key }}"
                   {% if (u.invoice_template or 'auto_repair') == key %}selected{% endif %}>
@@ -59,6 +78,72 @@
             <div class="small-muted mt-1">
               New invoices will use this style. Existing invoices keep the style they were created with.
             </div>
+          </div>
+
+          <div id="customProfessionCard" class="border rounded p-3 mb-3" style="display:none;">
+            <div class="fw-semibold mb-2">Custom Profession Builder</div>
+            <div class="small-muted mb-3">
+              Create your own label set and control which sections appear on invoices/estimates.
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Custom Profession Name</label>
+              <input class="form-control" name="custom_profession_name" value="{{ u.custom_profession_name or '' }}" placeholder="e.g. Window Tinting">
+            </div>
+
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label">Job Label</label>
+                <input class="form-control" name="custom_job_label" value="{{ u.custom_job_label or '' }}" placeholder="e.g. Service Location">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Labor Section Title</label>
+                <input class="form-control" name="custom_labor_title" value="{{ u.custom_labor_title or '' }}" placeholder="e.g. Services">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Labor Description Label</label>
+                <input class="form-control" name="custom_labor_desc_label" value="{{ u.custom_labor_desc_label or '' }}" placeholder="e.g. Service Description">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Parts Section Title</label>
+                <input class="form-control" name="custom_parts_title" value="{{ u.custom_parts_title or '' }}" placeholder="e.g. Materials">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Parts Item Label</label>
+                <input class="form-control" name="custom_parts_name_label" value="{{ u.custom_parts_name_label or '' }}" placeholder="e.g. Material Name">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Additional Fees Label</label>
+                <input class="form-control" name="custom_shop_supplies_label" value="{{ u.custom_shop_supplies_label or '' }}" placeholder="e.g. Travel Fee">
+              </div>
+            </div>
+
+            <hr class="my-3" />
+            <div class="fw-semibold mb-2">Show These Sections</div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="customShowJob" name="custom_show_job" value="1" {% if u.custom_show_job is not defined or u.custom_show_job %}checked{% endif %}>
+              <label class="form-check-label" for="customShowJob">Job field on form and PDF</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="customShowLabor" name="custom_show_labor" value="1" {% if u.custom_show_labor is not defined or u.custom_show_labor %}checked{% endif %}>
+              <label class="form-check-label" for="customShowLabor">Labor section</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="customShowParts" name="custom_show_parts" value="1" {% if u.custom_show_parts is not defined or u.custom_show_parts %}checked{% endif %}>
+              <label class="form-check-label" for="customShowParts">Parts section</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="customShowFees" name="custom_show_shop_supplies" value="1" {% if u.custom_show_shop_supplies is not defined or u.custom_show_shop_supplies %}checked{% endif %}>
+              <label class="form-check-label" for="customShowFees">Additional fees line (shop supplies)</label>
+            </div>
+          </div>
+
+          <div class="live-preview-wrap mb-3">
+            <div class="live-preview-title">Live Invoice Preview</div>
+            <div class="small-muted mb-2">
+              Exact PDF preview using the same renderer as your downloaded invoices.
+            </div>
+            <iframe id="livePdfPreview" class="live-preview-frame" src="{{ url_for('settings_preview_pdf') }}" title="Live PDF Preview"></iframe>
           </div>
 
           <!-- PDF Template -->
@@ -295,5 +380,67 @@
     const mm = String(abs % 60).padStart(2, "0");
     label.textContent = `Local time (UTC${sign}${hh}:${mm}).`;
   }
+
+  const templateSelect = document.getElementById("invoiceTemplateSelect");
+  const customCard = document.getElementById("customProfessionCard");
+  function toggleCustomCard() {
+    if (!templateSelect || !customCard) return;
+    customCard.style.display = (templateSelect.value === "custom") ? "" : "none";
+  }
+  if (templateSelect) {
+    templateSelect.addEventListener("change", toggleCustomCard);
+    toggleCustomCard();
+  }
+
+  function getInput(name) {
+    return document.querySelector(`[name="${name}"]`);
+  }
+
+  function inputVal(name, fallback = "") {
+    const el = getInput(name);
+    return ((el && el.value) || "").trim() || fallback;
+  }
+
+  function checkboxVal(name, fallback = true) {
+    const el = getInput(name);
+    if (!el) return fallback;
+    return !!el.checked;
+  }
+
+  function selectedPdfTemplate() {
+    const checked = document.querySelector('input[name="pdf_template"]:checked');
+    return (checked && checked.value) || "classic";
+  }
+
+  const livePdf = document.getElementById("livePdfPreview");
+  let refreshTimer = null;
+  function refreshPdfPreview() {
+    if (!livePdf) return;
+    const params = new URLSearchParams();
+    params.set("invoice_template", (templateSelect && templateSelect.value) || "auto_repair");
+    params.set("pdf_template", selectedPdfTemplate());
+    params.set("custom_profession_name", inputVal("custom_profession_name"));
+    params.set("custom_job_label", inputVal("custom_job_label"));
+    params.set("custom_labor_title", inputVal("custom_labor_title"));
+    params.set("custom_labor_desc_label", inputVal("custom_labor_desc_label"));
+    params.set("custom_parts_title", inputVal("custom_parts_title"));
+    params.set("custom_parts_name_label", inputVal("custom_parts_name_label"));
+    params.set("custom_shop_supplies_label", inputVal("custom_shop_supplies_label"));
+    params.set("custom_show_job", checkboxVal("custom_show_job", true) ? "1" : "0");
+    params.set("custom_show_labor", checkboxVal("custom_show_labor", true) ? "1" : "0");
+    params.set("custom_show_parts", checkboxVal("custom_show_parts", true) ? "1" : "0");
+    params.set("custom_show_shop_supplies", checkboxVal("custom_show_shop_supplies", true) ? "1" : "0");
+    params.set("_t", String(Date.now()));
+    livePdf.src = `{{ url_for('settings_preview_pdf') }}?${params.toString()}`;
+  }
+
+  function schedulePreviewRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshPdfPreview, 300);
+  }
+
+  document.addEventListener("input", schedulePreviewRefresh);
+  document.addEventListener("change", schedulePreviewRefresh);
+  refreshPdfPreview();
 </script>
 {% endblock %}

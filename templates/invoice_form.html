@@ -13,6 +13,10 @@
 {% set parts_title = _tmpl.get('parts_title', 'Parts') %}
 {% set parts_name_label = _tmpl.get('parts_name_label', 'Part Name') %}
 {% set shop_supplies_label = _tmpl.get('shop_supplies_label', 'Shop Supplies') %}
+{% set show_job = _tmpl.get('show_job', True) %}
+{% set show_labor = _tmpl.get('show_labor', True) %}
+{% set show_parts = _tmpl.get('show_parts', True) %}
+{% set show_shop_supplies = _tmpl.get('show_shop_supplies', True) %}
 
 {% set job_placeholder = _tmpl.get('job_placeholder', '') %}
 {% set part_placeholder = _tmpl.get('parts_placeholder', 'e.g. Item') %}
@@ -96,6 +100,7 @@
       </div>
 
       <!-- Job / Vehicle -->
+      {% if show_job %}
       <div class="col-12 col-md-6">
         <label class="form-label {% if tmpl_key=='auto_repair' %}req{% endif %}">{{ job_label }}</label>
         <input class="form-control" name="vehicle"
@@ -103,6 +108,7 @@
                placeholder="{{ job_placeholder }}"
                value="{% if mode=='edit' %}{{ inv.vehicle }}{% else %}{{ (form.vehicle if form else '') }}{% endif %}">
       </div>
+      {% endif %}
 
       <!-- Customer contact (invoice-level override) -->
       <div class="col-12 col-md-6">
@@ -145,11 +151,13 @@
         </div>
       {% endif %}
 
+      {% if show_shop_supplies %}
       <div class="col-6 col-md-3">
         <label class="form-label">{{ shop_supplies_label }}</label>
         <input class="form-control" name="shop_supplies" inputmode="decimal"
                value="{% if mode=='edit' %}{{ inv.shop_supplies }}{% else %}{{ (form.shop_supplies if form else '0') }}{% endif %}">
       </div>
+      {% endif %}
 
       <div class="col-6 col-md-3">
         <label class="form-label">Parts Markup (%)</label>
@@ -183,6 +191,7 @@
 
     </div>
 
+    {% if show_parts %}
     <hr class="my-4">
 
     <!-- Parts / Materials -->
@@ -230,7 +239,9 @@
         </tbody>
       </table>
     </div>
+    {% endif %}
 
+    {% if tmpl_key != "flipping_items" and show_labor %}
     <hr class="my-4">
 
     <!-- Labor / Services -->
@@ -274,6 +285,7 @@
           </tbody>
         </table>
       </div>
+    {% endif %}
     {% endif %}
 
     <hr class="my-4">
