@@ -21,6 +21,16 @@
 {% set tax_amount = inv.tax_amount() %}
 {% set tmpl_key = inv.invoice_template or "auto_repair" %}
 
+<style>
+  .pdf-live-preview-frame {
+    width: 100%;
+    height: 680px;
+    border: 1px solid #d0d8e5;
+    border-radius: 10px;
+    background: #fff;
+  }
+</style>
+
 <div class="page-header">
   <div>
     <h1 class="h3 fw-bold mb-1">
@@ -82,6 +92,18 @@
           <div class="small-muted">Estimated Total</div>
           <div class="mono fw-semibold">${{ "%.2f"|format(total) }}</div>
         </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <div class="fw-semibold mb-2">Live PDF Preview</div>
+        <div class="small-muted mb-2">Exact PDF layout for this estimate.</div>
+        <iframe
+          class="pdf-live-preview-frame"
+          src="{{ url_for('estimate_pdf_preview', estimate_id=inv.id) }}"
+          title="Estimate PDF Preview"
+        ></iframe>
       </div>
     </div>
   </div>

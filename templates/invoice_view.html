@@ -22,6 +22,16 @@
 {% set tmpl_key = inv.invoice_template or "auto_repair" %}
 {% set fully_paid = (inv.paid or 0) + 0.01 >= total %}
 
+<style>
+  .pdf-live-preview-frame {
+    width: 100%;
+    height: 680px;
+    border: 1px solid #d0d8e5;
+    border-radius: 10px;
+    background: #fff;
+  }
+</style>
+
 <div class="page-header">
   <div>
     <h1 class="h3 fw-bold mb-1">
@@ -100,6 +110,18 @@
           <div class="small-muted">Amount Due</div>
           <div class="mono fw-semibold">${{ "%.2f"|format(inv.amount_due()) }}</div>
         </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <div class="fw-semibold mb-2">Live PDF Preview</div>
+        <div class="small-muted mb-2">Exact PDF layout for this invoice.</div>
+        <iframe
+          class="pdf-live-preview-frame"
+          src="{{ url_for('invoice_pdf_preview', invoice_id=inv.id) }}"
+          title="Invoice PDF Preview"
+        ></iframe>
       </div>
     </div>
   </div>

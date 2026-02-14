@@ -4964,6 +4964,25 @@ def create_app():
                 mimetype="application/pdf"
             )
 
+    @app.route("/estimates/<int:estimate_id>/pdf/preview")
+    @login_required
+    @subscription_required
+    def estimate_pdf_preview(estimate_id):
+        with db_session() as s:
+            _estimate_owned_or_404(s, estimate_id)
+            try:
+                pdf_path = generate_and_store_pdf(s, estimate_id)
+            except Exception as exc:
+                flash(f"Could not generate estimate PDF preview: {exc}", "error")
+                return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+            return send_file(
+                pdf_path,
+                as_attachment=False,
+                download_name=os.path.basename(pdf_path),
+                mimetype="application/pdf",
+            )
+
     @app.route("/estimates/<int:estimate_id>/send", methods=["POST"])
     @login_required
     @subscription_required
@@ -5070,6 +5089,25 @@ def create_app():
                 as_attachment=True,
                 download_name=os.path.basename(pdf_path),
                 mimetype="application/pdf"
+            )
+
+    @app.route("/invoices/<int:invoice_id>/pdf/preview")
+    @login_required
+    @subscription_required
+    def invoice_pdf_preview(invoice_id):
+        with db_session() as s:
+            _invoice_owned_or_404(s, invoice_id)
+            try:
+                pdf_path = generate_and_store_pdf(s, invoice_id)
+            except Exception as exc:
+                flash(f"Could not generate invoice PDF preview: {exc}", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+            return send_file(
+                pdf_path,
+                as_attachment=False,
+                download_name=os.path.basename(pdf_path),
+                mimetype="application/pdf",
             )
 
     @app.route("/invoices/<int:invoice_id>/send", methods=["POST"])
