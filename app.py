@@ -2451,6 +2451,7 @@ def create_app():
                     mode="subscription",
                     customer=cust,
                     line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+                    allow_promotion_codes=True,
                     client_reference_id=str(uid),
                     subscription_data=subscription_data,
                     success_url=f"{base}{url_for('billing_success')}?session_id={{CHECKOUT_SESSION_ID}}",
