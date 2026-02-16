@@ -28,6 +28,7 @@
     <div class="subtitle">Manage account, invoice defaults, and scheduler notifications.</div>
   </div>
   <div class="action-group">
+    <a href="{{ url_for('billing') }}" class="btn btn-outline-primary">Billing</a>
     <a href="{{ url_for('invoices') }}" class="btn btn-outline-secondary">Back to Invoices</a>
   </div>
 </div>
@@ -442,5 +443,28 @@
   document.addEventListener("input", schedulePreviewRefresh);
   document.addEventListener("change", schedulePreviewRefresh);
   refreshPdfPreview();
+
+  (function () {
+    const phoneInput = document.querySelector('input[name="phone"]');
+    if (!phoneInput) return;
+
+    function formatPhone(value) {
+      const digits = (value || "").replace(/\D/g, "").slice(0, 10);
+      if (!digits) return "";
+      let formatted = `(${digits.slice(0, Math.min(3, digits.length))}`;
+      if (digits.length >= 4) {
+        formatted += `) ${digits.slice(3, Math.min(6, digits.length))}`;
+      }
+      if (digits.length >= 7) {
+        formatted += `-${digits.slice(6, 10)}`;
+      }
+      return formatted;
+    }
+
+    phoneInput.value = formatPhone(phoneInput.value);
+    phoneInput.addEventListener("input", () => {
+      phoneInput.value = formatPhone(phoneInput.value);
+    });
+  })();
 </script>
 {% endblock %}

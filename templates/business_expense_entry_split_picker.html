@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% set title = "Add Split Items" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Add Split Items</h1>
+    <div class="small-muted">{{ exp.label }} · {{ entry.item_desc }}</div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ target_url }}">Back to Split</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form class="row g-2 align-items-end" method="get">
+      <div class="col-12 col-md-3">
+        <label class="form-label mb-1">Source Type</label>
+        <select class="form-select" name="doc_type" onchange="this.form.submit()">
+          <option value="invoice" {% if doc_type == "invoice" %}selected{% endif %}>Invoice</option>
+          <option value="estimate" {% if doc_type == "estimate" %}selected{% endif %}>Estimate</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-7">
+        <label class="form-label mb-1">{{ "Invoice" if doc_type == "invoice" else "Estimate" }}</label>
+        <select class="form-select" name="doc_id">
+          <option value="">Select one...</option>
+          {% for d in docs %}
+            <option value="{{ d.id }}" {% if doc_id and doc_id|int == d.id %}selected{% endif %}>
+              {{ d.display_number or d.invoice_number }} · {{ d.name or "No customer" }} · {{ d.date_in or "" }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-2 d-grid">
+        <button class="btn btn-outline-primary" type="submit">Load Items</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if items %}
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <label class="form-label mb-1">Search</label>
+      <input class="form-control" id="splitPickerSearch" placeholder="e.g. wheel bearing, labor">
+    </div>
+  </div>
+{% endif %}
+
+<form class="card shadow-sm" method="post">
+  <input type="hidden" name="doc_type" value="{{ doc_type }}">
+  <input type="hidden" name="doc_id" value="{{ doc_id }}">
+  <div class="card-body">
+    {% if items %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0" id="splitPickerTable">
+          <thead>
+            <tr>
+              <th style="width: 50px;">Add</th>
+              <th>Item</th>
+              <th style="width: 120px;">Type</th>
+              <th class="text-end" style="width: 140px;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for it in items %}
+              <tr data-search="{{ (it.item_desc ~ ' ' ~ it.source_type)|lower }}">
+                <td><input class="form-check-input" type="checkbox" name="item_tokens" value="{{ it.token }}"></td>
+                <td>{{ it.item_desc }}</td>
+                <td class="small-muted">{{ it.source_type }}</td>
+                <td class="text-end mono">${{ '%.2f'|format(it.amount or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-primary" type="submit">Add Selected Split Items</button>
+        <a class="btn btn-outline-secondary" href="{{ target_url }}">Cancel</a>
+      </div>
+    {% else %}
+      <div class="small-muted">Select an invoice or estimate and click Load Items.</div>
+    {% endif %}
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    const search = document.getElementById("splitPickerSearch");
+    const rows = Array.from(document.querySelectorAll("#splitPickerTable tbody tr"));
+    if (!search || !rows.length) return;
+    search.addEventListener("input", () => {
+      const q = (search.value || "").trim().toLowerCase();
+      rows.forEach((row) => {
+        const hay = row.dataset.search || "";
+        row.style.display = (!q || hay.includes(q)) ? "" : "none";
+      });
+    });
+  })();
+</script>
+{% endblock %}

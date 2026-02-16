@@ -34,6 +34,27 @@
 </div>
 
 <div class="row g-2">
+  {% set example_by_category = {
+    "advertising": "e.g. Facebook ad campaign",
+    "wages/salary": "e.g. Weekly payroll",
+    "interest expense": "e.g. Business credit card interest",
+    "utilities": "e.g. Shop electricity bill",
+    "software expenses": "e.g. InvoiceRunner monthly plan",
+    "dues and subscriptions": "e.g. Trade association membership",
+    "small tools and equipment": "e.g. Torque wrench",
+    "rent": "e.g. Shop rent payment",
+    "supplies": "e.g. Paper towels and gloves",
+    "repairs and maintenance": "e.g. Lift service repair",
+    "car and truck expenses": "e.g. Work truck fuel",
+    "commissions and fees": "e.g. Stripe processing fees",
+    "contract labor": "e.g. Subcontractor payment",
+    "employee benefit programs": "e.g. Health insurance contribution",
+    "insurance": "e.g. General liability premium",
+    "legal and professional services": "e.g. CPA bookkeeping service",
+    "taxes and licenses": "e.g. State business license renewal",
+    "travel": "e.g. Hotel for training trip",
+    "meals": "e.g. Client lunch",
+  } %}
   {% for row in default_rows + custom_rows %}
     <div class="col-12 col-lg-6">
       <div class="card shadow-sm expense-card h-100">
@@ -51,7 +72,12 @@
             <input type="hidden" name="expense_id" value="{{ row.id }}">
             <div class="col-8">
               <label class="form-label small-muted mb-1">Item</label>
-              <input class="form-control form-control-sm expense-item-input" name="item_desc" placeholder="e.g. 3 cans of brake cleaner" required>
+              <input
+                class="form-control form-control-sm expense-item-input"
+                name="item_desc"
+                placeholder="{{ example_by_category.get((row.label or '')|lower|trim, 'e.g. Business expense item') }}"
+                required
+              >
             </div>
             <div class="col-4">
               <label class="form-label small-muted mb-1">Amount ($)</label>

@@ -38,7 +38,7 @@ from config import Config
 from models import (
     Base, make_engine, make_session_factory,
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
-    ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry,
+    ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
 )
 from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
 
@@ -5248,6 +5248,253 @@ def create_app():
             s.commit()
             flash("Expense entry deleted.", "success")
             return redirect(url_for("business_expense_category", expense_id=expense_id))
+
+    @app.route("/business-expenses/<int:expense_id>/entries/<int:entry_id>/split", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def business_expense_entry_split(expense_id: int, entry_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            exp = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.id == expense_id, BusinessExpense.user_id == uid)
+                .first()
+            )
+            if not exp:
+                abort(404)
+            entry = (
+                s.query(BusinessExpenseEntry)
+                .filter(
+                    BusinessExpenseEntry.id == entry_id,
+                    BusinessExpenseEntry.expense_id == expense_id,
+                    BusinessExpenseEntry.user_id == uid,
+                )
+                .first()
+            )
+            if not entry:
+                abort(404)
+
+            if request.method == "POST":
+                item_desc = (request.form.get("item_desc") or "").strip()
+                item_amount_raw = (request.form.get("item_amount") or "").strip()
+                if not item_desc:
+                    flash("Please enter a split item description.", "error")
+                    return redirect(url_for("business_expense_entry_split", expense_id=expense_id, entry_id=entry_id))
+                item_amount = _to_float(item_amount_raw, 0.0)
+                s.add(
+                    BusinessExpenseEntrySplit(
+                        entry_id=entry.id,
+                        user_id=uid,
+                        item_desc=item_desc[:200],
+                        amount=item_amount,
+                    )
+                )
+                s.commit()
+                flash("Split item saved.", "success")
+                return redirect(url_for("business_expense_entry_split", expense_id=expense_id, entry_id=entry_id))
+
+            split_items = (
+                s.query(BusinessExpenseEntrySplit)
+                .filter(BusinessExpenseEntrySplit.entry_id == entry.id, BusinessExpenseEntrySplit.user_id == uid)
+                .order_by(BusinessExpenseEntrySplit.created_at.desc(), BusinessExpenseEntrySplit.id.desc())
+                .all()
+            )
+            split_total = sum(float(it.amount or 0.0) for it in split_items)
+            return render_template(
+                "business_expense_entry_split.html",
+                exp=exp,
+                entry=entry,
+                split_items=split_items,
+                split_total=split_total,
+            )
+
+    @app.post("/business-expenses/<int:expense_id>/entries/<int:entry_id>/split/<int:split_id>/delete")
+    @login_required
+    @subscription_required
+    def business_expense_entry_split_delete(expense_id: int, entry_id: int, split_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            exp = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.id == expense_id, BusinessExpense.user_id == uid)
+                .first()
+            )
+            if not exp:
+                abort(404)
+            entry = (
+                s.query(BusinessExpenseEntry)
+                .filter(
+                    BusinessExpenseEntry.id == entry_id,
+                    BusinessExpenseEntry.expense_id == expense_id,
+                    BusinessExpenseEntry.user_id == uid,
+                )
+                .first()
+            )
+            if not entry:
+                abort(404)
+            split_row = (
+                s.query(BusinessExpenseEntrySplit)
+                .filter(
+                    BusinessExpenseEntrySplit.id == split_id,
+                    BusinessExpenseEntrySplit.entry_id == entry.id,
+                    BusinessExpenseEntrySplit.user_id == uid,
+                )
+                .first()
+            )
+            if not split_row:
+                flash("Split item not found.", "error")
+                return redirect(url_for("business_expense_entry_split", expense_id=expense_id, entry_id=entry_id))
+            s.delete(split_row)
+            s.commit()
+            flash("Split item deleted.", "success")
+            return redirect(url_for("business_expense_entry_split", expense_id=expense_id, entry_id=entry_id))
+
+    @app.route("/business-expenses/<int:expense_id>/entries/<int:entry_id>/split/picker", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def business_expense_entry_split_picker(expense_id: int, entry_id: int):
+        uid = _current_user_id_int()
+        doc_type = (request.values.get("doc_type") or "invoice").strip().lower()
+        if doc_type not in ("invoice", "estimate"):
+            doc_type = "invoice"
+        doc_id_raw = (request.values.get("doc_id") or "").strip()
+        doc_id = int(doc_id_raw) if doc_id_raw.isdigit() else None
+
+        def _split_url() -> str:
+            return url_for("business_expense_entry_split", expense_id=expense_id, entry_id=entry_id)
+
+        def _build_doc_items(doc: Invoice) -> list[dict]:
+            out = []
+            for p in doc.parts:
+                name = (p.part_name or "").strip()
+                if not name:
+                    continue
+                out.append(
+                    {
+                        "token": f"part-{int(p.id)}",
+                        "item_desc": name,
+                        "amount": float(p.part_price or 0.0),
+                        "source_type": "Part",
+                    }
+                )
+            rate = float(doc.price_per_hour or 0.0)
+            for li in doc.labor_items:
+                desc = (li.labor_desc or "").strip()
+                if not desc:
+                    continue
+                out.append(
+                    {
+                        "token": f"labor-{int(li.id)}",
+                        "item_desc": desc,
+                        "amount": float(li.labor_time_hours or 0.0) * rate,
+                        "source_type": "Labor",
+                    }
+                )
+            return out
+
+        with db_session() as s:
+            exp = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.id == expense_id, BusinessExpense.user_id == uid)
+                .first()
+            )
+            if not exp:
+                abort(404)
+            entry = (
+                s.query(BusinessExpenseEntry)
+                .filter(
+                    BusinessExpenseEntry.id == entry_id,
+                    BusinessExpenseEntry.expense_id == expense_id,
+                    BusinessExpenseEntry.user_id == uid,
+                )
+                .first()
+            )
+            if not entry:
+                abort(404)
+
+            docs_query = (
+                s.query(Invoice)
+                .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                .filter(Invoice.user_id == uid)
+            )
+            if doc_type == "estimate":
+                docs_query = docs_query.filter(Invoice.is_estimate.is_(True))
+            else:
+                docs_query = docs_query.filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
+            docs = docs_query.order_by(Invoice.created_at.desc()).limit(200).all()
+
+            selected_doc = None
+            if doc_id is not None:
+                selected_doc = next((d for d in docs if int(d.id) == int(doc_id)), None)
+                if selected_doc is None:
+                    doc_id = None
+
+            items = _build_doc_items(selected_doc) if selected_doc else []
+
+            if request.method == "POST":
+                if not selected_doc:
+                    flash("Select an invoice or estimate first.", "error")
+                    return redirect(
+                        url_for(
+                            "business_expense_entry_split_picker",
+                            expense_id=expense_id,
+                            entry_id=entry_id,
+                            doc_type=doc_type,
+                            doc_id=(doc_id or ""),
+                        )
+                    )
+                selected_tokens = [(raw or "").strip() for raw in request.form.getlist("item_tokens") if (raw or "").strip()]
+                if not selected_tokens:
+                    flash("Select at least one item.", "error")
+                    return redirect(
+                        url_for(
+                            "business_expense_entry_split_picker",
+                            expense_id=expense_id,
+                            entry_id=entry_id,
+                            doc_type=doc_type,
+                            doc_id=selected_doc.id,
+                        )
+                    )
+                item_map = {it["token"]: it for it in items}
+                added_count = 0
+                for tok in selected_tokens:
+                    it = item_map.get(tok)
+                    if not it:
+                        continue
+                    s.add(
+                        BusinessExpenseEntrySplit(
+                            entry_id=entry.id,
+                            user_id=uid,
+                            item_desc=(it["item_desc"] or "")[:200],
+                            amount=float(it["amount"] or 0.0),
+                        )
+                    )
+                    added_count += 1
+                if not added_count:
+                    flash("No valid items were selected.", "error")
+                    return redirect(
+                        url_for(
+                            "business_expense_entry_split_picker",
+                            expense_id=expense_id,
+                            entry_id=entry_id,
+                            doc_type=doc_type,
+                            doc_id=selected_doc.id,
+                        )
+                    )
+                s.commit()
+                flash(f"Added {added_count} split item(s).", "success")
+                return redirect(_split_url())
+
+            return render_template(
+                "business_expense_entry_split_picker.html",
+                exp=exp,
+                entry=entry,
+                doc_type=doc_type,
+                doc_id=(doc_id or ""),
+                docs=docs,
+                items=items,
+                target_url=_split_url(),
+            )
 
     @app.route("/expense-items/picker", methods=["GET", "POST"])
     @login_required

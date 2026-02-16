@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% set title = "Split Entry" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Split Entry</h1>
+    <div class="small-muted">{{ exp.label }} · {{ entry.item_desc }}</div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ url_for('business_expense_category', expense_id=exp.id) }}">Back to Category Items</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="small-muted">Order Total</div>
+        <div class="h5 fw-bold mb-0 mono">${{ '%.2f'|format(entry.amount or 0) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="small-muted">Split Total</div>
+        <div class="h5 fw-bold mb-0 mono">${{ '%.2f'|format(split_total or 0) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="small-muted">Difference</div>
+        <div class="h5 fw-bold mb-0 mono">${{ '%.2f'|format((entry.amount or 0) - (split_total or 0)) }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="fw-semibold">Add Split Item</div>
+      <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{{ url_for('business_expense_entry_split_picker', expense_id=exp.id, entry_id=entry.id) }}"
+      >
+        Add From Invoice / Estimate
+      </a>
+    </div>
+
+    <form method="post" class="row g-2 align-items-end">
+      <div class="col-12 col-md-8">
+        <label class="form-label mb-1">Item</label>
+        <input class="form-control" name="item_desc" placeholder="e.g. Wheel bearing 32-422-32" required>
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label mb-1">Amount ($)</label>
+        <input class="form-control" name="item_amount" inputmode="decimal" placeholder="0.00" required>
+      </div>
+      <div class="col-12 col-md-2 d-grid">
+        <button class="btn btn-primary" type="submit">Save Split</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="fw-semibold mb-2">Split Items</div>
+    {% if split_items %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="text-end">Amount</th>
+              <th class="text-end">Added</th>
+              <th class="text-end">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in split_items %}
+              <tr>
+                <td>{{ r.item_desc }}</td>
+                <td class="text-end mono">${{ '%.2f'|format(r.amount or 0) }}</td>
+                <td class="text-end small-muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>
+                <td class="text-end">
+                  <form method="post" action="{{ url_for('business_expense_entry_split_delete', expense_id=exp.id, entry_id=entry.id, split_id=r.id) }}" style="display:inline;">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="small-muted">No split items yet.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

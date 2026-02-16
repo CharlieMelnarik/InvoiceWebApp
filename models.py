@@ -497,6 +497,32 @@ class BusinessExpenseEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     expense: Mapped["BusinessExpense"] = relationship(back_populates="entries")
+    split_items: Mapped[list["BusinessExpenseEntrySplit"]] = relationship(
+        back_populates="entry",
+        cascade="all, delete-orphan",
+        order_by="BusinessExpenseEntrySplit.created_at.desc(), BusinessExpenseEntrySplit.id.desc()",
+    )
+
+
+class BusinessExpenseEntrySplit(Base):
+    __tablename__ = "business_expense_entry_splits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(
+        ForeignKey("business_expense_entries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_desc: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    entry: Mapped["BusinessExpenseEntry"] = relationship(back_populates="split_items")
 
 
 class AuditLog(Base):
