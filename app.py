@@ -2669,22 +2669,33 @@ def create_app():
     @app.route("/billing")
     @login_required
     def billing():
+        status = "none"
+        connect_ok = False
+        connect_message = ""
+        connect_account_id = ""
+        connect_charges_enabled = False
+        connect_payouts_enabled = False
+        connect_details_submitted = False
+
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
-            status = (getattr(u, "subscription_status", None) or "none") if u else "none"
-            connect_ok = False
-            connect_message = ""
             if u:
+                status = (getattr(u, "subscription_status", None) or "none")
                 connect_ok, connect_message = _refresh_connect_status_for_user(s, u)
                 s.commit()
+                connect_account_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
+                connect_charges_enabled = bool(getattr(u, "stripe_connect_charges_enabled", False))
+                connect_payouts_enabled = bool(getattr(u, "stripe_connect_payouts_enabled", False))
+                connect_details_submitted = bool(getattr(u, "stripe_connect_details_submitted", False))
+
         return render_template(
             "billing.html",
             status=status,
             publishable_key=STRIPE_PUBLISHABLE_KEY,
-            connect_account_id=((u.stripe_connect_account_id or "").strip() if u else ""),
-            connect_charges_enabled=(bool(getattr(u, "stripe_connect_charges_enabled", False)) if u else False),
-            connect_payouts_enabled=(bool(getattr(u, "stripe_connect_payouts_enabled", False)) if u else False),
-            connect_details_submitted=(bool(getattr(u, "stripe_connect_details_submitted", False)) if u else False),
+            connect_account_id=connect_account_id,
+            connect_charges_enabled=connect_charges_enabled,
+            connect_payouts_enabled=connect_payouts_enabled,
+            connect_details_submitted=connect_details_submitted,
             connect_ready=connect_ok,
             connect_message=connect_message,
         )
