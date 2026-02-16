@@ -4940,8 +4940,7 @@ def create_app():
 
     def _profit_loss_income_for_period(s, uid: int, target_year: int, target_month: int | None) -> float:
         EPS = 0.01
-        total_labor_raw = 0.0
-        labor_unpaid_raw = 0.0
+        total_paid_invoices_amount = 0.0
         invs = (
             s.query(Invoice)
             .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
@@ -4958,13 +4957,11 @@ def create_app():
                 mo = _parse_month_from_datein(inv.date_in)
                 if mo != target_month:
                     continue
-            labor_total = inv.labor_total()
             paid = float(inv.paid or 0.0)
             invoice_total = inv.invoice_total()
-            total_labor_raw += labor_total
-            if paid + EPS < invoice_total:
-                labor_unpaid_raw += labor_total
-        return total_labor_raw - labor_unpaid_raw
+            if paid + EPS >= invoice_total:
+                total_paid_invoices_amount += invoice_total
+        return total_paid_invoices_amount
 
     @app.route("/year-summary")
     @login_required
