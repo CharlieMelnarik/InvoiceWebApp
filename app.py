@@ -884,6 +884,45 @@ def _stripe_err_msg(exc: Exception) -> str:
     return text_msg or "Stripe request failed."
 
 
+def _refresh_connect_status_for_user(session, user: User | None) -> tuple[bool, str]:
+    if not user:
+        return False, "User not found."
+    acct_id = (getattr(user, "stripe_connect_account_id", None) or "").strip()
+    if not acct_id:
+        user.stripe_connect_charges_enabled = False
+        user.stripe_connect_payouts_enabled = False
+        user.stripe_connect_details_submitted = False
+        user.stripe_connect_last_synced_at = datetime.utcnow()
+        session.add(user)
+        return False, "Stripe Connect is not linked."
+    if not stripe.api_key:
+        return False, "Stripe API is not configured."
+
+    try:
+        acct = stripe.Account.retrieve(acct_id)
+    except Exception as exc:
+        text_msg = str(exc or "")
+        if "No such account" in text_msg:
+            user.stripe_connect_account_id = None
+            user.stripe_connect_charges_enabled = False
+            user.stripe_connect_payouts_enabled = False
+            user.stripe_connect_details_submitted = False
+            user.stripe_connect_last_synced_at = datetime.utcnow()
+            session.add(user)
+            return False, "Connected Stripe account was not found. Please reconnect."
+        return False, _stripe_err_msg(exc)
+
+    user.stripe_connect_charges_enabled = bool(acct.get("charges_enabled"))
+    user.stripe_connect_payouts_enabled = bool(acct.get("payouts_enabled"))
+    user.stripe_connect_details_submitted = bool(acct.get("details_submitted"))
+    user.stripe_connect_last_synced_at = datetime.utcnow()
+    session.add(user)
+
+    if user.stripe_connect_charges_enabled and user.stripe_connect_payouts_enabled:
+        return True, "Connected and ready to accept payments."
+    return False, "Connected account needs more setup to accept payouts."
+
+
 def _send_reset_email(to_email: str, reset_url: str) -> None:
     host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
@@ -1410,6 +1449,16 @@ def _migrate_user_billing_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN current_period_end TIMESTAMP NULL")
     if not _column_exists(engine, "users", "trial_used_at"):
         stmts.append("ALTER TABLE users ADD COLUMN trial_used_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "stripe_connect_account_id"):
+        stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_account_id VARCHAR(255)")
+    if not _column_exists(engine, "users", "stripe_connect_charges_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_charges_enabled BOOLEAN")
+    if not _column_exists(engine, "users", "stripe_connect_payouts_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_payouts_enabled BOOLEAN")
+    if not _column_exists(engine, "users", "stripe_connect_details_submitted"):
+        stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_details_submitted BOOLEAN")
+    if not _column_exists(engine, "users", "stripe_connect_last_synced_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_last_synced_at TIMESTAMP NULL")
 
     if stmts:
         with engine.begin() as conn:
@@ -1420,6 +1469,16 @@ def _migrate_user_billing_fields(engine):
         with engine.begin() as conn:
             conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_customer_idx ON users (stripe_customer_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_sub_idx ON users (stripe_subscription_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_connect_acct_idx ON users (stripe_connect_account_id)"))
+            conn.execute(text(
+                "UPDATE users SET stripe_connect_charges_enabled = FALSE WHERE stripe_connect_charges_enabled IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET stripe_connect_payouts_enabled = FALSE WHERE stripe_connect_payouts_enabled IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET stripe_connect_details_submitted = FALSE WHERE stripe_connect_details_submitted IS NULL"
+            ))
     except Exception:
         pass
 
@@ -2613,7 +2672,22 @@ def create_app():
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
             status = (getattr(u, "subscription_status", None) or "none") if u else "none"
-        return render_template("billing.html", status=status, publishable_key=STRIPE_PUBLISHABLE_KEY)
+            connect_ok = False
+            connect_message = ""
+            if u:
+                connect_ok, connect_message = _refresh_connect_status_for_user(s, u)
+                s.commit()
+        return render_template(
+            "billing.html",
+            status=status,
+            publishable_key=STRIPE_PUBLISHABLE_KEY,
+            connect_account_id=((u.stripe_connect_account_id or "").strip() if u else ""),
+            connect_charges_enabled=(bool(getattr(u, "stripe_connect_charges_enabled", False)) if u else False),
+            connect_payouts_enabled=(bool(getattr(u, "stripe_connect_payouts_enabled", False)) if u else False),
+            connect_details_submitted=(bool(getattr(u, "stripe_connect_details_submitted", False)) if u else False),
+            connect_ready=connect_ok,
+            connect_message=connect_message,
+        )
 
     @app.route("/billing/checkout", methods=["POST"])
     @login_required
@@ -2800,6 +2874,78 @@ def create_app():
             )
             s.commit()
         return redirect(ps.url, code=303)
+
+    @app.route("/billing/connect/start", methods=["POST"])
+    @login_required
+    def billing_connect_start():
+        if not stripe.api_key:
+            abort(500)
+
+        base = _base_url()
+        uid = _current_user_id_int()
+
+        with db_session() as s:
+            u = s.get(User, uid)
+            if not u:
+                abort(403)
+
+            acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
+            if not acct_id:
+                try:
+                    acct = stripe.Account.create(
+                        type="express",
+                        country="US",
+                        email=((u.email or "").strip() or None),
+                        capabilities={
+                            "card_payments": {"requested": True},
+                            "transfers": {"requested": True},
+                        },
+                        metadata={"app_user_id": str(uid)},
+                    )
+                    acct_id = (acct.get("id") or "").strip()
+                except Exception as exc:
+                    flash(f"Stripe Connect error: {_stripe_err_msg(exc)}", "error")
+                    return redirect(url_for("billing"))
+                if not acct_id:
+                    flash("Stripe Connect setup failed. Please try again.", "error")
+                    return redirect(url_for("billing"))
+                u.stripe_connect_account_id = acct_id
+                u.stripe_connect_charges_enabled = False
+                u.stripe_connect_payouts_enabled = False
+                u.stripe_connect_details_submitted = False
+                u.stripe_connect_last_synced_at = datetime.utcnow()
+                s.commit()
+
+        try:
+            account_link = stripe.AccountLink.create(
+                account=acct_id,
+                type="account_onboarding",
+                refresh_url=f"{base}{url_for('billing')}",
+                return_url=f"{base}{url_for('billing')}",
+            )
+        except Exception as exc:
+            flash(f"Stripe Connect error: {_stripe_err_msg(exc)}", "error")
+            return redirect(url_for("billing"))
+
+        return redirect(account_link.url, code=303)
+
+    @app.route("/billing/connect/dashboard", methods=["POST"])
+    @login_required
+    def billing_connect_dashboard():
+        if not stripe.api_key:
+            abort(500)
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip() if u else ""
+            if not acct_id:
+                flash("Connect a Stripe account first.", "error")
+                return redirect(url_for("billing"))
+        try:
+            login_link = stripe.Account.create_login_link(acct_id)
+        except Exception as exc:
+            flash(f"Stripe Connect error: {_stripe_err_msg(exc)}", "error")
+            return redirect(url_for("billing"))
+        return redirect(login_link.url, code=303)
 
     # -----------------------------
     # Stripe Webhook
@@ -6009,12 +6155,21 @@ def create_app():
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
             customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
             tmpl = _template_config_for(inv.invoice_template, owner)
+            owner_connect_acct = ((owner.stripe_connect_account_id or "").strip() if owner else "")
+            owner_connect_ready = bool(
+                owner
+                and owner.stripe_connect_charges_enabled
+                and owner.stripe_connect_payouts_enabled
+            )
 
             payment_message = ""
             payment_error = ""
             if payment_state == "success" and checkout_session_id and stripe.api_key:
                 try:
-                    cs = stripe.checkout.Session.retrieve(checkout_session_id)
+                    retrieve_kwargs = {}
+                    if owner_connect_acct:
+                        retrieve_kwargs["stripe_account"] = owner_connect_acct
+                    cs = stripe.checkout.Session.retrieve(checkout_session_id, **retrieve_kwargs)
                     metadata = cs.get("metadata") or {}
                     uid_meta = int((metadata.get("uid") or "0"))
                     iid_meta = int((metadata.get("iid") or "0"))
@@ -6034,9 +6189,17 @@ def create_app():
             pdf_token = make_pdf_share_token(inv.user_id, inv.id)
             pdf_url = url_for("shared_pdf_download", token=pdf_token)
             pay_url = url_for("shared_customer_portal_pay", token=token)
-            can_pay_online = (inv.amount_due() > 0.0) and bool(stripe.api_key)
+            can_pay_online = (inv.amount_due() > 0.0) and bool(stripe.api_key) and owner_connect_ready
             doc_number = inv.display_number or inv.invoice_number
             business_name = (owner.business_name if owner else "") or "InvoiceRunner"
+            payment_unavailable_reason = ""
+            if inv.amount_due() > 0.0 and not can_pay_online:
+                if not owner_connect_acct:
+                    payment_unavailable_reason = "Online payment is not available yet for this business."
+                elif not owner_connect_ready:
+                    payment_unavailable_reason = "Online payment setup is still in progress for this business."
+                elif not stripe.api_key:
+                    payment_unavailable_reason = "Online payment is temporarily unavailable."
 
             return render_template(
                 "customer_portal.html",
@@ -6050,6 +6213,7 @@ def create_app():
                 can_pay_online=can_pay_online,
                 payment_message=payment_message,
                 payment_error=payment_error,
+                payment_unavailable_reason=payment_unavailable_reason,
             )
 
     @app.post("/shared/v/<token>/pay")
@@ -6074,8 +6238,17 @@ def create_app():
             )
             if not inv:
                 abort(404)
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            owner_connect_acct = ((owner.stripe_connect_account_id or "").strip() if owner else "")
+            owner_connect_ready = bool(
+                owner
+                and owner.stripe_connect_charges_enabled
+                and owner.stripe_connect_payouts_enabled
+            )
             amount_due = float(inv.amount_due() or 0.0)
             if amount_due <= 0:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+            if not owner_connect_acct or not owner_connect_ready:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
 
             amount_cents = int(round(amount_due * 100))
@@ -6104,6 +6277,7 @@ def create_app():
                         "iid": str(invoice_id),
                         "type": "invoice_payment",
                     },
+                    stripe_account=owner_connect_acct,
                 )
             except Exception:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)

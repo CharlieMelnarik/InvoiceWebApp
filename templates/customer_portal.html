@@ -74,6 +74,9 @@
             </form>
           {% endif %}
         </div>
+        {% if payment_unavailable_reason %}
+          <div class="small-muted mb-4">{{ payment_unavailable_reason }}</div>
+        {% endif %}
 
         {% if inv.parts and inv.parts|length > 0 %}
           <div class="fw-semibold mb-2">Items</div>

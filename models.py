@@ -77,6 +77,11 @@ class User(Base):
     # Stripe billing fields
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    stripe_connect_account_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    stripe_connect_charges_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stripe_connect_payouts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stripe_connect_details_submitted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stripe_connect_last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     subscription_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
