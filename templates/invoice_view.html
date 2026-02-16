@@ -274,6 +274,10 @@
         <hr class="my-4">
 
         <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-primary" href="{{ customer_portal_url }}" target="_blank" rel="noopener noreferrer">
+            Customer Portal
+          </a>
+
           <a class="btn btn-outline-secondary" href="{{ url_for('invoice_pdf_download', invoice_id=inv.id) }}">
             Download PDF
           </a>

@@ -573,6 +573,26 @@ def read_pdf_share_token(token: str, max_age_seconds: int) -> tuple[int, int] | 
         return None
 
 
+def _customer_portal_serializer():
+    secret = current_app.config.get("SECRET_KEY")
+    salt = current_app.config.get("CUSTOMER_PORTAL_SALT", "customer-portal")
+    return URLSafeTimedSerializer(secret, salt=salt)
+
+
+def make_customer_portal_token(user_id: int, invoice_id: int) -> str:
+    return _customer_portal_serializer().dumps({"uid": int(user_id), "iid": int(invoice_id)})
+
+
+def read_customer_portal_token(token: str, max_age_seconds: int) -> tuple[int, int] | None:
+    try:
+        data = _customer_portal_serializer().loads(token, max_age=max_age_seconds)
+        uid = int(data.get("uid"))
+        iid = int(data.get("iid"))
+        return uid, iid
+    except (SignatureExpired, BadSignature, TypeError, ValueError):
+        return None
+
+
 def _normalize_phone(phone: str | None) -> str:
     return (phone or "").strip()
 
@@ -4200,7 +4220,15 @@ def create_app():
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
             tmpl = _template_config_for(inv.invoice_template, owner)
             c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
-        return render_template("estimate_view.html", inv=inv, tmpl=tmpl, customer=c)
+            portal_token = make_customer_portal_token(inv.user_id, inv.id)
+            customer_portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+        return render_template(
+            "estimate_view.html",
+            inv=inv,
+            tmpl=tmpl,
+            customer=c,
+            customer_portal_url=customer_portal_url,
+        )
 
     # -----------------------------
     # Edit estimate — GATED
@@ -4486,7 +4514,15 @@ def create_app():
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
             tmpl = _template_config_for(inv.invoice_template, owner)
             c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
-        return render_template("invoice_view.html", inv=inv, tmpl=tmpl, customer=c)
+            portal_token = make_customer_portal_token(inv.user_id, inv.id)
+            customer_portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+        return render_template(
+            "invoice_view.html",
+            inv=inv,
+            tmpl=tmpl,
+            customer=c,
+            customer_portal_url=customer_portal_url,
+        )
 
     # -----------------------------
     # Duplicate invoice — GATED
@@ -5752,12 +5788,15 @@ def create_app():
                 inv = _estimate_owned_or_404(s, estimate_id)
 
             display_no = inv.display_number or inv.invoice_number
+            portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
+            portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
             subject = f"Estimate {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Attached is your estimate {display_no}.\n"
                 f"Details: {inv.vehicle}\n"
-                f"Total: ${inv.invoice_total():,.2f}\n\n"
+                f"Total: ${inv.invoice_total():,.2f}\n"
+                f"Pay or view online: {portal_url}\n\n"
                 "Thank you."
             )
 
@@ -5879,12 +5918,15 @@ def create_app():
                 inv = _invoice_owned_or_404(s, invoice_id)
 
             display_no = inv.display_number or inv.invoice_number
+            portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
+            portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
             subject = f"Invoice {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Attached is your invoice {display_no}.\n"
                 f"Details: {inv.vehicle}\n"
-                f"Total: ${inv.invoice_total():,.2f}\n\n"
+                f"Total: ${inv.invoice_total():,.2f}\n"
+                f"Pay or view online: {portal_url}\n\n"
                 "Thank you."
             )
 
@@ -5938,6 +5980,138 @@ def create_app():
 
         flash("Invoice text sent.", "success")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+    @app.get("/shared/v/<token>")
+    def shared_customer_portal(token: str):
+        max_age = int(
+            current_app.config.get("CUSTOMER_PORTAL_MAX_AGE_SECONDS")
+            or os.getenv("CUSTOMER_PORTAL_MAX_AGE_SECONDS")
+            or "7776000"
+        )
+        decoded = read_customer_portal_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+
+        user_id, invoice_id = decoded
+        payment_state = (request.args.get("payment") or "").strip().lower()
+        checkout_session_id = (request.args.get("session_id") or "").strip()
+
+        with db_session() as s:
+            inv = (
+                s.query(Invoice)
+                .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                .filter(Invoice.id == invoice_id, Invoice.user_id == user_id)
+                .first()
+            )
+            if not inv:
+                abort(404)
+
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            tmpl = _template_config_for(inv.invoice_template, owner)
+
+            payment_message = ""
+            payment_error = ""
+            if payment_state == "success" and checkout_session_id and stripe.api_key:
+                try:
+                    cs = stripe.checkout.Session.retrieve(checkout_session_id)
+                    metadata = cs.get("metadata") or {}
+                    uid_meta = int((metadata.get("uid") or "0"))
+                    iid_meta = int((metadata.get("iid") or "0"))
+                    status = (cs.get("payment_status") or "").lower()
+                    if uid_meta == user_id and iid_meta == invoice_id and status == "paid":
+                        if inv.amount_due() > 0.0:
+                            inv.paid = inv.invoice_total()
+                            s.commit()
+                        payment_message = "Payment received. Thank you."
+                    else:
+                        payment_error = "Payment could not be verified for this document."
+                except Exception:
+                    payment_error = "Payment verification failed. Contact the business if you were charged."
+            elif payment_state == "cancel":
+                payment_message = "Payment canceled."
+
+            pdf_token = make_pdf_share_token(inv.user_id, inv.id)
+            pdf_url = url_for("shared_pdf_download", token=pdf_token)
+            pay_url = url_for("shared_customer_portal_pay", token=token)
+            can_pay_online = (inv.amount_due() > 0.0) and bool(stripe.api_key)
+            doc_number = inv.display_number or inv.invoice_number
+            business_name = (owner.business_name if owner else "") or "InvoiceRunner"
+
+            return render_template(
+                "customer_portal.html",
+                inv=inv,
+                customer=customer,
+                tmpl=tmpl,
+                business_name=business_name,
+                doc_number=doc_number,
+                pdf_url=pdf_url,
+                pay_url=pay_url,
+                can_pay_online=can_pay_online,
+                payment_message=payment_message,
+                payment_error=payment_error,
+            )
+
+    @app.post("/shared/v/<token>/pay")
+    def shared_customer_portal_pay(token: str):
+        max_age = int(
+            current_app.config.get("CUSTOMER_PORTAL_MAX_AGE_SECONDS")
+            or os.getenv("CUSTOMER_PORTAL_MAX_AGE_SECONDS")
+            or "7776000"
+        )
+        decoded = read_customer_portal_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+        if not stripe.api_key:
+            abort(503)
+
+        user_id, invoice_id = decoded
+        with db_session() as s:
+            inv = (
+                s.query(Invoice)
+                .filter(Invoice.id == invoice_id, Invoice.user_id == user_id)
+                .first()
+            )
+            if not inv:
+                abort(404)
+            amount_due = float(inv.amount_due() or 0.0)
+            if amount_due <= 0:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+
+            amount_cents = int(round(amount_due * 100))
+            display_no = inv.display_number or inv.invoice_number
+            doc_label = "Estimate" if inv.is_estimate else "Invoice"
+            success_url = _public_url(url_for("shared_customer_portal", token=token, payment="success"))
+            sep = "&" if "?" in success_url else "?"
+            success_url = f"{success_url}{sep}session_id={{CHECKOUT_SESSION_ID}}"
+            cancel_url = _public_url(url_for("shared_customer_portal", token=token, payment="cancel"))
+
+            try:
+                cs = stripe.checkout.Session.create(
+                    mode="payment",
+                    line_items=[{
+                        "price_data": {
+                            "currency": "usd",
+                            "product_data": {"name": f"{doc_label} {display_no}"},
+                            "unit_amount": amount_cents,
+                        },
+                        "quantity": 1,
+                    }],
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    metadata={
+                        "uid": str(user_id),
+                        "iid": str(invoice_id),
+                        "type": "invoice_payment",
+                    },
+                )
+            except Exception:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+
+            checkout_url = (cs.get("url") or "").strip()
+            if not checkout_url:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+            return redirect(checkout_url, code=303)
 
     @app.get("/shared/p/<token>")
     def shared_pdf_download(token: str):
