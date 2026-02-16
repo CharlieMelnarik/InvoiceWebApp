@@ -221,9 +221,6 @@
             Add Items To Business Expenses
           </button>
         {% endif %}
-        <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#receiptModal">
-          Scan Receipt
-        </button>
       </div>
     </div>
 
@@ -343,57 +340,6 @@
   </div>
 </form>
 
-<!-- Receipt Scan Modal -->
-<div class="modal fade" id="receiptModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Scan Receipt</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="row g-3">
-          <div class="col-12 col-md-6">
-            <label class="form-label">Receipt Image</label>
-            <input class="form-control" type="file" id="receiptFile" accept="image/*" capture="environment">
-            <div class="small-muted mt-2">
-              You can upload an image or use your device camera.
-            </div>
-            <button class="btn btn-outline-primary mt-3 w-100" id="btnScanReceipt" type="button" disabled>
-              Scan Receipt
-            </button>
-          </div>
-          <div class="col-12 col-md-6">
-            <div class="small-muted mb-2">Preview</div>
-            <div class="border rounded p-2 bg-light" style="min-height: 200px;">
-              <img id="receiptPreview" alt="Receipt preview" style="max-width:100%; display:none;">
-              <div id="receiptPreviewEmpty" class="small-muted">No image selected.</div>
-            </div>
-          </div>
-        </div>
-
-        <hr class="my-3">
-
-        <div>
-          <div class="fw-semibold mb-2">Detected Items</div>
-          <div id="receiptItemsEmpty" class="small-muted">No items detected yet.</div>
-          <div id="receiptItemsList" class="list-group" style="display:none;"></div>
-          <details class="mt-3">
-            <summary class="small-muted">Show raw OCR text</summary>
-            <pre id="receiptOcrText" class="mt-2 p-2 bg-light border rounded" style="white-space: pre-wrap; max-height: 220px; overflow:auto;"></pre>
-          </details>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline-secondary" data-bs-dismiss="modal" type="button">Close</button>
-        <button class="btn btn-primary" id="btnAddReceiptItems" type="button" disabled>
-          Add Selected Items
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <script>
   (function () {
     const form = document.getElementById("invoiceForm");
@@ -470,13 +416,34 @@
     const tbody = document.querySelector("#partsTable tbody");
     if (!tbody) return;
     const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><input class="form-control" name="part_name" value="${titleCaseWords(name || "")}"></td>
-      <td><input class="form-control" name="part_price" inputmode="decimal" value="${price || ""}"></td>
-      <td class="text-end">
-        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
-      </td>
-    `;
+
+    const tdName = document.createElement("td");
+    const nameInput = document.createElement("input");
+    nameInput.className = "form-control";
+    nameInput.name = "part_name";
+    nameInput.value = titleCaseWords(name || "");
+    tdName.appendChild(nameInput);
+
+    const tdPrice = document.createElement("td");
+    const priceInput = document.createElement("input");
+    priceInput.className = "form-control";
+    priceInput.name = "part_price";
+    priceInput.setAttribute("inputmode", "decimal");
+    priceInput.value = price || "";
+    tdPrice.appendChild(priceInput);
+
+    const tdAction = document.createElement("td");
+    tdAction.className = "text-end";
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn btn-sm btn-outline-danger";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => removeRow(removeBtn));
+    tdAction.appendChild(removeBtn);
+
+    tr.appendChild(tdName);
+    tr.appendChild(tdPrice);
+    tr.appendChild(tdAction);
     tbody.appendChild(tr);
   }
 
@@ -645,157 +612,6 @@
 
     input.addEventListener("input", updateLinks);
     updateLinks();
-  })();
-
-  (function () {
-    const fileInput = document.getElementById("receiptFile");
-    const preview = document.getElementById("receiptPreview");
-    const previewEmpty = document.getElementById("receiptPreviewEmpty");
-    const scanBtn = document.getElementById("btnScanReceipt");
-    const itemsList = document.getElementById("receiptItemsList");
-    const itemsEmpty = document.getElementById("receiptItemsEmpty");
-    const addBtn = document.getElementById("btnAddReceiptItems");
-    const ocrTextEl = document.getElementById("receiptOcrText");
-
-    if (!fileInput || !scanBtn) return;
-
-    let parsedItems = [];
-
-    function normalizeReceiptItem(item) {
-      const name = String(item && item.name ? item.name : "").trim();
-      const priceNum = Number.parseFloat(String(item && item.price ? item.price : "").replace(",", "."));
-      if (!name || !Number.isFinite(priceNum) || priceNum <= 0) return null;
-      return { name, price: priceNum.toFixed(2) };
-    }
-
-    function aggregateReceiptItems(items) {
-      const map = new Map();
-      (Array.isArray(items) ? items : []).forEach((raw) => {
-        const normalized = normalizeReceiptItem(raw);
-        if (!normalized) return;
-        const key = `${normalized.name.toLowerCase()}|${normalized.price}`;
-        const existing = map.get(key);
-        if (existing) {
-          existing.qty += 1;
-          return;
-        }
-        map.set(key, { name: normalized.name, price: normalized.price, qty: 1 });
-      });
-      return Array.from(map.values());
-    }
-
-    fileInput.addEventListener("change", () => {
-      const file = fileInput.files && fileInput.files[0];
-      parsedItems = [];
-      itemsList.style.display = "none";
-      itemsList.innerHTML = "";
-      itemsEmpty.style.display = "";
-      addBtn.disabled = true;
-
-      if (!file) {
-        preview.style.display = "none";
-        previewEmpty.style.display = "";
-        scanBtn.disabled = true;
-        return;
-      }
-
-      preview.src = URL.createObjectURL(file);
-      preview.style.display = "";
-      previewEmpty.style.display = "none";
-      scanBtn.disabled = false;
-    });
-
-    scanBtn.addEventListener("click", async () => {
-      const file = fileInput.files && fileInput.files[0];
-      if (!file) return;
-      scanBtn.disabled = true;
-      scanBtn.textContent = "Scanning...";
-
-      try {
-        const fd = new FormData();
-        fd.append("image", file);
-        const res = await fetch("/api/receipts/scan", { method: "POST", body: fd });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          alert(data.error || "Receipt scan failed.");
-          return;
-        }
-
-        parsedItems = aggregateReceiptItems(data.items);
-        if (ocrTextEl) {
-          ocrTextEl.textContent = (data.text || "").trim();
-        }
-        itemsList.innerHTML = "";
-
-        if (!parsedItems.length) {
-          itemsEmpty.textContent = "No items detected. Try a clearer image.";
-          itemsEmpty.style.display = "";
-          itemsList.style.display = "none";
-          addBtn.disabled = true;
-          return;
-        }
-
-        parsedItems.forEach((item, idx) => {
-          const row = document.createElement("label");
-          row.className = "list-group-item d-flex align-items-center gap-2";
-          const checkbox = document.createElement("input");
-          checkbox.className = "form-check-input me-1";
-          checkbox.type = "checkbox";
-          checkbox.checked = true;
-          checkbox.dataset.index = String(idx);
-
-          const text = document.createElement("span");
-          text.className = "flex-grow-1";
-          text.textContent = `${item.name} - $${item.price}`;
-
-          const qty = document.createElement("input");
-          qty.type = "number";
-          qty.min = "1";
-          qty.step = "1";
-          qty.value = String(item.qty || 1);
-          qty.className = "form-control form-control-sm";
-          qty.style.width = "88px";
-          qty.dataset.index = String(idx);
-          qty.dataset.kind = "qty";
-
-          row.appendChild(checkbox);
-          row.appendChild(text);
-          row.appendChild(qty);
-          itemsList.appendChild(row);
-        });
-
-        itemsEmpty.style.display = "none";
-        itemsList.style.display = "";
-        addBtn.disabled = false;
-      } finally {
-        scanBtn.disabled = false;
-        scanBtn.textContent = "Scan Receipt";
-      }
-    });
-
-    addBtn.addEventListener("click", () => {
-      const checks = itemsList.querySelectorAll("input[type='checkbox']");
-      let added = 0;
-      checks.forEach((chk) => {
-        if (!chk.checked) return;
-        const idx = Number(chk.dataset.index || "-1");
-        if (!Number.isNaN(idx) && parsedItems[idx]) {
-          const item = parsedItems[idx];
-          const qtyInput = itemsList.querySelector(`input[data-kind='qty'][data-index='${idx}']`);
-          const qty = Math.max(1, Number.parseInt(qtyInput && qtyInput.value ? qtyInput.value : "1", 10) || 1);
-          for (let i = 0; i < qty; i += 1) {
-            addPartRowWithValues(item.name, item.price);
-            added += 1;
-          }
-        }
-      });
-
-      if (added > 0) {
-        const modalEl = document.getElementById("receiptModal");
-        const modal = bootstrap.Modal.getInstance(modalEl);
-        if (modal) modal.hide();
-      }
-    });
   })();
 
   (function () {

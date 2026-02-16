@@ -6,7 +6,6 @@ python-dotenv
 gunicorn
 reportlab
 Pillow
-pytesseract
 
 itsdangerous
 

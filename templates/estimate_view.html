@@ -264,7 +264,7 @@
             <button class="btn btn-outline-success" type="submit">Email PDF</button>
           </form>
 
-          <form method="post" action="{{ url_for('estimate_text', estimate_id=inv.id) }}">
+          <form method="post" action="{{ url_for('estimate_text', estimate_id=inv.id) }}" class="d-none">
             <button class="btn btn-outline-success" type="submit">Text PDF</button>
           </form>
 
