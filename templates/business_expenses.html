@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% set title = "Business Expenses" %}
+
+{% block content %}
+<style>
+  .expense-card .card-body { padding: 0.75rem; }
+  .expense-item-input { padding-top: 0.35rem; padding-bottom: 0.35rem; }
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Business Expenses</h1>
+    <div class="small-muted">Quick-add by category. Entries are stored, and totals update automatically.</div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body py-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-8">
+        <label class="form-label mb-1">New Custom Category</label>
+        <form method="post" class="d-flex gap-2">
+          <input type="hidden" name="action" value="add_category">
+          <input class="form-control form-control-sm" name="new_category_label" placeholder="e.g. Shop Consumables">
+          <button class="btn btn-sm btn-outline-primary" type="submit">Add Category</button>
+        </form>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="small-muted">Total Business Expenses</div>
+        <div class="h5 fw-bold mb-0">${{ '%.2f'|format(total_expenses or 0) }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-2">
+  {% for row in default_rows + custom_rows %}
+    <div class="col-12 col-lg-6">
+      <div class="card shadow-sm expense-card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+            <div class="fw-semibold">{{ row.label }}</div>
+            <div class="d-flex align-items-center gap-2">
+              <div class="mono fw-semibold">${{ '%.2f'|format(row.amount or 0) }}</div>
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('business_expense_category', expense_id=row.id) }}">View Items</a>
+            </div>
+          </div>
+
+          <form method="post" class="row g-2 align-items-end mb-1">
+            <input type="hidden" name="action" value="add_entry">
+            <input type="hidden" name="expense_id" value="{{ row.id }}">
+            <div class="col-8">
+              <label class="form-label small-muted mb-1">Item</label>
+              <input class="form-control form-control-sm expense-item-input" name="item_desc" placeholder="e.g. 3 cans of brake cleaner" required>
+            </div>
+            <div class="col-4">
+              <label class="form-label small-muted mb-1">Amount ($)</label>
+              <input class="form-control form-control-sm expense-item-input" name="item_amount" inputmode="decimal" placeholder="12.00" required>
+            </div>
+            <div class="col-12 d-grid">
+              <button class="btn btn-sm btn-primary" type="submit">Save Entry</button>
+            </div>
+          </form>
+
+          {% if row.is_custom %}
+            <form method="post" class="row g-2 align-items-end mt-1">
+              <input type="hidden" name="action" value="save_categories">
+              <div class="col-8">
+                <label class="form-label small-muted mb-1">Custom Category Name</label>
+                <input class="form-control form-control-sm" name="custom_label_{{ row.id }}" value="{{ row.label }}" required>
+              </div>
+              <div class="col-2">
+                <label class="form-label small-muted mb-1 d-block">Delete</label>
+                <input class="form-check-input mt-2" type="checkbox" id="customDelete{{ row.id }}" name="custom_delete_{{ row.id }}" value="1">
+              </div>
+              <div class="col-2 d-grid">
+                <button class="btn btn-sm btn-outline-secondary" type="submit">Save</button>
+              </div>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

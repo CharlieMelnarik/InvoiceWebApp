@@ -2259,3 +2259,108 @@ def generate_and_store_pdf(
     session.commit()
 
     return pdf_path
+
+
+def generate_profit_loss_pdf(
+    *,
+    owner: User | None,
+    period_label: str,
+    income_total: float,
+    expense_lines: list[tuple[str, float]],
+) -> str:
+    now = datetime.utcnow()
+    year = now.strftime("%Y")
+    out_dir = os.path.join(Config.EXPORTS_DIR, "profit_loss", year)
+    os.makedirs(out_dir, exist_ok=True)
+
+    owner_name = (getattr(owner, "business_name", None) or "").strip() or (getattr(owner, "username", None) or "InvoiceRunner")
+    stamp = now.strftime("%Y%m%d_%H%M%S")
+    fname = _safe_filename(f"profit_loss_{owner_name}_{stamp}") + ".pdf"
+    pdf_path = os.path.join(out_dir, fname)
+
+    total_expenses = sum(float(v or 0.0) for _, v in expense_lines)
+    profit_or_loss = float(income_total or 0.0) - total_expenses
+
+    PAGE_W, PAGE_H = LETTER
+    M = 0.75 * inch
+    pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
+    pdf.setTitle(f"Profit and Loss - {period_label}")
+
+    def right_text(x, y, text, font="Helvetica", size=10):
+        pdf.setFont(font, size)
+        w = pdf.stringWidth(str(text), font, size)
+        pdf.drawString(x - w, y, str(text))
+
+    y = PAGE_H - M
+    pdf.setFont("Helvetica-Bold", 17)
+    pdf.drawString(M, y, "Profit & Loss Statement")
+    y -= 24
+
+    pdf.setFont("Helvetica", 11)
+    pdf.drawString(M, y, f"For: {owner_name}")
+    y -= 16
+    pdf.drawString(M, y, f"Period: {period_label}")
+    y -= 24
+
+    pdf.setStrokeColor(colors.HexColor("#111827"))
+    pdf.line(M, y, PAGE_W - M, y)
+    y -= 18
+
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(M, y, "Income")
+    y -= 18
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(M + 14, y, "Business Income")
+    right_text(PAGE_W - M, y, _money(income_total), "Helvetica", 10)
+    y -= 18
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(M + 14, y, "TOTAL INCOME")
+    right_text(PAGE_W - M, y, _money(income_total), "Helvetica-Bold", 11)
+    y -= 24
+
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(M, y, "Business Expenses")
+    y -= 18
+
+    pdf.setFont("Helvetica", 10)
+    row_h = 14
+    for label, amount in expense_lines:
+        if y < M + 80:
+            pdf.showPage()
+            y = PAGE_H - M
+            pdf.setFont("Helvetica-Bold", 12)
+            pdf.drawString(M, y, "Business Expenses (cont.)")
+            y -= 18
+            pdf.setFont("Helvetica", 10)
+        safe_label = (label or "").strip() or "Other Expense"
+        pdf.drawString(M + 14, y, safe_label[:60])
+        right_text(PAGE_W - M, y, _money(amount), "Helvetica", 10)
+        y -= row_h
+
+    y -= 4
+    pdf.setStrokeColor(colors.HexColor("#111827"))
+    pdf.line(M + 14, y, PAGE_W - M, y)
+    y -= 16
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(M + 14, y, "TOTAL OPERATING EXPENSES")
+    right_text(PAGE_W - M, y, _money(total_expenses), "Helvetica-Bold", 11)
+    y -= 28
+
+    pdf.setFont("Helvetica-Bold", 13)
+    label = "PROFIT FROM BUSINESS" if profit_or_loss >= 0 else "LOSS FROM BUSINESS"
+    pdf.drawString(M + 14, y, label)
+    right_text(PAGE_W - M, y, _money(abs(profit_or_loss) if profit_or_loss < 0 else profit_or_loss), "Helvetica-Bold", 13)
+    y -= 18
+
+    if profit_or_loss < 0:
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(M + 14, y, "(negative result shown as loss)")
+
+    footer_y = 0.58 * inch
+    pdf.setFont("Helvetica-Oblique", 9)
+    pdf.setFillColor(colors.grey)
+    pdf.drawString(M, footer_y, f"Prepared: {now.strftime('%Y-%m-%d %H:%M UTC')}")
+    pdf.setFillColor(colors.black)
+
+    pdf.save()
+    return pdf_path

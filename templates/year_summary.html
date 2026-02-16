@@ -97,6 +97,14 @@
         <div class="fw-bold">{{ money(profit_paid_labor_only) }}</div>
       </div>
 
+      <div class="col-6 col-md-6">
+        <div class="small-muted">Total Business Expenses</div>
+        <div class="fw-semibold">{{ money(total_business_expenses) }}</div>
+        <a class="btn btn-sm btn-outline-primary mt-2" href="{{ url_for('profit_loss', year=year, month=month) }}">
+          Show Breakdown
+        </a>
+      </div>
+
       <div class="col-12 mt-2 small-muted">
         Paid labor income here = total labor dollars minus labor dollars tied to unpaid invoices (i.e., paid labor only).
       </div>

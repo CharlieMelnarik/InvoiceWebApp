@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% set title = "Select Expense Items" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Add From Business Expenses</h1>
+    <div class="small-muted">Select one or more saved expense items to insert into this {{ doc_type }}.</div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ target_url }}">Back to Form</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <label class="form-label">Search (item or category)</label>
+    <input class="form-control" id="pickerSearch" placeholder="e.g. supplies, brake cleaner, rent">
+  </div>
+</div>
+
+<form class="card shadow-sm" method="post">
+  <input type="hidden" name="doc_type" value="{{ doc_type }}">
+  <input type="hidden" name="mode" value="{{ mode }}">
+  <input type="hidden" name="invoice_id" value="{{ invoice_id }}">
+  <input type="hidden" name="estimate_id" value="{{ estimate_id }}">
+  <div class="card-body">
+    {% if items %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0" id="pickerTable">
+          <thead>
+            <tr>
+              <th style="width: 50px;">Add</th>
+              <th>Item</th>
+              <th>Category</th>
+              <th class="text-end">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for it in items %}
+              <tr data-search="{{ (it.item_desc ~ ' ' ~ it.category)|lower }}">
+                <td><input class="form-check-input" type="checkbox" name="entry_ids" value="{{ it.id }}"></td>
+                <td>{{ it.item_desc }}</td>
+                <td class="small-muted">{{ it.category }}</td>
+                <td class="text-end mono">${{ '%.2f'|format(it.amount or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="small-muted">No saved expense items found. Add some on Business Expenses first.</div>
+    {% endif %}
+
+    <div class="d-flex gap-2 mt-3">
+      <button class="btn btn-primary" type="submit">Add Selected to {{ "Estimate" if doc_type == "estimate" else "Invoice" }}</button>
+      <a class="btn btn-outline-secondary" href="{{ target_url }}">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    const search = document.getElementById("pickerSearch");
+    const rows = Array.from(document.querySelectorAll("#pickerTable tbody tr"));
+    if (!search || !rows.length) return;
+    search.addEventListener("input", () => {
+      const q = (search.value || "").trim().toLowerCase();
+      rows.forEach((row) => {
+        const hay = (row.dataset.search || "");
+        row.style.display = (!q || hay.includes(q)) ? "" : "none";
+      });
+    });
+  })();
+</script>
+{% endblock %}

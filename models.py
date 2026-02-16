@@ -125,6 +125,12 @@ class User(Base):
         order_by="Invoice.created_at.desc()",
     )
 
+    business_expenses: Mapped[list["BusinessExpense"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="BusinessExpense.sort_order.asc(), BusinessExpense.id.asc()",
+    )
+
     schedule_events: Mapped[list["ScheduleEvent"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -442,6 +448,55 @@ class InvoiceLabor(Base):
     labor_time_hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="labor_items")
+
+
+class BusinessExpense(Base):
+    __tablename__ = "business_expenses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    label: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    is_custom: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="business_expenses")
+    entries: Mapped[list["BusinessExpenseEntry"]] = relationship(
+        back_populates="expense",
+        cascade="all, delete-orphan",
+        order_by="BusinessExpenseEntry.created_at.desc(), BusinessExpenseEntry.id.desc()",
+    )
+
+
+class BusinessExpenseEntry(Base):
+    __tablename__ = "business_expense_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    expense_id: Mapped[int] = mapped_column(
+        ForeignKey("business_expenses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_desc: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    expense: Mapped["BusinessExpense"] = relationship(back_populates="entries")
 
 
 class AuditLog(Base):

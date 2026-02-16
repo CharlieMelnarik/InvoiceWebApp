@@ -38,9 +38,9 @@ from config import Config
 from models import (
     Base, make_engine, make_session_factory,
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
-    ScheduleEvent, AuditLog,
+    ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry,
 )
-from pdf_service import generate_and_store_pdf
+from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
 
 login_manager = LoginManager()
 login_manager.login_view = "login"
@@ -69,7 +69,13 @@ def load_user(user_id: str):
 def _to_float(s, default=0.0):
     try:
         s = (s or "").strip()
-        return float(s) if s else float(default)
+        if not s:
+            return float(default)
+        # Accept common money input formats like "$12.50" or "1,234.56".
+        s = s.replace("$", "").replace(",", "").strip()
+        if s.startswith("(") and s.endswith(")"):
+            s = "-" + s[1:-1].strip()
+        return float(s)
     except Exception:
         return float(default)
 
@@ -633,6 +639,28 @@ PDF_TEMPLATES = {
     },
 }
 
+BUSINESS_EXPENSE_DEFAULT_LABELS = [
+    "Advertising",
+    "Wages/Salary",
+    "Interest Expense",
+    "Utilities",
+    "Software Expenses",
+    "Dues and Subscriptions",
+    "Small Tools and Equipment",
+    "Rent",
+    "Supplies",
+    "Repairs and Maintenance",
+    "Car and Truck Expenses",
+    "Commissions and Fees",
+    "Contract Labor",
+    "Employee Benefit Programs",
+    "Insurance",
+    "Legal and Professional Services",
+    "Taxes and Licenses",
+    "Travel",
+    "Meals",
+]
+
 
 def _pdf_template_key_fallback(key: str | None) -> str:
     key = (key or "").strip()
@@ -700,6 +728,116 @@ def _to_e164_phone(phone: str | None) -> str | None:
     if len(digits) == 11 and digits.startswith("1"):
         return f"+{digits}"
     return None
+
+
+def _summary_period_label(month_text: str | None, year_text: str | None) -> str:
+    year = (year_text or "").strip()
+    if not (year.isdigit() and len(year) == 4):
+        year = datetime.now().strftime("%Y")
+    month = (month_text or "").strip()
+    if month.isdigit() and 1 <= int(month) <= 12:
+        month_name = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][int(month) - 1]
+        return f"{month_name} {year}"
+    return year
+
+
+def _ensure_business_expense_defaults(session, user_id: int) -> None:
+    count_defaults = (
+        session.query(BusinessExpense)
+        .filter(BusinessExpense.user_id == user_id, BusinessExpense.is_custom.is_(False))
+        .count()
+    )
+    if count_defaults > 0:
+        return
+
+    for idx, label in enumerate(BUSINESS_EXPENSE_DEFAULT_LABELS):
+        session.add(
+            BusinessExpense(
+                user_id=user_id,
+                label=label,
+                amount=0.0,
+                is_custom=False,
+                sort_order=idx,
+            )
+        )
+    session.flush()
+
+
+def _business_expense_rows(session, user_id: int, ensure_defaults: bool = False):
+    if ensure_defaults:
+        _ensure_business_expense_defaults(session, user_id)
+    return (
+        session.query(BusinessExpense)
+        .filter(BusinessExpense.user_id == user_id)
+        .order_by(BusinessExpense.is_custom.asc(), BusinessExpense.sort_order.asc(), BusinessExpense.id.asc())
+        .all()
+    )
+
+
+def _business_expense_total(session, user_id: int, ensure_defaults: bool = False) -> float:
+    rows = _business_expense_rows(session, user_id, ensure_defaults=ensure_defaults)
+    return sum(float(getattr(r, "amount", 0.0) or 0.0) for r in rows)
+
+
+def _recalc_business_expense_amount(session, expense_id: int) -> float:
+    # Session uses autoflush=False, so push pending row changes before summing.
+    session.flush()
+    rows = (
+        session.query(BusinessExpenseEntry.amount)
+        .filter(BusinessExpenseEntry.expense_id == expense_id)
+        .all()
+    )
+    value = sum(float(r[0] or 0.0) for r in rows)
+    exp = session.get(BusinessExpense, expense_id)
+    if exp:
+        exp.amount = value
+        session.add(exp)
+    return value
+
+
+def _expense_period_bounds(target_year: int, target_month: int | None) -> tuple[datetime, datetime]:
+    if target_month is None:
+        start = datetime(target_year, 1, 1)
+        end = datetime(target_year + 1, 1, 1)
+        return start, end
+    start = datetime(target_year, target_month, 1)
+    if target_month == 12:
+        end = datetime(target_year + 1, 1, 1)
+    else:
+        end = datetime(target_year, target_month + 1, 1)
+    return start, end
+
+
+def _business_expense_breakdown_for_period(
+    session,
+    user_id: int,
+    target_year: int,
+    target_month: int | None,
+) -> list[dict]:
+    rows = _business_expense_rows(session, user_id, ensure_defaults=True)
+    start_dt, end_dt = _expense_period_bounds(target_year, target_month)
+    entry_rows = (
+        session.query(BusinessExpenseEntry.expense_id, BusinessExpenseEntry.amount)
+        .filter(
+            BusinessExpenseEntry.user_id == user_id,
+            BusinessExpenseEntry.created_at >= start_dt,
+            BusinessExpenseEntry.created_at < end_dt,
+        )
+        .all()
+    )
+    totals_by_expense_id = {}
+    for exp_id, amount in entry_rows:
+        totals_by_expense_id[int(exp_id)] = float(totals_by_expense_id.get(int(exp_id), 0.0)) + float(amount or 0.0)
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "expense_id": int(row.id),
+                "label": row.label,
+                "amount": float(totals_by_expense_id.get(int(row.id), 0.0)),
+            }
+        )
+    return out
 
 
 def _public_base_url() -> str:
@@ -4783,6 +4921,34 @@ def create_app():
         except Exception:
             return str(x)
 
+    def _profit_loss_income_for_period(s, uid: int, target_year: int, target_month: int | None) -> float:
+        EPS = 0.01
+        total_labor_raw = 0.0
+        labor_unpaid_raw = 0.0
+        invs = (
+            s.query(Invoice)
+            .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+            .filter(Invoice.user_id == uid)
+            .filter(or_(Invoice.is_estimate.is_(False), Invoice.is_estimate.is_(None)))
+            .order_by(Invoice.created_at.desc())
+            .all()
+        )
+        for inv in invs:
+            yr = _parse_year_from_datein(inv.date_in)
+            if yr != target_year:
+                continue
+            if target_month is not None:
+                mo = _parse_month_from_datein(inv.date_in)
+                if mo != target_month:
+                    continue
+            labor_total = inv.labor_total()
+            paid = float(inv.paid or 0.0)
+            invoice_total = inv.invoice_total()
+            total_labor_raw += labor_total
+            if paid + EPS < invoice_total:
+                labor_unpaid_raw += labor_total
+        return total_labor_raw - labor_unpaid_raw
+
     @app.route("/year-summary")
     @login_required
     @subscription_required
@@ -4812,6 +4978,7 @@ def create_app():
         total_outstanding_unpaid = 0.0
         labor_unpaid = 0.0
         labor_unpaid_raw = 0.0
+        total_business_expenses = 0.0
 
         unpaid = []
 
@@ -4872,12 +5039,15 @@ def create_app():
                         "date_in": inv.date_in,
                         "outstanding": outstanding,
                     })
+            expense_rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
+            total_business_expenses = sum(float(r["amount"] or 0.0) for r in expense_rows)
 
         profit_paid_labor_only = total_labor_raw - labor_unpaid_raw
 
         context = {
             "year": year_text,
             "month": (str(target_month) if target_month else ""),
+            "period_label": _summary_period_label(str(target_month) if target_month else "", year_text),
             "count": count,
             "total_invoice_amount": total_invoice_amount,
             "total_parts": total_parts,
@@ -4889,10 +5059,398 @@ def create_app():
             "total_outstanding_unpaid": total_outstanding_unpaid,
             "unpaid_count": len(unpaid),
             "profit_paid_labor_only": profit_paid_labor_only,
+            "total_business_expenses": total_business_expenses,
             "unpaid": unpaid,
             "money": _money,
         }
         return render_template("year_summary.html", **context)
+
+    @app.route("/business-expenses", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def business_expenses():
+        uid = _current_user_id_int()
+        with db_session() as s:
+            _ensure_business_expense_defaults(s, uid)
+
+            if request.method == "POST":
+                action = (request.form.get("action") or "").strip()
+                if action == "add_entry":
+                    expense_id_raw = (request.form.get("expense_id") or "").strip()
+                    item_desc = (request.form.get("item_desc") or "").strip()
+                    item_amount_raw = (request.form.get("item_amount") or "").strip()
+                    if not expense_id_raw.isdigit():
+                        flash("Invalid expense category.", "error")
+                        return redirect(url_for("business_expenses"))
+                    exp = (
+                        s.query(BusinessExpense)
+                        .filter(BusinessExpense.id == int(expense_id_raw), BusinessExpense.user_id == uid)
+                        .first()
+                    )
+                    if not exp:
+                        flash("Expense category not found.", "error")
+                        return redirect(url_for("business_expenses"))
+                    if not item_desc:
+                        flash("Please enter an item description.", "error")
+                        return redirect(url_for("business_expenses"))
+
+                    item_amount = _to_float(item_amount_raw, 0.0)
+                    s.add(
+                        BusinessExpenseEntry(
+                            expense_id=exp.id,
+                            user_id=uid,
+                            item_desc=item_desc[:200],
+                            amount=item_amount,
+                        )
+                    )
+                    _recalc_business_expense_amount(s, exp.id)
+                    s.commit()
+                    flash(f"Saved to {exp.label}.", "success")
+                    return redirect(url_for("business_expenses"))
+
+                if action == "delete_entry":
+                    entry_id_raw = (request.form.get("entry_id") or "").strip()
+                    if not entry_id_raw.isdigit():
+                        flash("Invalid entry.", "error")
+                        return redirect(url_for("business_expenses"))
+                    entry = (
+                        s.query(BusinessExpenseEntry)
+                        .filter(BusinessExpenseEntry.id == int(entry_id_raw), BusinessExpenseEntry.user_id == uid)
+                        .first()
+                    )
+                    if not entry:
+                        flash("Entry not found.", "error")
+                        return redirect(url_for("business_expenses"))
+                    expense_id = entry.expense_id
+                    s.delete(entry)
+                    _recalc_business_expense_amount(s, expense_id)
+                    s.commit()
+                    flash("Expense entry removed.", "success")
+                    return redirect(url_for("business_expenses"))
+
+                if action == "add_category":
+                    label = (request.form.get("new_category_label") or "").strip()
+                    if not label:
+                        flash("Please enter a category name.", "error")
+                        return redirect(url_for("business_expenses"))
+                    max_sort = (
+                        s.query(BusinessExpense.sort_order)
+                        .filter(BusinessExpense.user_id == uid)
+                        .order_by(BusinessExpense.sort_order.desc())
+                        .limit(1)
+                        .scalar()
+                    )
+                    s.add(
+                        BusinessExpense(
+                            user_id=uid,
+                            label=label[:120],
+                            amount=0.0,
+                            is_custom=True,
+                            sort_order=int(max_sort or 0) + 1,
+                        )
+                    )
+                    s.commit()
+                    flash("Custom category added.", "success")
+                    return redirect(url_for("business_expenses"))
+
+                if action == "save_categories":
+                    custom_rows = (
+                        s.query(BusinessExpense)
+                        .filter(BusinessExpense.user_id == uid, BusinessExpense.is_custom.is_(True))
+                        .order_by(BusinessExpense.sort_order.asc(), BusinessExpense.id.asc())
+                        .all()
+                    )
+                    for row in custom_rows:
+                        if (request.form.get(f"custom_delete_{row.id}") or "").strip() == "1":
+                            s.delete(row)
+                            continue
+                        row.label = ((request.form.get(f"custom_label_{row.id}") or "").strip() or row.label)[:120]
+                    s.commit()
+                    flash("Categories saved.", "success")
+                    return redirect(url_for("business_expenses"))
+
+                flash("No business expense changes submitted.", "info")
+                return redirect(url_for("business_expenses"))
+
+            rows = _business_expense_rows(s, uid, ensure_defaults=False)
+            default_rows = [r for r in rows if not r.is_custom]
+            custom_rows = [r for r in rows if r.is_custom]
+            total_expenses = sum(float(r.amount or 0.0) for r in rows)
+            return render_template(
+                "business_expenses.html",
+                default_rows=default_rows,
+                custom_rows=custom_rows,
+                total_expenses=total_expenses,
+            )
+
+    @app.route("/business-expenses/<int:expense_id>")
+    @login_required
+    @subscription_required
+    def business_expense_category(expense_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            exp = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.id == expense_id, BusinessExpense.user_id == uid)
+                .first()
+            )
+            if not exp:
+                abort(404)
+            entries = (
+                s.query(BusinessExpenseEntry)
+                .filter(BusinessExpenseEntry.expense_id == exp.id, BusinessExpenseEntry.user_id == uid)
+                .order_by(BusinessExpenseEntry.created_at.desc(), BusinessExpenseEntry.id.desc())
+                .all()
+            )
+            return render_template("business_expense_category.html", exp=exp, entries=entries)
+
+    @app.post("/business-expenses/<int:expense_id>/entries/<int:entry_id>/delete")
+    @login_required
+    @subscription_required
+    def business_expense_entry_delete(expense_id: int, entry_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            exp = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.id == expense_id, BusinessExpense.user_id == uid)
+                .first()
+            )
+            if not exp:
+                abort(404)
+            entry = (
+                s.query(BusinessExpenseEntry)
+                .filter(
+                    BusinessExpenseEntry.id == entry_id,
+                    BusinessExpenseEntry.expense_id == expense_id,
+                    BusinessExpenseEntry.user_id == uid,
+                )
+                .first()
+            )
+            if not entry:
+                flash("Expense entry not found.", "error")
+                return redirect(url_for("business_expense_category", expense_id=expense_id))
+            s.delete(entry)
+            _recalc_business_expense_amount(s, expense_id)
+            s.commit()
+            flash("Expense entry deleted.", "success")
+            return redirect(url_for("business_expense_category", expense_id=expense_id))
+
+    @app.route("/expense-items/picker", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def expense_items_picker():
+        uid = _current_user_id_int()
+        doc_type = (request.values.get("doc_type") or "invoice").strip().lower()
+        if doc_type not in ("invoice", "estimate"):
+            doc_type = "invoice"
+        mode = (request.values.get("mode") or "new").strip().lower()
+        if mode not in ("new", "edit"):
+            mode = "new"
+        invoice_id_raw = (request.values.get("invoice_id") or "").strip()
+        estimate_id_raw = (request.values.get("estimate_id") or "").strip()
+
+        def _target_url(add_ids_csv: str | None = None) -> str:
+            kwargs = {}
+            if add_ids_csv:
+                kwargs["add_expense_ids"] = add_ids_csv
+            if doc_type == "estimate":
+                if mode == "edit" and estimate_id_raw.isdigit():
+                    return url_for("estimate_edit", estimate_id=int(estimate_id_raw), **kwargs)
+                return url_for("estimate_new", **kwargs)
+            if mode == "edit" and invoice_id_raw.isdigit():
+                return url_for("invoice_edit", invoice_id=int(invoice_id_raw), **kwargs)
+            return url_for("invoice_new", **kwargs)
+
+        with db_session() as s:
+            if request.method == "POST":
+                selected_ids = []
+                for raw in request.form.getlist("entry_ids"):
+                    raw = (raw or "").strip()
+                    if raw.isdigit():
+                        selected_ids.append(int(raw))
+                if not selected_ids:
+                    flash("Select at least one expense item.", "error")
+                    return redirect(url_for(
+                        "expense_items_picker",
+                        doc_type=doc_type,
+                        mode=mode,
+                        invoice_id=invoice_id_raw,
+                        estimate_id=estimate_id_raw,
+                    ))
+                valid = (
+                    s.query(BusinessExpenseEntry.id)
+                    .filter(BusinessExpenseEntry.user_id == uid, BusinessExpenseEntry.id.in_(selected_ids))
+                    .all()
+                )
+                valid_ids = sorted({int(v[0]) for v in valid})
+                if not valid_ids:
+                    flash("Selected items are invalid.", "error")
+                    return redirect(url_for(
+                        "expense_items_picker",
+                        doc_type=doc_type,
+                        mode=mode,
+                        invoice_id=invoice_id_raw,
+                        estimate_id=estimate_id_raw,
+                    ))
+                return redirect(_target_url(",".join(str(v) for v in valid_ids)))
+
+            rows = (
+                s.query(BusinessExpenseEntry, BusinessExpense)
+                .join(BusinessExpense, BusinessExpense.id == BusinessExpenseEntry.expense_id)
+                .filter(BusinessExpenseEntry.user_id == uid, BusinessExpense.user_id == uid)
+                .order_by(BusinessExpense.label.asc(), BusinessExpenseEntry.item_desc.asc())
+                .all()
+            )
+            items = [
+                {
+                    "id": int(e.id),
+                    "category": (cat.label or "").strip(),
+                    "item_desc": (e.item_desc or "").strip(),
+                    "amount": float(e.amount or 0.0),
+                }
+                for e, cat in rows
+            ]
+            return render_template(
+                "expense_items_picker.html",
+                items=items,
+                doc_type=doc_type,
+                mode=mode,
+                invoice_id=invoice_id_raw,
+                estimate_id=estimate_id_raw,
+                target_url=_target_url(),
+            )
+
+    @app.get("/api/business-expense-entries")
+    @login_required
+    @subscription_required
+    def api_business_expense_entries():
+        uid = _current_user_id_int()
+        raw_ids = (request.args.get("ids") or "").strip()
+        ids = []
+        for tok in raw_ids.split(","):
+            tok = tok.strip()
+            if tok.isdigit():
+                ids.append(int(tok))
+        if not ids:
+            return jsonify({"items": []})
+        with db_session() as s:
+            rows = (
+                s.query(BusinessExpenseEntry.id, BusinessExpenseEntry.item_desc, BusinessExpenseEntry.amount, BusinessExpense.label)
+                .join(BusinessExpense, BusinessExpense.id == BusinessExpenseEntry.expense_id)
+                .filter(BusinessExpenseEntry.user_id == uid, BusinessExpense.user_id == uid, BusinessExpenseEntry.id.in_(ids))
+                .all()
+            )
+            order = {v: i for i, v in enumerate(ids)}
+            items = [
+                {
+                    "id": int(r[0]),
+                    "name": (r[1] or "").strip(),
+                    "price": float(r[2] or 0.0),
+                    "category": (r[3] or "").strip(),
+                }
+                for r in rows
+            ]
+            items.sort(key=lambda it: order.get(it["id"], 10**9))
+            return jsonify({"items": items})
+
+    @app.route("/profit-loss")
+    @login_required
+    @subscription_required
+    def profit_loss():
+        uid = _current_user_id_int()
+        year_text = (request.args.get("year") or "").strip()
+        month_text = (request.args.get("month") or "").strip()
+        if not (year_text.isdigit() and len(year_text) == 4):
+            year_text = datetime.now().strftime("%Y")
+        target_year = int(year_text)
+        target_month = int(month_text) if month_text.isdigit() else None
+        if target_month is not None and not (1 <= target_month <= 12):
+            target_month = None
+        period_label = _summary_period_label(str(target_month) if target_month else "", year_text)
+
+        with db_session() as s:
+            u = s.get(User, uid)
+            rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
+            income_total = _profit_loss_income_for_period(s, uid, target_year, target_month)
+            total_expenses = sum(float(r["amount"] or 0.0) for r in rows)
+            net_total = income_total - total_expenses
+            return render_template(
+                "profit_loss.html",
+                year=year_text,
+                month=(str(target_month) if target_month else ""),
+                period_label=period_label,
+                income_total=income_total,
+                total_expenses=total_expenses,
+                net_total=net_total,
+                rows=rows,
+                business_name=((u.business_name or "").strip() if u else ""),
+            )
+
+    @app.route("/profit-loss/pdf/preview")
+    @login_required
+    @subscription_required
+    def profit_loss_pdf_preview():
+        uid = _current_user_id_int()
+        year_text = (request.args.get("year") or "").strip()
+        month_text = (request.args.get("month") or "").strip()
+        if not (year_text.isdigit() and len(year_text) == 4):
+            year_text = datetime.now().strftime("%Y")
+        target_year = int(year_text)
+        target_month = int(month_text) if month_text.isdigit() else None
+        if target_month is not None and not (1 <= target_month <= 12):
+            target_month = None
+        period_label = _summary_period_label(str(target_month) if target_month else "", year_text)
+
+        with db_session() as s:
+            u = s.get(User, uid)
+            rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
+            income_total = _profit_loss_income_for_period(s, uid, target_year, target_month)
+            expense_lines = [(r["label"], float(r["amount"] or 0.0)) for r in rows]
+            pdf_path = generate_profit_loss_pdf(
+                owner=u,
+                period_label=period_label,
+                income_total=income_total,
+                expense_lines=expense_lines,
+            )
+            return send_file(
+                pdf_path,
+                as_attachment=False,
+                download_name=os.path.basename(pdf_path),
+                mimetype="application/pdf",
+            )
+
+    @app.route("/profit-loss/pdf/download")
+    @login_required
+    @subscription_required
+    def profit_loss_pdf_download():
+        uid = _current_user_id_int()
+        year_text = (request.args.get("year") or "").strip()
+        month_text = (request.args.get("month") or "").strip()
+        if not (year_text.isdigit() and len(year_text) == 4):
+            year_text = datetime.now().strftime("%Y")
+        target_year = int(year_text)
+        target_month = int(month_text) if month_text.isdigit() else None
+        if target_month is not None and not (1 <= target_month <= 12):
+            target_month = None
+        period_label = _summary_period_label(str(target_month) if target_month else "", year_text)
+
+        with db_session() as s:
+            u = s.get(User, uid)
+            rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
+            income_total = _profit_loss_income_for_period(s, uid, target_year, target_month)
+            expense_lines = [(r["label"], float(r["amount"] or 0.0)) for r in rows]
+            pdf_path = generate_profit_loss_pdf(
+                owner=u,
+                period_label=period_label,
+                income_total=income_total,
+                expense_lines=expense_lines,
+            )
+            return send_file(
+                pdf_path,
+                as_attachment=True,
+                download_name=os.path.basename(pdf_path),
+                mimetype="application/pdf",
+            )
 
     # -----------------------------
     # Delete invoice — GATED

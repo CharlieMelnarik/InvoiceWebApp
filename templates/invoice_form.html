@@ -21,6 +21,8 @@
 {% set job_placeholder = _tmpl.get('job_placeholder', '') %}
 {% set part_placeholder = _tmpl.get('parts_placeholder', 'e.g. Item') %}
 {% set labor_placeholder = _tmpl.get('labor_placeholder', 'e.g. Service performed') %}
+{% set _picker_invoice_id = inv.id if mode == "edit" and doc_type == "invoice" else "" %}
+{% set _picker_estimate_id = inv.id if mode == "edit" and doc_type == "estimate" else "" %}
 
 {% if mode == "edit" %}
   {% set _cust_id = (inv.customer_id|string) %}
@@ -201,6 +203,12 @@
         <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addPartRow()">
           Add Item
         </button>
+        <a
+          class="btn btn-sm btn-outline-secondary"
+          href="{{ url_for('expense_items_picker', doc_type=doc_type, mode=mode, invoice_id=_picker_invoice_id, estimate_id=_picker_estimate_id) }}"
+        >
+          Add From Business Expenses
+        </a>
         <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#receiptModal">
           Scan Receipt
         </button>
@@ -434,6 +442,7 @@
 
   function addPartRow() {
     const tbody = document.querySelector("#partsTable tbody");
+    if (!tbody) return;
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input class="form-control" name="part_name" placeholder="{{ parts_name_label|e }}"></td>
@@ -447,6 +456,7 @@
 
   function addPartRowWithValues(name, price) {
     const tbody = document.querySelector("#partsTable tbody");
+    if (!tbody) return;
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input class="form-control" name="part_name" value="${titleCaseWords(name || "")}"></td>
@@ -566,6 +576,30 @@
 
     syncCustomerId();
     fillContactFromCustomerId();
+  })();
+
+  (function () {
+    const params = new URLSearchParams(window.location.search);
+    const ids = (params.get("add_expense_ids") || "").trim();
+    if (!ids) return;
+
+    fetch(`/api/business-expense-entries?ids=${encodeURIComponent(ids)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const items = (data && Array.isArray(data.items)) ? data.items : [];
+        items.forEach((it) => {
+          const name = (it && it.name) ? String(it.name) : "";
+          const price = (it && typeof it.price !== "undefined") ? String(Number(it.price).toFixed(2)) : "";
+          addPartRowWithValues(name, price);
+        });
+        if (items.length) {
+          params.delete("add_expense_ids");
+          const qs = params.toString();
+          const clean = `${window.location.pathname}${qs ? ("?" + qs) : ""}`;
+          window.history.replaceState({}, "", clean);
+        }
+      })
+      .catch(() => {});
   })();
 
   (function () {
