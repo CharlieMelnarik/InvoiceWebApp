@@ -840,6 +840,23 @@ def _business_expense_breakdown_for_period(
     return out
 
 
+def _invoice_source_items(inv: Invoice) -> list[dict]:
+    items: list[dict] = []
+    for p in getattr(inv, "parts", []) or []:
+        label = (getattr(p, "part_name", None) or "").strip()
+        amount = float(getattr(p, "part_price", 0.0) or 0.0)
+        if not label and not amount:
+            continue
+        items.append(
+            {
+                "key": f"part_{int(p.id)}",
+                "label": label or "Untitled Item",
+                "amount": amount,
+            }
+        )
+    return items
+
+
 def _public_base_url() -> str:
     return (
         current_app.config.get("APP_BASE_URL")
@@ -5352,6 +5369,150 @@ def create_app():
             ]
             items.sort(key=lambda it: order.get(it["id"], 10**9))
             return jsonify({"items": items})
+
+    @app.route("/expense-items/to-business-expenses", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def expense_items_to_business_expenses():
+        uid = _current_user_id_int()
+        doc_type = (request.values.get("doc_type") or "invoice").strip().lower()
+        if doc_type not in ("invoice", "estimate"):
+            doc_type = "invoice"
+        mode = (request.values.get("mode") or "new").strip().lower()
+        if mode not in ("new", "edit"):
+            mode = "new"
+        invoice_id_raw = (request.values.get("invoice_id") or "").strip()
+        estimate_id_raw = (request.values.get("estimate_id") or "").strip()
+
+        def _target_url() -> str:
+            if doc_type == "estimate":
+                if mode == "edit" and estimate_id_raw.isdigit():
+                    return url_for("estimate_edit", estimate_id=int(estimate_id_raw))
+                return url_for("estimate_new")
+            if mode == "edit" and invoice_id_raw.isdigit():
+                return url_for("invoice_edit", invoice_id=int(invoice_id_raw))
+            return url_for("invoice_new")
+
+        with db_session() as s:
+            if mode != "edit":
+                flash("Save the invoice or estimate first, then add items to business expenses.", "info")
+                return redirect(_target_url())
+
+            inv = None
+            if doc_type == "estimate":
+                if estimate_id_raw.isdigit():
+                    inv = _estimate_owned_or_404(s, int(estimate_id_raw))
+            else:
+                if invoice_id_raw.isdigit():
+                    inv = _invoice_owned_or_404(s, int(invoice_id_raw))
+            if not inv:
+                flash("Invoice or estimate not found.", "error")
+                return redirect(_target_url())
+
+            category_rows = _business_expense_rows(s, uid, ensure_defaults=True)
+            categories = [{"id": int(r.id), "label": (r.label or "").strip()} for r in category_rows]
+
+            doc_items = []
+            for p in inv.parts:
+                name = (p.part_name or "").strip()
+                if not name:
+                    continue
+                doc_items.append(
+                    {
+                        "token": f"part-{int(p.id)}",
+                        "item_desc": name,
+                        "amount": float(p.part_price or 0.0),
+                        "source_type": "Part",
+                    }
+                )
+
+            rate = float(inv.price_per_hour or 0.0)
+            for li in inv.labor_items:
+                desc = (li.labor_desc or "").strip()
+                if not desc:
+                    continue
+                line_amount = float(li.labor_time_hours or 0.0) * rate
+                doc_items.append(
+                    {
+                        "token": f"labor-{int(li.id)}",
+                        "item_desc": desc,
+                        "amount": float(line_amount),
+                        "source_type": "Labor",
+                    }
+                )
+
+            if request.method == "POST":
+                selected_tokens = []
+                for raw in request.form.getlist("item_tokens"):
+                    raw = (raw or "").strip()
+                    if raw:
+                        selected_tokens.append(raw)
+                if not selected_tokens:
+                    flash("Select at least one invoice/estimate item.", "error")
+                    return redirect(
+                        url_for(
+                            "expense_items_to_business_expenses",
+                            doc_type=doc_type,
+                            mode=mode,
+                            invoice_id=invoice_id_raw,
+                            estimate_id=estimate_id_raw,
+                        )
+                    )
+
+                item_map = {it["token"]: it for it in doc_items}
+                valid_category_ids = {int(c["id"]) for c in categories}
+                touched_expense_ids = set()
+                added_count = 0
+
+                for tok in selected_tokens:
+                    it = item_map.get(tok)
+                    if not it:
+                        continue
+                    cat_raw = (request.form.get(f"category_{tok}") or "").strip()
+                    if not cat_raw.isdigit():
+                        continue
+                    cat_id = int(cat_raw)
+                    if cat_id not in valid_category_ids:
+                        continue
+                    s.add(
+                        BusinessExpenseEntry(
+                            expense_id=cat_id,
+                            user_id=uid,
+                            item_desc=(it["item_desc"] or "")[:200],
+                            amount=float(it["amount"] or 0.0),
+                        )
+                    )
+                    touched_expense_ids.add(cat_id)
+                    added_count += 1
+
+                if not added_count:
+                    flash("No items were added. Pick at least one item and category.", "error")
+                    return redirect(
+                        url_for(
+                            "expense_items_to_business_expenses",
+                            doc_type=doc_type,
+                            mode=mode,
+                            invoice_id=invoice_id_raw,
+                            estimate_id=estimate_id_raw,
+                        )
+                    )
+
+                for expense_id in touched_expense_ids:
+                    _recalc_business_expense_amount(s, expense_id)
+                s.commit()
+                flash(f"Added {added_count} item(s) to business expenses.", "success")
+                return redirect(_target_url())
+
+            return render_template(
+                "expense_items_to_business_expenses.html",
+                doc_type=doc_type,
+                mode=mode,
+                invoice_id=invoice_id_raw,
+                estimate_id=estimate_id_raw,
+                target_url=_target_url(),
+                categories=categories,
+                items=doc_items,
+            )
 
     @app.route("/profit-loss")
     @login_required

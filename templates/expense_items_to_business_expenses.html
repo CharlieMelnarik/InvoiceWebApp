@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% set title = "Add Items To Business Expenses" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Add Items To Business Expenses</h1>
+    <div class="small-muted">Select {{ "estimate" if doc_type == "estimate" else "invoice" }} items and choose a business expense category for each.</div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ target_url }}">Back to Form</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <label class="form-label">Search (item or type)</label>
+    <input class="form-control" id="exportSearch" placeholder="e.g. wheel bearing, labor, supplies">
+  </div>
+</div>
+
+<form class="card shadow-sm" method="post" id="exportForm">
+  <input type="hidden" name="doc_type" value="{{ doc_type }}">
+  <input type="hidden" name="mode" value="{{ mode }}">
+  <input type="hidden" name="invoice_id" value="{{ invoice_id }}">
+  <input type="hidden" name="estimate_id" value="{{ estimate_id }}">
+  <div class="card-body">
+    {% if items %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0" id="exportTable">
+          <thead>
+            <tr>
+              <th style="width: 50px;">Add</th>
+              <th>Item</th>
+              <th style="width: 120px;">Type</th>
+              <th style="width: 200px;">Category</th>
+              <th class="text-end" style="width: 140px;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for it in items %}
+              <tr data-search="{{ (it.item_desc ~ ' ' ~ it.source_type)|lower }}">
+                <td>
+                  <input class="form-check-input js-item-check" type="checkbox" name="item_tokens" value="{{ it.token }}">
+                </td>
+                <td>{{ it.item_desc }}</td>
+                <td class="small-muted">{{ it.source_type }}</td>
+                <td>
+                  <select class="form-select form-select-sm js-cat-select" name="category_{{ it.token }}" disabled>
+                    <option value="">Select category…</option>
+                    {% for cat in categories %}
+                      <option value="{{ cat.id }}">{{ cat.label }}</option>
+                    {% endfor %}
+                  </select>
+                </td>
+                <td class="text-end mono">${{ '%.2f'|format(it.amount or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="small-muted">No items found on this {{ doc_type }}.</div>
+    {% endif %}
+
+    <div class="d-flex gap-2 mt-3">
+      <button class="btn btn-primary" type="submit">Add Selected To Business Expenses</button>
+      <a class="btn btn-outline-secondary" href="{{ target_url }}">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    const search = document.getElementById("exportSearch");
+    const rows = Array.from(document.querySelectorAll("#exportTable tbody tr"));
+    if (!search || !rows.length) return;
+    search.addEventListener("input", () => {
+      const q = (search.value || "").trim().toLowerCase();
+      rows.forEach((row) => {
+        const hay = row.dataset.search || "";
+        row.style.display = (!q || hay.includes(q)) ? "" : "none";
+      });
+    });
+  })();
+
+  (function () {
+    const form = document.getElementById("exportForm");
+    const checks = Array.from(document.querySelectorAll(".js-item-check"));
+    if (!form || !checks.length) return;
+
+    checks.forEach((check) => {
+      check.addEventListener("change", () => {
+        const row = check.closest("tr");
+        const sel = row ? row.querySelector(".js-cat-select") : null;
+        if (!sel) return;
+        sel.disabled = !check.checked;
+        if (!check.checked) sel.value = "";
+      });
+    });
+
+    form.addEventListener("submit", (e) => {
+      const selected = checks.filter((c) => c.checked);
+      if (!selected.length) return;
+      for (const check of selected) {
+        const row = check.closest("tr");
+        const sel = row ? row.querySelector(".js-cat-select") : null;
+        if (!sel || !(sel.value || "").trim()) {
+          e.preventDefault();
+          alert("Choose a business expense category for each selected item.");
+          if (sel) sel.focus();
+          return;
+        }
+      }
+    });
+  })();
+</script>
+{% endblock %}

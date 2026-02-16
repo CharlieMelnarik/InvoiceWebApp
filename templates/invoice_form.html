@@ -209,6 +209,18 @@
         >
           Add From Business Expenses
         </a>
+        {% if mode == "edit" %}
+          <a
+            class="btn btn-sm btn-outline-secondary"
+            href="{{ url_for('expense_items_to_business_expenses', doc_type=doc_type, mode=mode, invoice_id=_picker_invoice_id, estimate_id=_picker_estimate_id) }}"
+          >
+            Add Items To Business Expenses
+          </a>
+        {% else %}
+          <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Save first to export items.">
+            Add Items To Business Expenses
+          </button>
+        {% endif %}
         <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#receiptModal">
           Scan Receipt
         </button>
