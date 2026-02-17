@@ -187,6 +187,10 @@ def _current_is_employee() -> bool:
         return False
 
 
+def _normalize_plan_tier(value: str | None) -> str:
+    return "pro" if (value or "").strip().lower() == "pro" else "basic"
+
+
 def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
     inv = (
         session.query(Invoice)
@@ -956,7 +960,7 @@ def _stripe_err_msg(exc: Exception) -> str:
     if "No such customer" in text_msg:
         return "Stripe customer record is invalid for the current mode. Please retry checkout."
     if "No such price" in text_msg:
-        return "Stripe price is invalid for the current mode. Update STRIPE_PRICE_ID."
+        return "Stripe price is invalid for the current mode. Update your Stripe price IDs."
     if "Invalid API Key" in text_msg or "api key" in text_msg.lower():
         return "Stripe API key is invalid."
     return text_msg or "Stripe request failed."
@@ -1626,12 +1630,18 @@ def _migrate_user_billing_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN stripe_subscription_id VARCHAR(255)")
     if not _column_exists(engine, "users", "subscription_status"):
         stmts.append("ALTER TABLE users ADD COLUMN subscription_status VARCHAR(50)")
+    if not _column_exists(engine, "users", "subscription_tier"):
+        stmts.append("ALTER TABLE users ADD COLUMN subscription_tier VARCHAR(20)")
     if not _column_exists(engine, "users", "trial_ends_at"):
         stmts.append("ALTER TABLE users ADD COLUMN trial_ends_at TIMESTAMP NULL")
     if not _column_exists(engine, "users", "current_period_end"):
         stmts.append("ALTER TABLE users ADD COLUMN current_period_end TIMESTAMP NULL")
     if not _column_exists(engine, "users", "trial_used_at"):
         stmts.append("ALTER TABLE users ADD COLUMN trial_used_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "trial_used_basic_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN trial_used_basic_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "trial_used_pro_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN trial_used_pro_at TIMESTAMP NULL")
     if not _column_exists(engine, "users", "stripe_connect_account_id"):
         stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_account_id VARCHAR(255)")
     if not _column_exists(engine, "users", "stripe_connect_charges_enabled"):
@@ -1661,6 +1671,12 @@ def _migrate_user_billing_fields(engine):
             ))
             conn.execute(text(
                 "UPDATE users SET stripe_connect_details_submitted = FALSE WHERE stripe_connect_details_submitted IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET subscription_tier = 'basic' WHERE subscription_tier IS NULL OR TRIM(subscription_tier) = ''"
+            ))
+            conn.execute(text(
+                "UPDATE users SET trial_used_basic_at = trial_used_at WHERE trial_used_basic_at IS NULL AND trial_used_at IS NOT NULL"
             ))
     except Exception:
         pass
@@ -2033,11 +2049,15 @@ def create_app():
             status = (getattr(u, "subscription_status", None) or "").strip().lower()
             is_sub = status in ("trialing", "active")
             trial_used = bool(getattr(u, "trial_used_at", None)) if u else False
+            subscription_tier = _normalize_plan_tier(getattr(u, "subscription_tier", None) if u else None)
+            pro_features_enabled = _has_pro_features(u)
 
         return {
             "billing_status": status or None,
             "is_subscribed": is_sub,
             "trial_used": trial_used,
+            "subscription_tier": subscription_tier,
+            "pro_features_enabled": pro_features_enabled,
             "is_employee_account": bool(getattr(actor, "is_employee", False)) if 'actor' in locals() and actor else False,
             "format_phone": _format_phone_display,
         }
@@ -2179,6 +2199,13 @@ def create_app():
     def _is_subscribed(u: User) -> bool:
         status = (getattr(u, "subscription_status", None) or "").strip().lower()
         return status in ("trialing", "active")
+
+    def _has_pro_features(u: User | None) -> bool:
+        if not u:
+            return False
+        if not _is_subscribed(u):
+            return False
+        return _normalize_plan_tier(getattr(u, "subscription_tier", None)) == "pro"
 
     def subscription_required(view_fn):
         @wraps(view_fn)
@@ -2324,7 +2351,13 @@ def create_app():
     # Stripe Billing
     # -----------------------------
     stripe.api_key = app.config.get("STRIPE_SECRET_KEY") or os.getenv("STRIPE_SECRET_KEY")
-    STRIPE_PRICE_ID = app.config.get("STRIPE_PRICE_ID") or os.getenv("STRIPE_PRICE_ID")
+    STRIPE_PRICE_ID_BASIC = (
+        app.config.get("STRIPE_PRICE_ID_BASIC")
+        or os.getenv("STRIPE_PRICE_ID_BASIC")
+        or app.config.get("STRIPE_PRICE_ID")
+        or os.getenv("STRIPE_PRICE_ID")
+    )
+    STRIPE_PRICE_ID_PRO = app.config.get("STRIPE_PRICE_ID_PRO") or os.getenv("STRIPE_PRICE_ID_PRO")
     STRIPE_PUBLISHABLE_KEY = app.config.get("STRIPE_PUBLISHABLE_KEY") or os.getenv("STRIPE_PUBLISHABLE_KEY")
     STRIPE_WEBHOOK_SECRET = app.config.get("STRIPE_WEBHOOK_SECRET") or os.getenv("STRIPE_WEBHOOK_SECRET")
 
@@ -2631,7 +2664,8 @@ def create_app():
                         }
                     )
                 employees = []
-                if not is_employee:
+                owner_pro_enabled = _has_pro_features(owner)
+                if (not is_employee) and owner_pro_enabled:
                     employees = (
                         s.query(User)
                         .filter(User.account_owner_id == owner.id, User.is_employee.is_(True))
@@ -2645,6 +2679,7 @@ def create_app():
                     owner=owner,
                     actor=actor,
                     is_employee_account=is_employee,
+                    employee_features_enabled=owner_pro_enabled,
                     employees=employees,
                     templates=INVOICE_TEMPLATES,
                     pdf_templates=PDF_TEMPLATES,
@@ -2943,6 +2978,9 @@ def create_app():
             owner = s.get(User, _current_user_id_int())
             if not owner:
                 abort(404)
+            if not _has_pro_features(owner):
+                flash("Employee accounts require the Pro plan.", "error")
+                return redirect(url_for("billing"))
             exists = (
                 s.query(User)
                 .filter(text("lower(email)=:e"))
@@ -2971,6 +3009,10 @@ def create_app():
     def employee_delete(employee_id: int):
         owner_id = _current_user_id_int()
         with db_session() as s:
+            owner = s.get(User, owner_id)
+            if not _has_pro_features(owner):
+                flash("Employee accounts require the Pro plan.", "error")
+                return redirect(url_for("billing"))
             employee = (
                 s.query(User)
                 .filter(
@@ -3141,6 +3183,9 @@ def create_app():
     @owner_required
     def billing():
         status = "none"
+        tier = "basic"
+        basic_trial_used = False
+        pro_trial_used = False
         connect_ok = False
         connect_message = ""
         connect_account_id = ""
@@ -3152,6 +3197,9 @@ def create_app():
             u = s.get(User, _current_user_id_int())
             if u:
                 status = (getattr(u, "subscription_status", None) or "none")
+                tier = _normalize_plan_tier(getattr(u, "subscription_tier", None))
+                basic_trial_used = bool(getattr(u, "trial_used_basic_at", None) or getattr(u, "trial_used_at", None))
+                pro_trial_used = bool(getattr(u, "trial_used_pro_at", None))
                 connect_ok, connect_message = _refresh_connect_status_for_user(s, u)
                 s.commit()
                 connect_account_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
@@ -3162,6 +3210,11 @@ def create_app():
         return render_template(
             "billing.html",
             status=status,
+            tier=tier,
+            basic_trial_used=basic_trial_used,
+            pro_trial_used=pro_trial_used,
+            basic_price_configured=bool(STRIPE_PRICE_ID_BASIC),
+            pro_price_configured=bool(STRIPE_PRICE_ID_PRO),
             publishable_key=STRIPE_PUBLISHABLE_KEY,
             connect_account_id=connect_account_id,
             connect_charges_enabled=connect_charges_enabled,
@@ -3175,8 +3228,19 @@ def create_app():
     @login_required
     @owner_required
     def billing_checkout():
-        if not stripe.api_key or not STRIPE_PRICE_ID:
+        if not stripe.api_key:
             abort(500)
+        plan_tier = _normalize_plan_tier(request.form.get("plan") or "basic")
+        if plan_tier == "pro":
+            price_id = STRIPE_PRICE_ID_PRO
+            if not price_id:
+                flash("Pro plan is not configured yet.", "error")
+                return redirect(url_for("billing"))
+        else:
+            price_id = STRIPE_PRICE_ID_BASIC
+            if not price_id:
+                flash("Basic plan is not configured yet.", "error")
+                return redirect(url_for("billing"))
 
         base = _base_url()
         uid = _current_user_id_int()
@@ -3251,17 +3315,21 @@ def create_app():
                     flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
                     return redirect(url_for("billing"))
 
-            subscription_data = {}
-            if getattr(u, "trial_used_at", None) is None:
+            subscription_data = {"metadata": {"plan_tier": plan_tier}}
+            trial_used_for_plan = bool(
+                (getattr(u, "trial_used_pro_at", None) if plan_tier == "pro" else (getattr(u, "trial_used_basic_at", None) or getattr(u, "trial_used_at", None)))
+            )
+            if not trial_used_for_plan:
                 subscription_data["trial_period_days"] = 7
 
             try:
                 cs = stripe.checkout.Session.create(
                     mode="subscription",
                     customer=cust,
-                    line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+                    line_items=[{"price": price_id, "quantity": 1}],
                     allow_promotion_codes=True,
                     client_reference_id=str(uid),
+                    metadata={"plan_tier": plan_tier},
                     subscription_data=subscription_data,
                     success_url=f"{base}{url_for('billing_success')}?session_id={{CHECKOUT_SESSION_ID}}",
                     cancel_url=f"{base}{url_for('billing')}",
@@ -3478,6 +3546,7 @@ def create_app():
                 uid = int(obj.get("client_reference_id") or 0)
                 customer_id = obj.get("customer")
                 subscription_id = obj.get("subscription")
+                checkout_tier = _normalize_plan_tier((obj.get("metadata") or {}).get("plan_tier"))
 
                 u = s.get(User, uid) if uid else None
                 if u:
@@ -3485,6 +3554,7 @@ def create_app():
                         u.stripe_customer_id = customer_id
                     if subscription_id:
                         u.stripe_subscription_id = subscription_id
+                    u.subscription_tier = checkout_tier
 
                     try:
                         if subscription_id:
@@ -3496,8 +3566,14 @@ def create_app():
                             u.trial_ends_at = datetime.utcfromtimestamp(trial_end) if trial_end else None
                             u.current_period_end = datetime.utcfromtimestamp(cpe) if cpe else None
 
-                            if (u.subscription_status == "trialing") and (getattr(u, "trial_used_at", None) is None):
-                                u.trial_used_at = datetime.utcnow()
+                            if u.subscription_status == "trialing":
+                                now_utc = datetime.utcnow()
+                                if checkout_tier == "pro" and getattr(u, "trial_used_pro_at", None) is None:
+                                    u.trial_used_pro_at = now_utc
+                                if checkout_tier == "basic" and getattr(u, "trial_used_basic_at", None) is None:
+                                    u.trial_used_basic_at = now_utc
+                                if getattr(u, "trial_used_at", None) is None:
+                                    u.trial_used_at = now_utc
                     except Exception as e:
                         print("[STRIPE] retrieve subscription failed:", repr(e), flush=True)
 
@@ -3526,14 +3602,34 @@ def create_app():
 
                 if u:
                     u.subscription_status = status
+                    tier_from_sub = _normalize_plan_tier((obj.get("metadata") or {}).get("plan_tier"))
+                    if tier_from_sub == "basic":
+                        try:
+                            items = (((obj.get("items") or {}).get("data")) or [])
+                            for it in items:
+                                pid = ((((it or {}).get("price") or {}).get("id")) or "").strip()
+                                if pid and STRIPE_PRICE_ID_PRO and pid == STRIPE_PRICE_ID_PRO:
+                                    tier_from_sub = "pro"
+                                    break
+                                if pid and STRIPE_PRICE_ID_BASIC and pid == STRIPE_PRICE_ID_BASIC:
+                                    tier_from_sub = "basic"
+                        except Exception:
+                            pass
+                    u.subscription_tier = tier_from_sub
 
                     trial_end = obj.get("trial_end")
                     cpe = obj.get("current_period_end")
                     u.trial_ends_at = datetime.utcfromtimestamp(trial_end) if trial_end else None
                     u.current_period_end = datetime.utcfromtimestamp(cpe) if cpe else None
 
-                    if status == "trialing" and getattr(u, "trial_used_at", None) is None:
-                        u.trial_used_at = datetime.utcnow()
+                    if status == "trialing":
+                        now_utc = datetime.utcnow()
+                        if tier_from_sub == "pro" and getattr(u, "trial_used_pro_at", None) is None:
+                            u.trial_used_pro_at = now_utc
+                        if tier_from_sub == "basic" and getattr(u, "trial_used_basic_at", None) is None:
+                            u.trial_used_basic_at = now_utc
+                        if getattr(u, "trial_used_at", None) is None:
+                            u.trial_used_at = now_utc
 
                     s.commit()
 
@@ -3576,12 +3672,15 @@ def create_app():
             actor = s.get(User, _current_actor_user_id_int())
             owner_id = _current_user_id_int()
             owner = s.get(User, owner_id)
+            employee_features_enabled = _has_pro_features(owner)
             employees = (
                 s.query(User)
                 .filter(User.account_owner_id == owner_id, User.is_employee.is_(True))
                 .order_by(User.username.asc())
                 .all()
             )
+            if not employee_features_enabled:
+                employees = []
             employees_for_js = [{"id": int(e.id), "username": e.username} for e in employees]
             return render_template(
                 "schedule.html",
@@ -3590,6 +3689,7 @@ def create_app():
                 actor_user_id=(int(actor.id) if actor else -1),
                 owner_for_js={"id": int(owner.id), "username": owner.username} if owner else None,
                 employees_for_js=employees_for_js,
+                employee_features_enabled=employee_features_enabled,
             )
 
     @app.get("/api/customers/search")
@@ -3674,17 +3774,23 @@ def create_app():
 
         with db_session() as s:
             actor = s.get(User, actor_id)
+            owner = s.get(User, uid)
+            employee_features_enabled = _has_pro_features(owner)
             is_employee = bool(getattr(actor, "is_employee", False)) if actor else False
+            if not employee_features_enabled:
+                schedule_view = "company"
+                selected_employee_id = None
+            else:
+                selected_employee_id = None
+                if selected_employee_id_raw.isdigit():
+                    selected_employee_id = int(selected_employee_id_raw)
             if schedule_view not in ("company", "employee"):
                 schedule_view = "employee" if is_employee else "company"
-            selected_employee_id = None
-            if selected_employee_id_raw.isdigit():
-                selected_employee_id = int(selected_employee_id_raw)
-            if is_employee:
+            if employee_features_enabled and is_employee:
                 selected_employee_id = actor_id
                 if schedule_view not in ("employee", "company"):
                     schedule_view = "employee"
-            else:
+            elif employee_features_enabled:
                 allowed_ids = {int(actor_id)}
                 employee_ids = (
                     s.query(User.id)
@@ -3722,7 +3828,7 @@ def create_app():
                 .order_by(ScheduleEvent.start_dt.asc())
                 .all()
             )
-            if schedule_view == "employee":
+            if employee_features_enabled and schedule_view == "employee":
                 if selected_employee_id is None:
                     selected_employee_id = actor_id
                 evs = [e for e in evs if int(getattr(e, "created_by_user_id", 0) or 0) == int(selected_employee_id)]
@@ -3743,9 +3849,9 @@ def create_app():
                     title = (e.title or "").strip() or (cust.name if cust else "Appointment")
                     customer_name = (cust.name if cust else "")
                 can_edit = True
-                if is_employee and schedule_view == "company":
+                if employee_features_enabled and is_employee and schedule_view == "company":
                     can_edit = False
-                elif is_employee and int(getattr(e, "created_by_user_id", 0) or 0) != actor_id:
+                elif employee_features_enabled and is_employee and int(getattr(e, "created_by_user_id", 0) or 0) != actor_id:
                     can_edit = False
                 out.append({
                     "id": e.id,
@@ -3815,12 +3921,14 @@ def create_app():
 
         with db_session() as s:
             actor = s.get(User, actor_id)
+            owner = s.get(User, uid)
+            employee_features_enabled = _has_pro_features(owner)
             is_employee = bool(getattr(actor, "is_employee", False)) if actor else False
             created_by_user_id = actor_id
-            if is_employee:
+            if employee_features_enabled and is_employee:
                 if schedule_view == "company":
                     return jsonify({"error": "Company schedule is view-only for employees."}), 403
-            else:
+            elif employee_features_enabled:
                 if assigned_user_id_raw:
                     try:
                         selected_creator_id = int(assigned_user_id_raw)
@@ -6714,6 +6822,7 @@ def create_app():
             portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
 
             amount_due = max(0.0, float(inv.amount_due() or 0.0))
+            owner_pro_enabled = _has_pro_features(owner)
             fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
             fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
             fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
@@ -6729,7 +6838,7 @@ def create_app():
             )
             card_total = round(amount_due + convenience_fee, 2)
             card_fee_line = ""
-            if convenience_fee > 0:
+            if owner_pro_enabled and convenience_fee > 0:
                 card_fee_line = (
                     f"Paying by card online adds an additional ${convenience_fee:,.2f} "
                     f"(card total: ${card_total:,.2f}).\n"
@@ -6752,7 +6861,7 @@ def create_app():
                     body_text=body,
                     pdf_path=inv.pdf_path,
                     action_url=portal_url,
-                    action_label="View & Pay Estimate",
+                    action_label=("View & Pay Estimate" if owner_pro_enabled else "View Estimate"),
                 )
             except Exception as e:
                 print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={display_no}: {repr(e)}", flush=True)
@@ -6870,6 +6979,7 @@ def create_app():
             portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
 
             amount_due = max(0.0, float(inv.amount_due() or 0.0))
+            owner_pro_enabled = _has_pro_features(owner)
             fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
             fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
             fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
@@ -6885,7 +6995,7 @@ def create_app():
             )
             card_total = round(amount_due + convenience_fee, 2)
             card_fee_line = ""
-            if convenience_fee > 0:
+            if owner_pro_enabled and convenience_fee > 0:
                 card_fee_line = (
                     f"Paying by card online adds an additional ${convenience_fee:,.2f} "
                     f"(card total: ${card_total:,.2f}).\n"
@@ -6908,7 +7018,7 @@ def create_app():
                     body_text=body,
                     pdf_path=inv.pdf_path,
                     action_url=portal_url,
-                    action_label="View & Pay Invoice",
+                    action_label=("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
                 )
             except Exception as e:
                 print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={display_no}: {repr(e)}", flush=True)
@@ -6988,6 +7098,7 @@ def create_app():
                 and owner.stripe_connect_charges_enabled
                 and owner.stripe_connect_payouts_enabled
             )
+            owner_pro_enabled = _has_pro_features(owner)
 
             payment_message = ""
             payment_error = ""
@@ -7024,7 +7135,7 @@ def create_app():
             pdf_token = make_pdf_share_token(inv.user_id, inv.id)
             pdf_url = url_for("shared_pdf_download", token=pdf_token)
             pay_url = url_for("shared_customer_portal_pay", token=token)
-            can_pay_online = (inv.amount_due() > 0.0) and bool(stripe.api_key) and owner_connect_ready
+            can_pay_online = (inv.amount_due() > 0.0) and bool(stripe.api_key) and owner_connect_ready and owner_pro_enabled
             amount_due = float(inv.amount_due() or 0.0)
             fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
             fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
@@ -7049,7 +7160,9 @@ def create_app():
             business_name = (owner.business_name if owner else "") or "InvoiceRunner"
             payment_unavailable_reason = ""
             if inv.amount_due() > 0.0 and not can_pay_online:
-                if not owner_connect_acct:
+                if not owner_pro_enabled:
+                    payment_unavailable_reason = "Online payment is not enabled for this business plan."
+                elif not owner_connect_acct:
                     payment_unavailable_reason = "Online payment is not available yet for this business."
                 elif not owner_connect_ready:
                     payment_unavailable_reason = "Online payment setup is still in progress for this business."
@@ -7109,10 +7222,11 @@ def create_app():
                 and owner.stripe_connect_charges_enabled
                 and owner.stripe_connect_payouts_enabled
             )
+            owner_pro_enabled = _has_pro_features(owner)
             amount_due = float(inv.amount_due() or 0.0)
             if amount_due <= 0:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
-            if not owner_connect_acct or not owner_connect_ready:
+            if not owner_pro_enabled or not owner_connect_acct or not owner_connect_ready:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
 
             fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False

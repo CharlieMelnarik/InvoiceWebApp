@@ -91,11 +91,14 @@ class User(Base):
     stripe_connect_last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     subscription_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    subscription_tier: Mapped[str] = mapped_column(String(20), nullable=False, default="basic")
     trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # one-trial-per-user flag
     trial_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    trial_used_basic_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    trial_used_pro_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Security (failed login lockout)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

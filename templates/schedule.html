@@ -145,14 +145,16 @@
     <span class="ms-2 fw-bold" id="labelRange"></span>
   </div>
 
-  <div class="d-flex align-items-center gap-2">
-    <label class="small-muted mb-0" for="scheduleViewSelect">Schedule</label>
-    <select class="form-select form-select-sm" id="scheduleViewSelect" style="min-width: 180px;">
-      <option value="company">Company Schedule</option>
-      <option value="employee">Employee Schedule</option>
-    </select>
-    <select class="form-select form-select-sm" id="employeeViewSelect" style="min-width: 180px; display:none;"></select>
-  </div>
+  {% if employee_features_enabled %}
+    <div class="d-flex align-items-center gap-2">
+      <label class="small-muted mb-0" for="scheduleViewSelect">Schedule</label>
+      <select class="form-select form-select-sm" id="scheduleViewSelect" style="min-width: 180px;">
+        <option value="company">Company Schedule</option>
+        <option value="employee">Employee Schedule</option>
+      </select>
+      <select class="form-select form-select-sm" id="employeeViewSelect" style="min-width: 180px; display:none;"></select>
+    </div>
+  {% endif %}
 
   <div class="d-flex align-items-center gap-2">
     <button class="btn btn-outline-secondary btn-sm" id="btnMonth">Month</button>
@@ -303,6 +305,7 @@
 <script>
   const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const IS_EMPLOYEE_ACCOUNT = {{ "true" if is_employee_account else "false" }};
+  const EMPLOYEE_FEATURES_ENABLED = {{ "true" if employee_features_enabled else "false" }};
   const ACTOR_USER_ID = {{ actor_user_id|int }};
   const OWNER_FOR_JS = {{ owner_for_js|tojson }};
   const EMPLOYEES_FOR_JS = {{ employees_for_js|tojson }};
@@ -312,8 +315,8 @@
     cursor: new Date(),   // current month/day pointer
     events: [],
     selectedDay: null,
-    scheduleView: IS_EMPLOYEE_ACCOUNT ? "employee" : "company",
-    selectedEmployeeId: IS_EMPLOYEE_ACCOUNT
+    scheduleView: (EMPLOYEE_FEATURES_ENABLED && IS_EMPLOYEE_ACCOUNT) ? "employee" : "company",
+    selectedEmployeeId: (EMPLOYEE_FEATURES_ENABLED && IS_EMPLOYEE_ACCOUNT)
       ? ACTOR_USER_ID
       : ((OWNER_FOR_JS && OWNER_FOR_JS.id) ? Number(OWNER_FOR_JS.id) : ACTOR_USER_ID),
   };
