@@ -3186,6 +3186,7 @@ def create_app():
         tier = "basic"
         basic_trial_used = False
         pro_trial_used = False
+        pro_features_enabled = False
         connect_ok = False
         connect_message = ""
         connect_account_id = ""
@@ -3200,6 +3201,7 @@ def create_app():
                 tier = _normalize_plan_tier(getattr(u, "subscription_tier", None))
                 basic_trial_used = bool(getattr(u, "trial_used_basic_at", None) or getattr(u, "trial_used_at", None))
                 pro_trial_used = bool(getattr(u, "trial_used_pro_at", None))
+                pro_features_enabled = _has_pro_features(u)
                 connect_ok, connect_message = _refresh_connect_status_for_user(s, u)
                 s.commit()
                 connect_account_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
@@ -3213,6 +3215,7 @@ def create_app():
             tier=tier,
             basic_trial_used=basic_trial_used,
             pro_trial_used=pro_trial_used,
+            pro_features_enabled=pro_features_enabled,
             basic_price_configured=bool(STRIPE_PRICE_ID_BASIC),
             pro_price_configured=bool(STRIPE_PRICE_ID_PRO),
             publishable_key=STRIPE_PUBLISHABLE_KEY,

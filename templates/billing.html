@@ -30,7 +30,7 @@
         </button>
       </form>
       {% if (tier or subscription_tier or "basic") == "basic" and pro_price_configured %}
-        <form method="post" action="{{ url_for('billing_upgrade_pro') }}" class="d-inline ms-2">
+        <form method="post" action="{{ url_for('billing_upgrade_pro') }}" class="d-inline ms-2" onsubmit="return confirm('Are you sure you want to upgrade to Pro? You will be charged the prorated amount for the rest of the month now.');">
           <button class="btn btn-success">
             Upgrade to Pro
           </button>
@@ -105,55 +105,57 @@
   </div>
 </div>
 
-<div class="card shadow-sm mt-3">
-  <div class="card-body">
-    <h5 class="mb-2">Customer Payments (Stripe Connect)</h5>
-    <p class="small-muted mb-3">
-      Connect your Stripe account so your customers can pay invoices and estimates from the customer portal.
-      Payments go directly to your connected Stripe account.
-    </p>
+{% if pro_features_enabled %}
+  <div class="card shadow-sm mt-3">
+    <div class="card-body">
+      <h5 class="mb-2">Customer Payments (Stripe Connect)</h5>
+      <p class="small-muted mb-3">
+        Connect your Stripe account so your customers can pay invoices and estimates from the customer portal.
+        Payments go directly to your connected Stripe account.
+      </p>
 
-    {% if connect_account_id %}
-      <div class="mb-3">
-        <div class="small-muted">Connected Account</div>
-        <div class="mono">{{ connect_account_id }}</div>
-      </div>
+      {% if connect_account_id %}
+        <div class="mb-3">
+          <div class="small-muted">Connected Account</div>
+          <div class="mono">{{ connect_account_id }}</div>
+        </div>
 
-      <div class="d-flex flex-wrap gap-2 mb-2">
-        <span class="badge {{ 'text-bg-success' if connect_charges_enabled else 'text-bg-secondary' }}">
-          Charges {{ 'enabled' if connect_charges_enabled else 'pending' }}
-        </span>
-        <span class="badge {{ 'text-bg-success' if connect_payouts_enabled else 'text-bg-secondary' }}">
-          Payouts {{ 'enabled' if connect_payouts_enabled else 'pending' }}
-        </span>
-        <span class="badge {{ 'text-bg-success' if connect_details_submitted else 'text-bg-secondary' }}">
-          Details {{ 'submitted' if connect_details_submitted else 'required' }}
-        </span>
-      </div>
+        <div class="d-flex flex-wrap gap-2 mb-2">
+          <span class="badge {{ 'text-bg-success' if connect_charges_enabled else 'text-bg-secondary' }}">
+            Charges {{ 'enabled' if connect_charges_enabled else 'pending' }}
+          </span>
+          <span class="badge {{ 'text-bg-success' if connect_payouts_enabled else 'text-bg-secondary' }}">
+            Payouts {{ 'enabled' if connect_payouts_enabled else 'pending' }}
+          </span>
+          <span class="badge {{ 'text-bg-success' if connect_details_submitted else 'text-bg-secondary' }}">
+            Details {{ 'submitted' if connect_details_submitted else 'required' }}
+          </span>
+        </div>
 
-      {% if connect_message %}
-        <div class="small-muted mb-3">{{ connect_message }}</div>
-      {% endif %}
+        {% if connect_message %}
+          <div class="small-muted mb-3">{{ connect_message }}</div>
+        {% endif %}
 
-      <div class="d-flex flex-wrap gap-2">
+        <div class="d-flex flex-wrap gap-2">
+          <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline">
+            <button class="btn btn-outline-primary">
+              {% if connect_ready %}Update Connect setup{% else %}Finish Connect setup{% endif %}
+            </button>
+          </form>
+          <form method="post" action="{{ url_for('billing_connect_dashboard') }}" class="d-inline">
+            <button class="btn btn-outline-secondary">Open Stripe Dashboard</button>
+          </form>
+        </div>
+      {% else %}
         <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline">
-          <button class="btn btn-outline-primary">
-            {% if connect_ready %}Update Connect setup{% else %}Finish Connect setup{% endif %}
-          </button>
+          <button class="btn btn-primary">Connect Stripe Account</button>
         </form>
-        <form method="post" action="{{ url_for('billing_connect_dashboard') }}" class="d-inline">
-          <button class="btn btn-outline-secondary">Open Stripe Dashboard</button>
-        </form>
-      </div>
-    {% else %}
-      <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline">
-        <button class="btn btn-primary">Connect Stripe Account</button>
-      </form>
-      {% if connect_message %}
-        <div class="small-muted mt-2">{{ connect_message }}</div>
+        {% if connect_message %}
+          <div class="small-muted mt-2">{{ connect_message }}</div>
+        {% endif %}
       {% endif %}
-    {% endif %}
+    </div>
   </div>
-</div>
+{% endif %}
 
 {% endblock %}
