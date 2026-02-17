@@ -29,6 +29,13 @@
           Manage billing
         </button>
       </form>
+      {% if (tier or subscription_tier or "basic") == "basic" and pro_price_configured %}
+        <form method="post" action="{{ url_for('billing_upgrade_pro') }}" class="d-inline ms-2">
+          <button class="btn btn-success">
+            Upgrade to Pro
+          </button>
+        </form>
+      {% endif %}
       <div class="mt-2 small-muted">
         Use Stripe billing to switch plans, update card details, or cancel.
       </div>
