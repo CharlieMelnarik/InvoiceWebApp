@@ -6364,7 +6364,7 @@ def create_app():
                 .first()
             )
             if not inv:
-                abort(404)
+                return render_template("shared_deleted.html"), 410
 
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
             customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
@@ -6488,7 +6488,7 @@ def create_app():
                 .first()
             )
             if not inv:
-                abort(404)
+                return redirect(url_for("shared_document_deleted"), code=303)
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
             owner_connect_acct = ((owner.stripe_connect_account_id or "").strip() if owner else "")
             owner_connect_ready = bool(
@@ -6553,6 +6553,10 @@ def create_app():
             if not checkout_url:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
             return redirect(checkout_url, code=303)
+
+    @app.get("/shared/deleted")
+    def shared_document_deleted():
+        return render_template("shared_deleted.html"), 410
 
     @app.get("/shared/p/<token>")
     def shared_pdf_download(token: str):
