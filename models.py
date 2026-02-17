@@ -134,6 +134,7 @@ class User(Base):
 
     invoices: Mapped[list["Invoice"]] = relationship(
         back_populates="user",
+        foreign_keys="Invoice.user_id",
         order_by="Invoice.created_at.desc()",
     )
 
@@ -324,6 +325,11 @@ class Invoice(Base):
         index=True,
         nullable=True,
     )
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
 
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL"),
@@ -367,7 +373,10 @@ class Invoice(Base):
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    user: Mapped[Optional["User"]] = relationship(back_populates="invoices")
+    user: Mapped[Optional["User"]] = relationship(
+        back_populates="invoices",
+        foreign_keys=[user_id],
+    )
     customer: Mapped[Optional["Customer"]] = relationship(back_populates="invoices")
 
     parts: Mapped[list["InvoicePart"]] = relationship(

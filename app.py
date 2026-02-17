@@ -213,6 +213,13 @@ def _estimate_owned_or_404(session, estimate_id: int) -> Invoice:
     return inv
 
 
+def _can_edit_document(inv: Invoice) -> bool:
+    if not _current_is_employee():
+        return True
+    actor_id = _current_actor_user_id_int()
+    return int(getattr(inv, "created_by_user_id", 0) or 0) == int(actor_id)
+
+
 def _customer_owned_or_404(session, customer_id: int) -> Customer:
     c = (
         session.query(Customer)
@@ -1926,6 +1933,24 @@ def _migrate_customer_schedule_fields(engine):
         pass
 
 
+def _migrate_invoice_created_by(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "created_by_user_id"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN created_by_user_id INTEGER"))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE invoices SET created_by_user_id = user_id WHERE created_by_user_id IS NULL"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS invoices_created_by_idx ON invoices (created_by_user_id)"
+            ))
+    except Exception:
+        pass
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -1973,6 +1998,7 @@ def create_app():
     _migrate_invoice_parts_markup_percent(engine)
     _migrate_invoice_paid_processing_fee(engine)
     _migrate_invoice_display_number(engine)
+    _migrate_invoice_created_by(engine)
     _migrate_invoice_display_sequences(engine)
     _migrate_user_billing_fields(engine)
     _migrate_user_employee_fields(engine)
@@ -4521,6 +4547,7 @@ def create_app():
     @subscription_required
     def estimate_new():
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
         pre_customer_id = (request.args.get("customer_id") or "").strip()
         default_local_now = datetime.utcnow()
 
@@ -4630,6 +4657,7 @@ def create_app():
 
                 inv = Invoice(
                     user_id=uid,
+                    created_by_user_id=actor_id,
                     customer_id=c.id,
 
                     invoice_number=inv_no,
@@ -4696,6 +4724,7 @@ def create_app():
     @subscription_required
     def invoice_new():
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
         pre_customer_id = (request.args.get("customer_id") or "").strip()
         default_local_now = datetime.utcnow()
 
@@ -4809,6 +4838,7 @@ def create_app():
 
                 inv = Invoice(
                     user_id=uid,
+                    created_by_user_id=actor_id,
                     customer_id=c.id,
 
                     invoice_number=inv_no,
@@ -4885,6 +4915,7 @@ def create_app():
             tmpl=tmpl,
             customer=c,
             customer_portal_url=customer_portal_url,
+            can_edit_document=_can_edit_document(inv),
         )
 
     # -----------------------------
@@ -4898,6 +4929,9 @@ def create_app():
 
         with db_session() as s:
             inv = _estimate_owned_or_404(s, estimate_id)
+            if not _can_edit_document(inv):
+                flash("Employees can only edit estimates they created.", "error")
+                return redirect(url_for("estimate_view", estimate_id=inv.id))
 
             customers = (
                 s.query(Customer)
@@ -5026,6 +5060,7 @@ def create_app():
     @subscription_required
     def estimate_convert(estimate_id: int):
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
         with db_session() as s:
             inv = _estimate_owned_or_404(s, estimate_id)
             local_now = _user_local_now(s.get(User, uid))
@@ -5036,6 +5071,7 @@ def create_app():
 
             new_inv = Invoice(
                 user_id=uid,
+                created_by_user_id=actor_id,
                 customer_id=inv.customer_id,
                 invoice_number=new_no,
                 display_number=display_no,
@@ -5085,6 +5121,7 @@ def create_app():
     @subscription_required
     def invoice_convert(invoice_id: int):
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
             local_now = _user_local_now(s.get(User, uid))
@@ -5095,6 +5132,7 @@ def create_app():
 
             new_inv = Invoice(
                 user_id=uid,
+                created_by_user_id=actor_id,
                 customer_id=inv.customer_id,
                 invoice_number=new_no,
                 display_number=display_no,
@@ -5180,6 +5218,7 @@ def create_app():
             tmpl=tmpl,
             customer=c,
             customer_portal_url=customer_portal_url,
+            can_edit_document=_can_edit_document(inv),
         )
 
     # -----------------------------
@@ -5190,6 +5229,7 @@ def create_app():
     @subscription_required
     def invoice_duplicate(invoice_id: int):
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
             local_now = _user_local_now(s.get(User, uid))
@@ -5200,6 +5240,7 @@ def create_app():
 
             new_inv = Invoice(
                 user_id=uid,
+                created_by_user_id=actor_id,
                 customer_id=inv.customer_id,
                 invoice_number=new_no,
                 display_number=display_no,
@@ -5251,6 +5292,9 @@ def create_app():
 
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
+            if not _can_edit_document(inv):
+                flash("Employees can only edit invoices they created.", "error")
+                return redirect(url_for("invoice_view", invoice_id=inv.id))
 
             customers = (
                 s.query(Customer)
@@ -6376,6 +6420,9 @@ def create_app():
     def invoice_mark_paid(invoice_id: int):
         with db_session() as s:
             inv = _invoice_owned_or_404(s, invoice_id)
+            if not _can_edit_document(inv):
+                flash("Employees can only update invoices they created.", "error")
+                return redirect(url_for("invoice_view", invoice_id=inv.id))
             inv.paid = inv.invoice_total()
             s.commit()
 

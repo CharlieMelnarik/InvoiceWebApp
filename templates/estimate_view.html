@@ -63,7 +63,9 @@
       <button class="btn btn-outline-primary" type="submit">Convert to Invoice</button>
     </form>
 
-    <a class="btn btn-outline-primary" href="{{ url_for('estimate_edit', estimate_id=inv.id) }}">Edit</a>
+    {% if can_edit_document %}
+      <a class="btn btn-outline-primary" href="{{ url_for('estimate_edit', estimate_id=inv.id) }}">Edit</a>
+    {% endif %}
   </div>
 </div>
 

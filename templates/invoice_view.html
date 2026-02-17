@@ -69,7 +69,9 @@
       <button class="btn btn-outline-primary" type="submit">Duplicate</button>
     </form>
 
-    <a class="btn btn-outline-primary" href="{{ url_for('invoice_edit', invoice_id=inv.id) }}">Edit</a>
+    {% if can_edit_document %}
+      <a class="btn btn-outline-primary" href="{{ url_for('invoice_edit', invoice_id=inv.id) }}">Edit</a>
+    {% endif %}
   </div>
 </div>
 
