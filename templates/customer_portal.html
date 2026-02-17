@@ -77,12 +77,6 @@
         {% if can_pay_online and convenience_fee and convenience_fee > 0 %}
           <div class="small-muted mb-2">
             Convenience fee: ${{ "%.2f"|format(convenience_fee) }}
-            {% if fee_auto_enabled %}
-              (auto from Stripe fee {{ "%.2f"|format(stripe_fee_percent) }}% + ${{ "%.2f"|format(stripe_fee_fixed) }})
-            {% else %}
-              {% if fee_percent and fee_percent > 0 %} ({{ "%.2f"|format(fee_percent) }}%{% if fee_fixed and fee_fixed > 0 %} +{% endif %}){% endif %}
-              {% if fee_fixed and fee_fixed > 0 %} {% if fee_percent and fee_percent > 0 %}${{ "%.2f"|format(fee_fixed) }} fixed{% else %}(${{ "%.2f"|format(fee_fixed) }} fixed){% endif %}{% endif %}
-            {% endif %}
           </div>
           <div class="small-muted mb-4">
             Online payment total: ${{ "%.2f"|format(pay_total) }}

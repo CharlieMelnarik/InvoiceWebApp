@@ -6071,6 +6071,7 @@ def create_app():
 
             customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
             customer_name = (customer.name if customer else "").strip()
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
 
             to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
             if not to_email or "@" not in to_email:
@@ -6084,12 +6085,36 @@ def create_app():
             display_no = inv.display_number or inv.invoice_number
             portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
             portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+
+            amount_due = max(0.0, float(inv.amount_due() or 0.0))
+            fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
+            fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
+            fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
+            stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
+            stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
+            convenience_fee = _payment_fee_amount(
+                amount_due,
+                fee_percent,
+                fee_fixed,
+                auto_enabled=fee_auto_enabled,
+                stripe_percent=stripe_fee_percent,
+                stripe_fixed=stripe_fee_fixed,
+            )
+            card_total = round(amount_due + convenience_fee, 2)
+            card_fee_line = ""
+            if convenience_fee > 0:
+                card_fee_line = (
+                    f"Paying by card online adds an additional ${convenience_fee:,.2f} "
+                    f"(card total: ${card_total:,.2f}).\n"
+                )
+
             subject = f"Estimate {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Attached is your estimate {display_no}.\n"
                 f"Details: {inv.vehicle}\n"
-                f"Total: ${inv.invoice_total():,.2f}\n\n"
+                f"Total: ${inv.invoice_total():,.2f}\n"
+                f"{card_fee_line}\n"
                 "Thank you."
             )
 
@@ -6202,6 +6227,7 @@ def create_app():
 
             customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
             customer_name = (customer.name if customer else "").strip()
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
 
             to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
             if not to_email or "@" not in to_email:
@@ -6215,12 +6241,36 @@ def create_app():
             display_no = inv.display_number or inv.invoice_number
             portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
             portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+
+            amount_due = max(0.0, float(inv.amount_due() or 0.0))
+            fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
+            fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
+            fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
+            stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
+            stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
+            convenience_fee = _payment_fee_amount(
+                amount_due,
+                fee_percent,
+                fee_fixed,
+                auto_enabled=fee_auto_enabled,
+                stripe_percent=stripe_fee_percent,
+                stripe_fixed=stripe_fee_fixed,
+            )
+            card_total = round(amount_due + convenience_fee, 2)
+            card_fee_line = ""
+            if convenience_fee > 0:
+                card_fee_line = (
+                    f"Paying by card online adds an additional ${convenience_fee:,.2f} "
+                    f"(card total: ${card_total:,.2f}).\n"
+                )
+
             subject = f"Invoice {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Attached is your invoice {display_no}.\n"
                 f"Details: {inv.vehicle}\n"
-                f"Total: ${inv.invoice_total():,.2f}\n\n"
+                f"Total: ${inv.invoice_total():,.2f}\n"
+                f"{card_fee_line}\n"
                 "Thank you."
             )
 
