@@ -238,6 +238,23 @@
             </div>
           </div>
 
+          <div class="form-check mb-3">
+            <input
+              class="form-check-input"
+              type="checkbox"
+              id="paymentFeeAutoEnabled"
+              name="payment_fee_auto_enabled"
+              value="1"
+              {% if u.payment_fee_auto_enabled %}checked{% endif %}
+            >
+            <label class="form-check-label" for="paymentFeeAutoEnabled">
+              Auto-calculate convenience fee from Stripe fee settings
+            </label>
+            <div class="small-muted mt-1">
+              Calculates fee so online payment approximately covers Stripe processing fees for each invoice amount.
+            </div>
+          </div>
+
           <div class="mb-3">
             <label class="form-label">Customer Payment Convenience Fee (Fixed $)</label>
             <input
@@ -250,6 +267,74 @@
             >
             <div class="small-muted mt-1">
               Fixed fee added to online customer checkout total.
+            </div>
+          </div>
+
+          <div id="stripeFeeSettingsWrap">
+            <div class="mb-3">
+              <label class="form-label">Stripe Processing Fee (%)</label>
+              <input
+                type="text"
+                class="form-control"
+                name="stripe_fee_percent"
+                inputmode="decimal"
+                value="{{ u.stripe_fee_percent if u.stripe_fee_percent is not none else '2.9' }}"
+                placeholder="e.g. 2.90"
+              >
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Stripe Processing Fixed Fee ($)</label>
+              <input
+                type="text"
+                class="form-control"
+                name="stripe_fee_fixed"
+                inputmode="decimal"
+                value="{{ u.stripe_fee_fixed if u.stripe_fee_fixed is not none else '0.30' }}"
+                placeholder="e.g. 0.30"
+              >
+              <div class="small-muted mt-1">
+                Used only when auto-calculate is enabled.
+              </div>
+            </div>
+          </div>
+
+          <div class="border rounded p-3 mb-3" id="paymentPreviewCard">
+            <div class="fw-semibold mb-2">Example Payout Preview</div>
+            <div class="row g-3 align-items-end">
+              <div class="col-md-8">
+                <label class="form-label">Use Existing Invoice/Estimate Total</label>
+                <select class="form-select" id="paymentPreviewDocSelect">
+                  <option value="">Select invoice/estimate (optional)</option>
+                  {% for d in docs_for_preview|default([]) %}
+                    <option value="{{ "%.2f"|format(d.total) }}">
+                      {% if d.is_estimate %}Estimate{% else %}Invoice{% endif %}
+                      {{ d.number }}{% if d.customer_name %} · {{ d.customer_name }}{% endif %}{% if d.date_in %} · {{ d.date_in }}{% endif %}
+                      · ${{ "%.2f"|format(d.total) }}
+                    </option>
+                  {% endfor %}
+                </select>
+                <div class="small-muted mt-1">
+                  Selecting a document fills the example amount below.
+                </div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Example Invoice Amount ($)</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="paymentPreviewBaseAmount"
+                  inputmode="decimal"
+                  value="100.00"
+                >
+              </div>
+              <div class="col-md-8">
+                <div class="small-muted mb-1" id="paymentPreviewModeLabel"></div>
+                <div class="small-muted mb-1" id="paymentPreviewConvenienceFee"></div>
+                <div class="small-muted mb-1" id="paymentPreviewCustomerTotal"></div>
+                <div class="small-muted mb-1" id="paymentPreviewStripeFee"></div>
+                <div class="small-muted fw-semibold" id="paymentPreviewNetPayout"></div>
+              </div>
             </div>
           </div>
 
@@ -414,17 +499,107 @@
 
   const templateSelect = document.getElementById("invoiceTemplateSelect");
   const customCard = document.getElementById("customProfessionCard");
+  const paymentFeeAutoToggle = document.getElementById("paymentFeeAutoEnabled");
+  const stripeFeeWrap = document.getElementById("stripeFeeSettingsWrap");
   function toggleCustomCard() {
     if (!templateSelect || !customCard) return;
     customCard.style.display = (templateSelect.value === "custom") ? "" : "none";
+  }
+  function toggleStripeFeeFields() {
+    if (!paymentFeeAutoToggle || !stripeFeeWrap) return;
+    stripeFeeWrap.style.display = paymentFeeAutoToggle.checked ? "" : "none";
   }
   if (templateSelect) {
     templateSelect.addEventListener("change", toggleCustomCard);
     toggleCustomCard();
   }
+  if (paymentFeeAutoToggle) {
+    paymentFeeAutoToggle.addEventListener("change", toggleStripeFeeFields);
+    toggleStripeFeeFields();
+  }
 
   function getInput(name) {
     return document.querySelector(`[name="${name}"]`);
+  }
+
+  function parseMoneyInput(value, fallback = 0) {
+    const raw = String(value || "").replace(/[$,\s]/g, "");
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function round2(value) {
+    return Math.round((Number(value) || 0) * 100) / 100;
+  }
+
+  function ceil2(value) {
+    return Math.ceil((Number(value) || 0) * 100) / 100;
+  }
+
+  function fmtMoney(value) {
+    return `$${round2(value).toFixed(2)}`;
+  }
+
+  const paymentPreviewBaseInput = document.getElementById("paymentPreviewBaseAmount");
+  const paymentPreviewDocSelect = document.getElementById("paymentPreviewDocSelect");
+  const paymentPreviewModeLabel = document.getElementById("paymentPreviewModeLabel");
+  const paymentPreviewConvenienceFee = document.getElementById("paymentPreviewConvenienceFee");
+  const paymentPreviewCustomerTotal = document.getElementById("paymentPreviewCustomerTotal");
+  const paymentPreviewStripeFee = document.getElementById("paymentPreviewStripeFee");
+  const paymentPreviewNetPayout = document.getElementById("paymentPreviewNetPayout");
+
+  function updatePaymentPreview() {
+    if (!paymentPreviewBaseInput) return;
+
+    const base = Math.max(0, parseMoneyInput(paymentPreviewBaseInput.value, 100));
+    const autoEnabled = !!(paymentFeeAutoToggle && paymentFeeAutoToggle.checked);
+    const manualPct = Math.max(0, parseMoneyInput(inputVal("payment_fee_percent", "0"), 0));
+    const manualFixed = Math.max(0, parseMoneyInput(inputVal("payment_fee_fixed", "0"), 0));
+    const stripePct = Math.max(0, parseMoneyInput(inputVal("stripe_fee_percent", "2.9"), 2.9));
+    const stripeFixed = Math.max(0, parseMoneyInput(inputVal("stripe_fee_fixed", "0.30"), 0.30));
+
+    let convenienceFee = 0;
+    if (autoEnabled) {
+      const rate = stripePct / 100;
+      if (rate < 0.99) {
+        const gross = (base + stripeFixed) / (1 - rate);
+        convenienceFee = Math.max(0, ceil2(gross - base));
+      }
+    } else {
+      convenienceFee = Math.max(0, round2(base * (manualPct / 100) + manualFixed));
+    }
+
+    const customerTotal = round2(base + convenienceFee);
+    const stripeFeeEstimate = round2(customerTotal * (stripePct / 100) + stripeFixed);
+    const netPayout = round2(customerTotal - stripeFeeEstimate);
+
+    if (paymentPreviewModeLabel) {
+      paymentPreviewModeLabel.textContent = autoEnabled
+        ? `Mode: Auto (Stripe ${stripePct.toFixed(2)}% + ${fmtMoney(stripeFixed)})`
+        : `Mode: Manual (${manualPct.toFixed(2)}% + ${fmtMoney(manualFixed)})`;
+    }
+    if (paymentPreviewConvenienceFee) {
+      paymentPreviewConvenienceFee.textContent = `Convenience fee added: ${fmtMoney(convenienceFee)}`;
+    }
+    if (paymentPreviewCustomerTotal) {
+      paymentPreviewCustomerTotal.textContent = `Customer checkout total: ${fmtMoney(customerTotal)}`;
+    }
+    if (paymentPreviewStripeFee) {
+      paymentPreviewStripeFee.textContent = `Estimated Stripe fee: ${fmtMoney(stripeFeeEstimate)}`;
+    }
+    if (paymentPreviewNetPayout) {
+      paymentPreviewNetPayout.textContent = `Estimated net payout: ${fmtMoney(netPayout)}`;
+    }
+  }
+
+  if (paymentPreviewDocSelect && paymentPreviewBaseInput) {
+    paymentPreviewDocSelect.addEventListener("change", () => {
+      const selected = (paymentPreviewDocSelect.value || "").trim();
+      if (selected) {
+        paymentPreviewBaseInput.value = selected;
+      }
+      updatePaymentPreview();
+    });
   }
 
   function inputVal(name, fallback = "") {
@@ -468,11 +643,13 @@
   function schedulePreviewRefresh() {
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(refreshPdfPreview, 300);
+    updatePaymentPreview();
   }
 
   document.addEventListener("input", schedulePreviewRefresh);
   document.addEventListener("change", schedulePreviewRefresh);
   refreshPdfPreview();
+  updatePaymentPreview();
 
   (function () {
     const phoneInput = document.querySelector('input[name="phone"]');

@@ -4,6 +4,7 @@
 import os
 import re
 import io
+import math
 import zipfile
 import smtplib
 import uuid
@@ -79,12 +80,30 @@ def _to_float(s, default=0.0):
         return float(default)
 
 
-def _payment_fee_amount(base_amount: float, percent: float, fixed: float) -> float:
+def _payment_fee_amount(
+    base_amount: float,
+    percent: float,
+    fixed: float,
+    *,
+    auto_enabled: bool = False,
+    stripe_percent: float = 2.9,
+    stripe_fixed: float = 0.30,
+) -> float:
     amount = float(base_amount or 0.0)
-    pct = max(0.0, float(percent or 0.0))
-    fixed_amt = max(0.0, float(fixed or 0.0))
     if amount <= 0:
         return 0.0
+
+    if auto_enabled:
+        rate = max(0.0, float(stripe_percent or 0.0)) / 100.0
+        fixed_amt = max(0.0, float(stripe_fixed or 0.0))
+        if rate >= 0.99:
+            return 0.0
+        gross = (amount + fixed_amt) / (1.0 - rate)
+        gross_rounded_up = math.ceil(gross * 100.0) / 100.0
+        return round(max(0.0, gross_rounded_up - amount), 2)
+
+    pct = max(0.0, float(percent or 0.0))
+    fixed_amt = max(0.0, float(fixed or 0.0))
     fee = (amount * (pct / 100.0)) + fixed_amt
     return round(max(0.0, fee), 2)
 
@@ -1363,6 +1382,21 @@ def _migrate_user_default_rates(engine):
             conn.execute(text("ALTER TABLE users ADD COLUMN payment_fee_fixed FLOAT"))
         with engine.begin() as conn:
             conn.execute(text("UPDATE users SET payment_fee_fixed=0 WHERE payment_fee_fixed IS NULL"))
+    if not _column_exists(engine, "users", "payment_fee_auto_enabled"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN payment_fee_auto_enabled BOOLEAN"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET payment_fee_auto_enabled=FALSE WHERE payment_fee_auto_enabled IS NULL"))
+    if not _column_exists(engine, "users", "stripe_fee_percent"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN stripe_fee_percent FLOAT"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET stripe_fee_percent=2.9 WHERE stripe_fee_percent IS NULL"))
+    if not _column_exists(engine, "users", "stripe_fee_fixed"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN stripe_fee_fixed FLOAT"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET stripe_fee_fixed=0.30 WHERE stripe_fee_fixed IS NULL"))
 
 
 def _migrate_invoice_tax_fields(engine):
@@ -2364,11 +2398,41 @@ def create_app():
             if not u:
                 abort(404)
 
+            def _render_settings():
+                docs_for_preview = []
+                docs = (
+                    s.query(Invoice)
+                    .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
+                    .filter(Invoice.user_id == u.id)
+                    .order_by(Invoice.created_at.desc())
+                    .limit(75)
+                    .all()
+                )
+                for d in docs:
+                    number = (d.display_number or d.invoice_number or "").strip()
+                    docs_for_preview.append(
+                        {
+                            "id": int(d.id),
+                            "number": number,
+                            "is_estimate": bool(d.is_estimate),
+                            "customer_name": (d.name or "").strip(),
+                            "date_in": (d.date_in or "").strip(),
+                            "total": float(d.invoice_total() or 0.0),
+                        }
+                    )
+                return render_template(
+                    "settings.html",
+                    u=u,
+                    templates=INVOICE_TEMPLATES,
+                    pdf_templates=PDF_TEMPLATES,
+                    docs_for_preview=docs_for_preview,
+                )
+
             if request.method == "POST":
                 new_email = _normalize_email(request.form.get("email") or "")
                 if not _looks_like_email(new_email):
                     flash("Please enter a valid email address.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                    return _render_settings()
 
                 if (u.email or "").strip().lower() != new_email:
                     taken_email = (
@@ -2379,7 +2443,7 @@ def create_app():
                     )
                     if taken_email:
                         flash("That email is already in use.", "error")
-                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                        return _render_settings()
 
                     u.email = new_email
 
@@ -2406,13 +2470,13 @@ def create_app():
 
                     if ext not in (".png", ".jpg", ".jpeg"):
                         flash("Logo must be a .png, .jpg, or .jpeg file.", "error")
-                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                        return _render_settings()
 
                     try:
                         png_bytes = _process_logo_upload_to_png_bytes(logo_file)
                     except ValueError as exc:
                         flash(str(exc), "error")
-                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                        return _render_settings()
 
                     d = _logo_upload_dir()
                     out_name = f"user_{u.id}{ext}"
@@ -2462,14 +2526,26 @@ def create_app():
                 u.default_parts_markup = _to_float(request.form.get("default_parts_markup"), 0.0)
                 payment_fee_percent = _to_float(request.form.get("payment_fee_percent"), 0.0)
                 payment_fee_fixed = _to_float(request.form.get("payment_fee_fixed"), 0.0)
+                payment_fee_auto_enabled = (request.form.get("payment_fee_auto_enabled") == "1")
+                stripe_fee_percent = _to_float(request.form.get("stripe_fee_percent"), 2.9)
+                stripe_fee_fixed = _to_float(request.form.get("stripe_fee_fixed"), 0.30)
                 if payment_fee_percent < 0 or payment_fee_percent > 25:
                     flash("Convenience fee percent must be between 0 and 25.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                    return _render_settings()
                 if payment_fee_fixed < 0 or payment_fee_fixed > 100:
                     flash("Fixed convenience fee must be between 0 and 100.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                    return _render_settings()
+                if stripe_fee_percent < 0 or stripe_fee_percent > 25:
+                    flash("Stripe fee percent must be between 0 and 25.", "error")
+                    return _render_settings()
+                if stripe_fee_fixed < 0 or stripe_fee_fixed > 100:
+                    flash("Stripe fixed fee must be between 0 and 100.", "error")
+                    return _render_settings()
+                u.payment_fee_auto_enabled = payment_fee_auto_enabled
                 u.payment_fee_percent = payment_fee_percent
                 u.payment_fee_fixed = payment_fee_fixed
+                u.stripe_fee_percent = stripe_fee_percent
+                u.stripe_fee_fixed = stripe_fee_fixed
 
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
@@ -2485,18 +2561,18 @@ def create_app():
                         summary_tz_offset = int(summary_tz_offset_raw)
                     except ValueError:
                         flash("Invalid schedule summary time zone offset.", "error")
-                        return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                        return _render_settings()
                 if summary_tz_offset < -720 or summary_tz_offset > 840:
                     flash("Invalid schedule summary time zone offset.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                    return _render_settings()
 
                 if summary_freq not in ("none", "day", "week", "month"):
                     flash("Invalid schedule summary frequency.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                    return _render_settings()
 
                 if summary_freq != "none" and not summary_time:
                     flash("Please choose a time for schedule summaries.", "error")
-                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                    return _render_settings()
 
                 u.schedule_summary_frequency = summary_freq
                 u.schedule_summary_time = summary_time if summary_freq != "none" else None
@@ -2506,7 +2582,7 @@ def create_app():
                 flash("Settings saved.", "success")
                 return redirect(url_for("settings"))
 
-            return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+            return _render_settings()
 
     @app.get("/settings/preview.pdf")
     @login_required
@@ -6232,9 +6308,19 @@ def create_app():
             pay_url = url_for("shared_customer_portal_pay", token=token)
             can_pay_online = (inv.amount_due() > 0.0) and bool(stripe.api_key) and owner_connect_ready
             amount_due = float(inv.amount_due() or 0.0)
+            fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
             fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
             fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
-            convenience_fee = _payment_fee_amount(amount_due, fee_percent, fee_fixed)
+            stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
+            stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
+            convenience_fee = _payment_fee_amount(
+                amount_due,
+                fee_percent,
+                fee_fixed,
+                auto_enabled=fee_auto_enabled,
+                stripe_percent=stripe_fee_percent,
+                stripe_fixed=stripe_fee_fixed,
+            )
             pay_total = round(amount_due + convenience_fee, 2)
             doc_number = inv.display_number or inv.invoice_number
             business_name = (owner.business_name if owner else "") or "InvoiceRunner"
@@ -6264,6 +6350,9 @@ def create_app():
                 pay_total=pay_total,
                 fee_percent=fee_percent,
                 fee_fixed=fee_fixed,
+                fee_auto_enabled=fee_auto_enabled,
+                stripe_fee_percent=stripe_fee_percent,
+                stripe_fee_fixed=stripe_fee_fixed,
             )
 
     @app.post("/shared/v/<token>/pay")
@@ -6301,9 +6390,19 @@ def create_app():
             if not owner_connect_acct or not owner_connect_ready:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
 
+            fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
             fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
             fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
-            convenience_fee = _payment_fee_amount(amount_due, fee_percent, fee_fixed)
+            stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
+            stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
+            convenience_fee = _payment_fee_amount(
+                amount_due,
+                fee_percent,
+                fee_fixed,
+                auto_enabled=fee_auto_enabled,
+                stripe_percent=stripe_fee_percent,
+                stripe_fixed=stripe_fee_fixed,
+            )
             checkout_total = round(amount_due + convenience_fee, 2)
             amount_cents = int(round(checkout_total * 100))
             display_no = inv.display_number or inv.invoice_number
