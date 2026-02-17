@@ -35,6 +35,12 @@
             Upgrade to Pro
           </button>
         </form>
+      {% elif (tier or subscription_tier or "basic") == "pro" and basic_price_configured %}
+        <form method="post" action="{{ url_for('billing_downgrade_basic') }}" class="d-inline ms-2" onsubmit="return confirm('Are you sure you want to downgrade to Basic? Stripe may apply prorated credits or charges now.');">
+          <button class="btn btn-outline-warning">
+            Downgrade to Basic
+          </button>
+        </form>
       {% endif %}
       <div class="mt-2 small-muted">
         Use Stripe billing to switch plans, update card details, or cancel.

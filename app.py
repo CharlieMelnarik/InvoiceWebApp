@@ -3486,6 +3486,61 @@ def create_app():
                 flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
                 return redirect(url_for("billing"))
 
+    @app.post("/billing/downgrade-basic")
+    @login_required
+    @owner_required
+    def billing_downgrade_basic():
+        if not stripe.api_key:
+            abort(500)
+        if not STRIPE_PRICE_ID_BASIC:
+            flash("Basic plan is not configured yet.", "error")
+            return redirect(url_for("billing"))
+
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            if not u:
+                abort(403)
+            status = (getattr(u, "subscription_status", None) or "").strip().lower()
+            tier = _normalize_plan_tier(getattr(u, "subscription_tier", None))
+            sub_id = (getattr(u, "stripe_subscription_id", None) or "").strip()
+
+            if tier == "basic" and status in ("trialing", "active", "past_due"):
+                flash("Your account is already on Basic.", "info")
+                return redirect(url_for("billing"))
+            if status not in ("trialing", "active", "past_due"):
+                flash("Start a subscription first, then manage plan tier.", "error")
+                return redirect(url_for("billing"))
+            if not sub_id:
+                flash("Subscription record not found. Open billing portal to manage plan.", "error")
+                return redirect(url_for("billing"))
+
+            try:
+                sub = stripe.Subscription.retrieve(sub_id)
+                items = ((sub.get("items") or {}).get("data") or [])
+                if not items:
+                    flash("Subscription items were not found. Open billing portal to manage plan.", "error")
+                    return redirect(url_for("billing"))
+                item_id = (items[0].get("id") or "").strip()
+                if not item_id:
+                    flash("Subscription item is missing. Open billing portal to manage plan.", "error")
+                    return redirect(url_for("billing"))
+
+                updated = stripe.Subscription.modify(
+                    sub_id,
+                    cancel_at_period_end=False,
+                    proration_behavior="create_prorations",
+                    items=[{"id": item_id, "price": STRIPE_PRICE_ID_BASIC}],
+                    metadata={"plan_tier": "basic"},
+                )
+                u.subscription_tier = "basic"
+                u.subscription_status = (updated.get("status") or status or "").lower() or u.subscription_status
+                s.commit()
+                flash("Plan downgraded to Basic.", "success")
+                return redirect(url_for("billing"))
+            except Exception as e:
+                flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
+                return redirect(url_for("billing"))
+
     @app.route("/billing/connect/start", methods=["POST"])
     @login_required
     @owner_required
