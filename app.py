@@ -3507,6 +3507,7 @@ def create_app():
         with db_session() as s:
             actor = s.get(User, _current_actor_user_id_int())
             owner_id = _current_user_id_int()
+            owner = s.get(User, owner_id)
             employees = (
                 s.query(User)
                 .filter(User.account_owner_id == owner_id, User.is_employee.is_(True))
@@ -3519,6 +3520,7 @@ def create_app():
                 title="Scheduler",
                 is_employee_account=bool(getattr(actor, "is_employee", False)) if actor else False,
                 actor_user_id=(int(actor.id) if actor else -1),
+                owner_for_js={"id": int(owner.id), "username": owner.username} if owner else None,
                 employees_for_js=employees_for_js,
             )
 
@@ -3614,6 +3616,16 @@ def create_app():
                 selected_employee_id = actor_id
                 if schedule_view not in ("employee", "company"):
                     schedule_view = "employee"
+            else:
+                allowed_ids = {int(actor_id)}
+                employee_ids = (
+                    s.query(User.id)
+                    .filter(User.account_owner_id == uid, User.is_employee.is_(True))
+                    .all()
+                )
+                allowed_ids.update(int(row[0]) for row in employee_ids)
+                if selected_employee_id not in allowed_ids:
+                    selected_employee_id = actor_id
 
             # auto-generate recurring events up to 90 days out
             try:
@@ -3727,6 +3739,8 @@ def create_app():
         recurring_notes = (data.get("recurring_notes") or "").strip()
         event_type = (data.get("event_type") or "appointment").strip().lower()
         invoice_id_raw = (data.get("invoice_id") or "").strip()
+        schedule_view = (data.get("schedule_view") or "").strip().lower()
+        assigned_user_id_raw = (data.get("assigned_user_id") or "").strip()
 
         if event_type not in ("appointment", "block"):
             return jsonify({"error": "Invalid event type"}), 400
@@ -3734,6 +3748,26 @@ def create_app():
         with db_session() as s:
             actor = s.get(User, actor_id)
             is_employee = bool(getattr(actor, "is_employee", False)) if actor else False
+            created_by_user_id = actor_id
+            if is_employee:
+                if schedule_view == "company":
+                    return jsonify({"error": "Company schedule is view-only for employees."}), 403
+            else:
+                if assigned_user_id_raw:
+                    try:
+                        selected_creator_id = int(assigned_user_id_raw)
+                    except Exception:
+                        return jsonify({"error": "assigned_user_id must be an integer"}), 400
+                    allowed_ids = {int(actor_id)}
+                    employee_ids = (
+                        s.query(User.id)
+                        .filter(User.account_owner_id == uid, User.is_employee.is_(True))
+                        .all()
+                    )
+                    allowed_ids.update(int(row[0]) for row in employee_ids)
+                    if selected_creator_id not in allowed_ids:
+                        return jsonify({"error": "Invalid employee selection."}), 400
+                    created_by_user_id = selected_creator_id
             cust_id_int = None
             invoice_id_int = None
             if event_type == "block":
@@ -3762,7 +3796,7 @@ def create_app():
                 user_id=uid,
                 customer_id=cust_id_int,
                 invoice_id=invoice_id_int,
-                created_by_user_id=actor_id,
+                created_by_user_id=created_by_user_id,
                 title=(title or None) if event_type != "block" else (title or "Blocked time"),
                 start_dt=start_dt,
                 end_dt=end_dt,

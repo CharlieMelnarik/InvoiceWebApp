@@ -146,6 +146,15 @@
   </div>
 
   <div class="d-flex align-items-center gap-2">
+    <label class="small-muted mb-0" for="scheduleViewSelect">Schedule</label>
+    <select class="form-select form-select-sm" id="scheduleViewSelect" style="min-width: 180px;">
+      <option value="company">Company Schedule</option>
+      <option value="employee">Employee Schedule</option>
+    </select>
+    <select class="form-select form-select-sm" id="employeeViewSelect" style="min-width: 180px; display:none;"></select>
+  </div>
+
+  <div class="d-flex align-items-center gap-2">
     <button class="btn btn-outline-secondary btn-sm" id="btnMonth">Month</button>
     <button class="btn btn-outline-secondary btn-sm" id="btnDay">Day</button>
     <button class="btn btn-primary btn-sm" id="btnNew">+ Appointment</button>
@@ -293,17 +302,29 @@
 {% block scripts %}
 <script>
   const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const IS_EMPLOYEE_ACCOUNT = {{ "true" if is_employee_account else "false" }};
+  const ACTOR_USER_ID = {{ actor_user_id|int }};
+  const OWNER_FOR_JS = {{ owner_for_js|tojson }};
+  const EMPLOYEES_FOR_JS = {{ employees_for_js|tojson }};
 
   const state = {
     view: "month",
     cursor: new Date(),   // current month/day pointer
     events: [],
     selectedDay: null,
+    scheduleView: IS_EMPLOYEE_ACCOUNT ? "employee" : "company",
+    selectedEmployeeId: IS_EMPLOYEE_ACCOUNT
+      ? ACTOR_USER_ID
+      : ((OWNER_FOR_JS && OWNER_FOR_JS.id) ? Number(OWNER_FOR_JS.id) : ACTOR_USER_ID),
   };
 
   const elMonth = document.getElementById("viewMonth");
   const elDay = document.getElementById("viewDay");
   const labelRange = document.getElementById("labelRange");
+  const scheduleViewSelect = document.getElementById("scheduleViewSelect");
+  const employeeViewSelect = document.getElementById("employeeViewSelect");
+  const newBtn = document.getElementById("btnNew");
+  const blockBtn = document.getElementById("btnBlock");
 
   const modalEl = document.getElementById("eventModal");
   const modal = new bootstrap.Modal(modalEl);
@@ -364,6 +385,89 @@
       .replaceAll(">","&gt;")
       .replaceAll('"',"&quot;")
       .replaceAll("'","&#039;");
+  }
+
+  function canCreateInCurrentScheduleView(){
+    if (!IS_EMPLOYEE_ACCOUNT) return true;
+    return state.scheduleView === "employee";
+  }
+
+  function currentScheduleOwnerLabel(){
+    if (state.scheduleView === "company") return "Company Schedule";
+    const id = Number(state.selectedEmployeeId || 0);
+    if (OWNER_FOR_JS && Number(OWNER_FOR_JS.id) === id) return `${OWNER_FOR_JS.username} Schedule`;
+    const found = (EMPLOYEES_FOR_JS || []).find(e => Number(e.id) === id);
+    return found ? `${found.username} Schedule` : "Employee Schedule";
+  }
+
+  function applySchedulerAccessUI(){
+    const canCreate = canCreateInCurrentScheduleView();
+    if (newBtn){
+      newBtn.disabled = !canCreate;
+      newBtn.title = canCreate ? "" : "Company schedule is view-only for employee accounts.";
+    }
+    if (blockBtn){
+      blockBtn.disabled = !canCreate;
+      blockBtn.title = canCreate ? "" : "Company schedule is view-only for employee accounts.";
+    }
+    if (scheduleViewSelect){
+      scheduleViewSelect.value = state.scheduleView;
+    }
+    if (employeeViewSelect){
+      const showEmployeeSelect = state.scheduleView === "employee";
+      employeeViewSelect.style.display = showEmployeeSelect ? "" : "none";
+      if (showEmployeeSelect){
+        employeeViewSelect.value = String(state.selectedEmployeeId || "");
+      }
+    }
+  }
+
+  function initScheduleSelectors(){
+    if (!scheduleViewSelect || !employeeViewSelect) return;
+
+    if (IS_EMPLOYEE_ACCOUNT){
+      scheduleViewSelect.innerHTML = `
+        <option value="employee">Employee Schedule</option>
+        <option value="company">Company Schedule</option>
+      `;
+      employeeViewSelect.innerHTML = `<option value="${ACTOR_USER_ID}">My Schedule</option>`;
+      state.selectedEmployeeId = ACTOR_USER_ID;
+    } else {
+      scheduleViewSelect.innerHTML = `
+        <option value="company">Company Schedule</option>
+        <option value="employee">Employee Schedule</option>
+      `;
+      const options = [];
+      if (OWNER_FOR_JS && OWNER_FOR_JS.id){
+        options.push(`<option value="${Number(OWNER_FOR_JS.id)}">${escapeHTML(OWNER_FOR_JS.username)} (You)</option>`);
+      }
+      (EMPLOYEES_FOR_JS || []).forEach(emp => {
+        options.push(`<option value="${Number(emp.id)}">${escapeHTML(emp.username)}</option>`);
+      });
+      employeeViewSelect.innerHTML = options.join("");
+      if (!state.selectedEmployeeId && OWNER_FOR_JS && OWNER_FOR_JS.id){
+        state.selectedEmployeeId = Number(OWNER_FOR_JS.id);
+      }
+    }
+
+    scheduleViewSelect.value = state.scheduleView;
+    employeeViewSelect.value = String(state.selectedEmployeeId || "");
+
+    scheduleViewSelect.addEventListener("change", async () => {
+      state.scheduleView = (scheduleViewSelect.value === "employee") ? "employee" : "company";
+      applySchedulerAccessUI();
+      await refresh();
+    });
+
+    employeeViewSelect.addEventListener("change", async () => {
+      const picked = Number(employeeViewSelect.value || 0);
+      if (picked > 0){
+        state.selectedEmployeeId = picked;
+        await refresh();
+      }
+    });
+
+    applySchedulerAccessUI();
   }
 
   function updateInvoiceLink(){
@@ -490,18 +594,26 @@
   }
 
   async function loadEvents(rangeStart, rangeEnd){
-    const qs = new URLSearchParams({ start: toISODate(rangeStart), end: toISODate(rangeEnd) });
+    const qs = new URLSearchParams({
+      start: toISODate(rangeStart),
+      end: toISODate(rangeEnd),
+      schedule_view: state.scheduleView,
+    });
+    if (state.scheduleView === "employee" && state.selectedEmployeeId){
+      qs.set("employee_user_id", String(state.selectedEmployeeId));
+    }
     const res = await fetch(`/api/schedule/events?${qs.toString()}`);
     state.events = await res.json();
   }
 
   function setLabel(){
+    const scheduleLabel = currentScheduleOwnerLabel();
     if (state.view === "month"){
       const d = state.cursor;
-      labelRange.textContent = d.toLocaleString(undefined, { month:"long", year:"numeric" });
+      labelRange.textContent = `${d.toLocaleString(undefined, { month:"long", year:"numeric" })} • ${scheduleLabel}`;
     } else {
       const d = state.selectedDay || state.cursor;
-      labelRange.textContent = d.toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric", year:"numeric" });
+      labelRange.textContent = `${d.toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric", year:"numeric" })} • ${scheduleLabel}`;
     }
   }
 
@@ -652,7 +764,7 @@
       const blockEnd = en > dayEnd ? dayEnd : en;
       const now = new Date();
       const isBlock = e.event_type === "block";
-      const canUpdateStatus = !isBlock && now > en && e.status === "scheduled";
+      const canUpdateStatus = !!e.can_edit && !isBlock && now > en && e.status === "scheduled";
 
       const minutesFromStart = (blockStart.getHours() - hourStart) * 60 + blockStart.getMinutes();
       const durMin = Math.max(15, (blockEnd - blockStart) / 60000);
@@ -689,7 +801,7 @@
 
       block.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        openModalForEdit(e);
+        openModalForEdit(e, !e.can_edit);
       });
 
       if (canUpdateStatus){
@@ -708,6 +820,9 @@
 
     // click on timeline to create an event
     timeline.addEventListener("click", (ev) => {
+      if (!canCreateInCurrentScheduleView()){
+        return;
+      }
       const rect = timeline.getBoundingClientRect();
       const y = ev.clientY - rect.top;
       const mins = Math.max(0, Math.round(y / pxPerMin / 15) * 15); // snap 15 mins
@@ -836,7 +951,36 @@
     }
   }
 
+  function setModalReadOnly(readOnly){
+    const fields = [
+      "blockTime", "custSearch", "invoiceSelect", "title", "start", "end", "notes",
+      "recurringEnabled", "recurringIntervalDays", "recurringDurationMinutes",
+      "recurringHorizonMonths", "recurringTitle", "recurringNotes"
+    ];
+    fields.forEach((id) => {
+      const node = document.getElementById(id);
+      if (node) node.disabled = !!readOnly;
+    });
+    const saveBtn = document.getElementById("btnSave");
+    const deleteBtn = document.getElementById("btnDelete");
+    const complete = document.getElementById("btnComplete");
+    const cancel = document.getElementById("btnCancel");
+    const stopRecurring = document.getElementById("btnStopRecurring");
+    if (saveBtn) saveBtn.style.display = readOnly ? "none" : "";
+    if (deleteBtn && readOnly) deleteBtn.style.display = "none";
+    if (complete && readOnly) complete.style.display = "none";
+    if (cancel && readOnly) cancel.style.display = "none";
+    if (stopRecurring && readOnly) stopRecurring.style.display = "none";
+    const hint = document.getElementById("modalHint");
+    if (hint && readOnly){
+      hint.textContent = "This company schedule appointment is view-only for employee accounts.";
+    }
+  }
+
   function openModalForCreate(start, end, isBlock = false){
+    if (!canCreateInCurrentScheduleView()){
+      return;
+    }
     document.getElementById("modalTitle").textContent = isBlock ? "New Blocked Time" : "New Appointment";
     document.getElementById("eventId").value = "";
     document.getElementById("btnDelete").style.display = "none";
@@ -861,6 +1005,10 @@
       resetRecurringFields();
       _applyPreselectedCustomerIfAny();
     }
+    if (IS_EMPLOYEE_ACCOUNT && recurringSection){
+      recurringSection.style.display = "none";
+    }
+    setModalReadOnly(false);
     updateGoToCustomerButton();
     modal.show();
 
@@ -868,7 +1016,7 @@
     // (optional: you can set title to customer name once you add a customer lookup endpoint)
   }
 
-  function openModalForEdit(e){
+  function openModalForEdit(e, readOnly = false){
     const isBlock = e.event_type === "block";
     document.getElementById("modalTitle").textContent = isBlock ? "Edit Blocked Time" : "Edit Appointment";
     document.getElementById("eventId").value = e.id;
@@ -896,6 +1044,9 @@
 
     resetRecurringFields();
     updateGoToCustomerButton();
+    if (IS_EMPLOYEE_ACCOUNT && recurringSection){
+      recurringSection.style.display = "none";
+    }
     if (!isBlock && e.customer_recurring) {
       const rec = e.customer_recurring;
       if (rec.interval_days) {
@@ -933,10 +1084,12 @@
       }
     }
 
+    setModalReadOnly(readOnly);
     modal.show();
   }
 
   async function refresh(){
+    applySchedulerAccessUI();
     if (state.view === "month"){
       const a = startOfMonth(state.cursor);
       const b = endOfMonth(state.cursor);
@@ -1020,7 +1173,11 @@
       start: startInput.value,
       end: endInput.value,
       event_type: isBlock ? "block" : "appointment",
+      schedule_view: state.scheduleView,
     };
+    if (!IS_EMPLOYEE_ACCOUNT && state.scheduleView === "employee" && state.selectedEmployeeId){
+      payload.assigned_user_id = String(state.selectedEmployeeId);
+    }
 
     if (isRecurring){
       if (isBlock){
@@ -1244,6 +1401,7 @@
   // If a date=YYYY-MM-DD is provided, jump to that day in Day view.
   // -----------------------------
   (async () => {
+    initScheduleSelectors();
     if (/^\d{4}-\d{2}-\d{2}$/.test(PRESELECT_DATE)){
       const [y,m,d] = PRESELECT_DATE.split("-").map(Number);
       const dt = new Date(y, m-1, d);
