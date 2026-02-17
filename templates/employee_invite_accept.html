@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% set title = "Create Employee Account" %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-6 col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h1 class="h4 fw-bold mb-2">Create Employee Account</h1>
+        <div class="small-muted mb-3">
+          Joining {{ owner.business_name or owner.username }} as an employee.
+        </div>
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label">Email</label>
+            <input class="form-control" value="{{ invite_email }}" disabled>
+          </div>
+          <div class="mb-3">
+            <label class="form-label req">Username</label>
+            <input class="form-control" name="username" required minlength="3">
+          </div>
+          <div class="mb-3">
+            <label class="form-label req">Password</label>
+            <input class="form-control" type="password" name="password" required minlength="6">
+          </div>
+          <div class="mb-3">
+            <label class="form-label req">Confirm Password</label>
+            <input class="form-control" type="password" name="confirm" required minlength="6">
+          </div>
+          <button class="btn btn-primary" type="submit">Create Employee Account</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

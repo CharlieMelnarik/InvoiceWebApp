@@ -85,7 +85,7 @@
 
       <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Cancel</a>
 
-      {% if mode == "edit" %}
+      {% if mode == "edit" and not is_employee_account %}
         <button
           class="btn btn-outline-danger"
           type="submit"

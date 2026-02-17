@@ -41,6 +41,8 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    account_owner_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    is_employee: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Email for password reset
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -143,6 +145,7 @@ class User(Base):
 
     schedule_events: Mapped[list["ScheduleEvent"]] = relationship(
         back_populates="user",
+        foreign_keys="ScheduleEvent.user_id",
         cascade="all, delete-orphan",
         order_by="ScheduleEvent.start_dt.asc()",
     )
@@ -159,6 +162,11 @@ class ScheduleEvent(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
 
@@ -200,7 +208,10 @@ class ScheduleEvent(Base):
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    user: Mapped["User"] = relationship(back_populates="schedule_events")
+    user: Mapped["User"] = relationship(
+        back_populates="schedule_events",
+        foreign_keys=[user_id],
+    )
     customer: Mapped[Optional["Customer"]] = relationship(back_populates="schedule_events")
     invoice: Mapped[Optional["Invoice"]] = relationship()
 

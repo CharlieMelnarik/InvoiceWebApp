@@ -52,9 +52,11 @@ _IMG_RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 # Flask-Login user wrapper
 # -----------------------------
 class AppUser(UserMixin):
-    def __init__(self, user_id: int, username: str):
+    def __init__(self, user_id: int, username: str, *, scope_user_id: int | None = None, is_employee: bool = False):
         self.id = str(user_id)
         self.username = username
+        self.scope_user_id = int(scope_user_id or user_id)
+        self.is_employee = bool(is_employee)
 
 
 @login_manager.user_loader
@@ -166,9 +168,23 @@ def _process_logo_upload_to_png_bytes(file_storage) -> bytes:
 
 def _current_user_id_int() -> int:
     try:
+        return int(getattr(current_user, "scope_user_id", None) or current_user.get_id())
+    except Exception:
+        return -1
+
+
+def _current_actor_user_id_int() -> int:
+    try:
         return int(current_user.get_id())
     except Exception:
         return -1
+
+
+def _current_is_employee() -> bool:
+    try:
+        return bool(getattr(current_user, "is_employee", False))
+    except Exception:
+        return False
 
 
 def _invoice_owned_or_404(session, invoice_id: int) -> Invoice:
@@ -623,6 +639,31 @@ def read_customer_portal_token(token: str, max_age_seconds: int) -> tuple[int, i
         return None
 
 
+def _employee_invite_serializer():
+    secret = current_app.config.get("SECRET_KEY")
+    salt = current_app.config.get("EMPLOYEE_INVITE_SALT", "employee-invite")
+    return URLSafeTimedSerializer(secret, salt=salt)
+
+
+def make_employee_invite_token(owner_user_id: int, email: str) -> str:
+    return _employee_invite_serializer().dumps({
+        "owner": int(owner_user_id),
+        "email": _normalize_email(email),
+    })
+
+
+def read_employee_invite_token(token: str, max_age_seconds: int) -> tuple[int, str] | None:
+    try:
+        data = _employee_invite_serializer().loads(token, max_age=max_age_seconds)
+        owner = int(data.get("owner"))
+        email = _normalize_email(data.get("email") or "")
+        if not owner or not _looks_like_email(email):
+            return None
+        return owner, email
+    except (SignatureExpired, BadSignature, TypeError, ValueError):
+        return None
+
+
 def _normalize_phone(phone: str | None) -> str:
     return (phone or "").strip()
 
@@ -1037,6 +1078,43 @@ def _send_invoice_pdf_email(
 
     filename = os.path.basename(pdf_path) or "invoice.pdf"
     msg.add_attachment(data, maintype="application", subtype="pdf", filename=filename)
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, password)
+        smtp.send_message(msg)
+
+
+def _send_employee_invite_email(to_email: str, invite_url: str, owner_name: str) -> None:
+    host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
+    user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
+    password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
+    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    if not all([host, port, user, password, mail_from]):
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+
+    msg = EmailMessage()
+    msg["Subject"] = "InvoiceRunner Employee Invitation"
+    msg["From"] = mail_from
+    msg["To"] = to_email
+    owner_label = (owner_name or "your company").strip()
+    body = (
+        f"You were invited to join {owner_label} on InvoiceRunner.\n\n"
+        f"Create your employee account using this secure link:\n{invite_url}\n\n"
+        "This invitation link expires in 7 days."
+    )
+    msg.set_content(body)
+    html_body = (
+        "<div style=\"font-family: Arial, sans-serif; color:#111; line-height:1.5;\">"
+        f"<p>You were invited to join <strong>{html.escape(owner_label)}</strong> on InvoiceRunner.</p>"
+        f"<p><a href=\"{html.escape(invite_url, quote=True)}\" "
+        "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;\">"
+        "Create Employee Account</a></p>"
+        "<p style=\"color:#555;font-size:13px;\">This invitation link expires in 7 days.</p>"
+        "</div>"
+    )
+    msg.add_alternative(html_body, subtype="html")
 
     with smtplib.SMTP(host, port) as smtp:
         smtp.starttls()
@@ -1581,6 +1659,44 @@ def _migrate_user_billing_fields(engine):
         pass
 
 
+def _migrate_user_employee_fields(engine):
+    if not _table_exists(engine, "users"):
+        return
+    stmts = []
+    if not _column_exists(engine, "users", "account_owner_id"):
+        stmts.append("ALTER TABLE users ADD COLUMN account_owner_id INTEGER")
+    if not _column_exists(engine, "users", "is_employee"):
+        stmts.append("ALTER TABLE users ADD COLUMN is_employee BOOLEAN")
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET is_employee = FALSE WHERE is_employee IS NULL"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS users_account_owner_idx ON users (account_owner_id)"))
+    except Exception:
+        pass
+
+
+def _migrate_schedule_event_created_by(engine):
+    if not _table_exists(engine, "schedule_events"):
+        return
+    if not _column_exists(engine, "schedule_events", "created_by_user_id"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE schedule_events ADD COLUMN created_by_user_id INTEGER"))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE schedule_events SET created_by_user_id = user_id WHERE created_by_user_id IS NULL"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS schedule_events_created_by_idx ON schedule_events (created_by_user_id)"
+            ))
+    except Exception:
+        pass
+
+
 def _migrate_user_security_fields(engine):
     if not _table_exists(engine, "users"):
         return
@@ -1859,6 +1975,7 @@ def create_app():
     _migrate_invoice_display_number(engine)
     _migrate_invoice_display_sequences(engine)
     _migrate_user_billing_fields(engine)
+    _migrate_user_employee_fields(engine)
     _migrate_user_security_fields(engine)
     _migrate_customers(engine)
     _migrate_customers_unique_name_ci(engine)
@@ -1869,6 +1986,7 @@ def create_app():
     _migrate_schedule_event_auto_fields(engine)   # <-- schedule is_auto/recurring_token
     _migrate_schedule_event_type(engine)
     _migrate_schedule_event_invoice_id(engine)
+    _migrate_schedule_event_created_by(engine)
     _migrate_customer_schedule_fields(engine)
     _migrate_customer_address_fields(engine)
 
@@ -1883,7 +2001,9 @@ def create_app():
             return {"format_phone": _format_phone_display}
 
         with db_session() as s:
-            u = s.get(User, _current_user_id_int())
+            actor = s.get(User, _current_actor_user_id_int())
+            owner = s.get(User, _current_user_id_int())
+            u = owner or actor
             status = (getattr(u, "subscription_status", None) or "").strip().lower()
             is_sub = status in ("trialing", "active")
             trial_used = bool(getattr(u, "trial_used_at", None)) if u else False
@@ -1892,6 +2012,7 @@ def create_app():
             "billing_status": status or None,
             "is_subscribed": is_sub,
             "trial_used": trial_used,
+            "is_employee_account": bool(getattr(actor, "is_employee", False)) if 'actor' in locals() and actor else False,
             "format_phone": _format_phone_display,
         }
 
@@ -1905,7 +2026,8 @@ def create_app():
             u = s.get(User, uid)
             if not u:
                 return None
-            return AppUser(u.id, u.username)
+            scope_id = int(getattr(u, "account_owner_id", 0) or u.id)
+            return AppUser(u.id, u.username, scope_user_id=scope_id, is_employee=bool(getattr(u, "is_employee", False)))
 
     def _bootstrap_first_user():
         username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
@@ -2041,6 +2163,19 @@ def create_app():
                     abort(403)
                 if not _is_subscribed(u):
                     return redirect(url_for("billing"))
+            return view_fn(*args, **kwargs)
+        return wrapper
+
+    def owner_required(view_fn):
+        @wraps(view_fn)
+        def wrapper(*args, **kwargs):
+            with db_session() as s:
+                actor = s.get(User, _current_actor_user_id_int())
+                if not actor:
+                    abort(403)
+                if bool(getattr(actor, "is_employee", False)):
+                    flash("You do not have permission for that action.", "error")
+                    return redirect(url_for("customers_list"))
             return view_fn(*args, **kwargs)
         return wrapper
 
@@ -2226,7 +2361,8 @@ def create_app():
                     )
                     s.commit()
 
-                    login_user(AppUser(u.id, u.username))
+                    scope_id = int(getattr(u, "account_owner_id", 0) or u.id)
+                    login_user(AppUser(u.id, u.username, scope_user_id=scope_id, is_employee=bool(getattr(u, "is_employee", False))))
                     return redirect(url_for("customers_list"))
 
                 attempts = int(getattr(u, "failed_login_attempts", 0) or 0) + 1
@@ -2345,7 +2481,7 @@ def create_app():
                 _audit_log(s, event="auth.register", result="success", user_id=u.id, username=u.username, email=u.email)
                 s.commit()
 
-                login_user(AppUser(u.id, u.username))
+                login_user(AppUser(u.id, u.username, scope_user_id=u.id, is_employee=False))
                 return redirect(url_for("customers_list"))
 
         return render_template("register.html", turnstile_site_key=turnstile_site_key)
@@ -2439,9 +2575,12 @@ def create_app():
     @login_required
     def settings():
         with db_session() as s:
-            u = s.get(User, _current_user_id_int())
-            if not u:
+            actor = s.get(User, _current_actor_user_id_int())
+            owner = s.get(User, _current_user_id_int())
+            if not actor or not owner:
                 abort(404)
+            is_employee = bool(getattr(actor, "is_employee", False))
+            u = owner if not is_employee else actor
 
             def _render_settings():
                 docs_for_preview = []
@@ -2465,15 +2604,35 @@ def create_app():
                             "total": float(d.invoice_total() or 0.0),
                         }
                     )
+                employees = []
+                if not is_employee:
+                    employees = (
+                        s.query(User)
+                        .filter(User.account_owner_id == owner.id, User.is_employee.is_(True))
+                        .order_by(User.username.asc())
+                        .all()
+                    )
+                template_name = "employee_settings.html" if is_employee else "settings.html"
                 return render_template(
-                    "settings.html",
+                    template_name,
                     u=u,
+                    owner=owner,
+                    actor=actor,
+                    is_employee_account=is_employee,
+                    employees=employees,
                     templates=INVOICE_TEMPLATES,
                     pdf_templates=PDF_TEMPLATES,
                     docs_for_preview=docs_for_preview,
                 )
 
             if request.method == "POST":
+                if is_employee:
+                    pdf_tmpl = _pdf_template_key_fallback(request.form.get("pdf_template"))
+                    actor.pdf_template = pdf_tmpl
+                    s.commit()
+                    flash("Employee settings saved.", "success")
+                    return redirect(url_for("settings"))
+
                 new_email = _normalize_email(request.form.get("email") or "")
                 if not _looks_like_email(new_email):
                     flash("Please enter a valid email address.", "error")
@@ -2744,6 +2903,98 @@ def create_app():
                 download_name="invoice-preview.pdf",
             )
 
+    @app.post("/employees/invite")
+    @login_required
+    @subscription_required
+    @owner_required
+    def employee_invite_send():
+        email = _normalize_email(request.form.get("employee_email") or "")
+        if not _looks_like_email(email):
+            flash("Enter a valid employee email.", "error")
+            return redirect(url_for("settings"))
+
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            exists = (
+                s.query(User)
+                .filter(text("lower(email)=:e"))
+                .params(e=email)
+                .first()
+            )
+            if exists:
+                flash("That email already has an account.", "error")
+                return redirect(url_for("settings"))
+
+            token = make_employee_invite_token(owner.id, email)
+            invite_url = _public_url(url_for("employee_invite_accept", token=token))
+            owner_name = (owner.business_name or owner.username or "your company").strip()
+            try:
+                _send_employee_invite_email(email, invite_url, owner_name)
+            except Exception as exc:
+                flash(f"Could not send invite email: {exc}", "error")
+                return redirect(url_for("settings"))
+            flash("Employee invitation sent.", "success")
+            return redirect(url_for("settings"))
+
+    @app.route("/employee-invite/<token>", methods=["GET", "POST"])
+    def employee_invite_accept(token: str):
+        if current_user.is_authenticated:
+            return redirect(url_for("customers_list"))
+        max_age = int(current_app.config.get("EMPLOYEE_INVITE_MAX_AGE_SECONDS") or os.getenv("EMPLOYEE_INVITE_MAX_AGE_SECONDS") or "604800")
+        decoded = read_employee_invite_token(token, max_age_seconds=max_age)
+        if not decoded:
+            flash("Invitation link is invalid or expired.", "error")
+            return redirect(url_for("login"))
+        owner_id, invite_email = decoded
+
+        with db_session() as s:
+            owner = s.get(User, owner_id)
+            if not owner:
+                flash("Invitation is no longer valid.", "error")
+                return redirect(url_for("login"))
+
+            if request.method == "POST":
+                username = (request.form.get("username") or "").strip()
+                password = request.form.get("password") or ""
+                confirm = request.form.get("confirm") or ""
+                if not username or len(username) < 3:
+                    flash("Username must be at least 3 characters.", "error")
+                    return render_template("employee_invite_accept.html", token=token, invite_email=invite_email, owner=owner)
+                if not password or len(password) < 6:
+                    flash("Password must be at least 6 characters.", "error")
+                    return render_template("employee_invite_accept.html", token=token, invite_email=invite_email, owner=owner)
+                if password != confirm:
+                    flash("Passwords do not match.", "error")
+                    return render_template("employee_invite_accept.html", token=token, invite_email=invite_email, owner=owner)
+
+                taken_user = s.query(User).filter(User.username == username).first()
+                if taken_user:
+                    flash("That username is already taken.", "error")
+                    return render_template("employee_invite_accept.html", token=token, invite_email=invite_email, owner=owner)
+                taken_email = (
+                    s.query(User).filter(text("lower(email) = :e")).params(e=invite_email).first()
+                )
+                if taken_email:
+                    flash("That email already has an account.", "error")
+                    return redirect(url_for("login"))
+
+                u = User(
+                    username=username,
+                    email=invite_email,
+                    password_hash=generate_password_hash(password),
+                    is_employee=True,
+                    account_owner_id=owner.id,
+                )
+                s.add(u)
+                s.flush()
+                s.commit()
+                login_user(AppUser(u.id, u.username, scope_user_id=owner.id, is_employee=True))
+                return redirect(url_for("customers_list"))
+
+            return render_template("employee_invite_accept.html", token=token, invite_email=invite_email, owner=owner)
+
     @app.post("/settings/schedule-summary/test")
     @login_required
     def schedule_summary_test():
@@ -2819,6 +3070,7 @@ def create_app():
     # -----------------------------
     @app.route("/billing")
     @login_required
+    @owner_required
     def billing():
         status = "none"
         connect_ok = False
@@ -2853,6 +3105,7 @@ def create_app():
 
     @app.route("/billing/checkout", methods=["POST"])
     @login_required
+    @owner_required
     def billing_checkout():
         if not stripe.api_key or not STRIPE_PRICE_ID:
             abort(500)
@@ -2973,11 +3226,13 @@ def create_app():
 
     @app.route("/billing/success")
     @login_required
+    @owner_required
     def billing_success():
         return render_template("billing_success.html")
 
     @app.route("/billing/portal", methods=["POST"])
     @login_required
+    @owner_required
     def billing_portal():
         if not stripe.api_key:
             abort(500)
@@ -3039,6 +3294,7 @@ def create_app():
 
     @app.route("/billing/connect/start", methods=["POST"])
     @login_required
+    @owner_required
     def billing_connect_start():
         if not stripe.api_key:
             abort(500)
@@ -3093,6 +3349,7 @@ def create_app():
 
     @app.route("/billing/connect/dashboard", methods=["POST"])
     @login_required
+    @owner_required
     def billing_connect_dashboard():
         if not stripe.api_key:
             abort(500)
@@ -3247,8 +3504,23 @@ def create_app():
     @login_required
     @subscription_required
     def schedule():
-        # optional deep-link for preselecting a customer on the front-end (JS can read URL param)
-        return render_template("schedule.html", title="Scheduler")
+        with db_session() as s:
+            actor = s.get(User, _current_actor_user_id_int())
+            owner_id = _current_user_id_int()
+            employees = (
+                s.query(User)
+                .filter(User.account_owner_id == owner_id, User.is_employee.is_(True))
+                .order_by(User.username.asc())
+                .all()
+            )
+            employees_for_js = [{"id": int(e.id), "username": e.username} for e in employees]
+            return render_template(
+                "schedule.html",
+                title="Scheduler",
+                is_employee_account=bool(getattr(actor, "is_employee", False)) if actor else False,
+                actor_user_id=(int(actor.id) if actor else -1),
+                employees_for_js=employees_for_js,
+            )
 
     @app.get("/api/customers/search")
     @login_required
@@ -3304,6 +3576,9 @@ def create_app():
     @subscription_required
     def api_schedule_events():
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
+        schedule_view = (request.args.get("schedule_view") or "").strip().lower()  # company|employee
+        selected_employee_id_raw = (request.args.get("employee_user_id") or "").strip()
         start = (request.args.get("start") or "").strip()  # YYYY-MM-DD
         end = (request.args.get("end") or "").strip()      # YYYY-MM-DD
 
@@ -3328,6 +3603,18 @@ def create_app():
                 return jsonify({"error": "Invalid date format. Use YYYY-MM-DD (or ISO)."}), 400
 
         with db_session() as s:
+            actor = s.get(User, actor_id)
+            is_employee = bool(getattr(actor, "is_employee", False)) if actor else False
+            if schedule_view not in ("company", "employee"):
+                schedule_view = "employee" if is_employee else "company"
+            selected_employee_id = None
+            if selected_employee_id_raw.isdigit():
+                selected_employee_id = int(selected_employee_id_raw)
+            if is_employee:
+                selected_employee_id = actor_id
+                if schedule_view not in ("employee", "company"):
+                    schedule_view = "employee"
+
             # auto-generate recurring events up to 90 days out
             try:
                 customers = (
@@ -3355,6 +3642,10 @@ def create_app():
                 .order_by(ScheduleEvent.start_dt.asc())
                 .all()
             )
+            if schedule_view == "employee":
+                if selected_employee_id is None:
+                    selected_employee_id = actor_id
+                evs = [e for e in evs if int(getattr(e, "created_by_user_id", 0) or 0) == int(selected_employee_id)]
 
             out = []
             for e in evs:
@@ -3371,6 +3662,11 @@ def create_app():
                 else:
                     title = (e.title or "").strip() or (cust.name if cust else "Appointment")
                     customer_name = (cust.name if cust else "")
+                can_edit = True
+                if is_employee and schedule_view == "company":
+                    can_edit = False
+                elif is_employee and int(getattr(e, "created_by_user_id", 0) or 0) != actor_id:
+                    can_edit = False
                 out.append({
                     "id": e.id,
                     "customer_id": e.customer_id,
@@ -3397,6 +3693,8 @@ def create_app():
                     "notes": (e.notes or "").strip(),
                     "status": (getattr(e, "status", None) or "scheduled"),
                     "event_type": event_type,
+                    "created_by_user_id": int(getattr(e, "created_by_user_id", 0) or 0),
+                    "can_edit": can_edit,
                 })
 
             return jsonify(out)
@@ -3406,6 +3704,7 @@ def create_app():
     @subscription_required
     def api_schedule_create():
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
         data = request.get_json(silent=True) or {}
 
         try:
@@ -3433,6 +3732,8 @@ def create_app():
             return jsonify({"error": "Invalid event type"}), 400
 
         with db_session() as s:
+            actor = s.get(User, actor_id)
+            is_employee = bool(getattr(actor, "is_employee", False)) if actor else False
             cust_id_int = None
             invoice_id_int = None
             if event_type == "block":
@@ -3461,6 +3762,7 @@ def create_app():
                 user_id=uid,
                 customer_id=cust_id_int,
                 invoice_id=invoice_id_int,
+                created_by_user_id=actor_id,
                 title=(title or None) if event_type != "block" else (title or "Blocked time"),
                 start_dt=start_dt,
                 end_dt=end_dt,
@@ -3471,6 +3773,8 @@ def create_app():
             s.add(ev)
 
             if recurring_enabled:
+                if is_employee:
+                    return jsonify({"error": "Employees cannot configure recurring schedules."}), 403
                 if event_type == "block":
                     return jsonify({"error": "Recurring schedule is not available for blocked time."}), 400
                 if not cust_id_int:
@@ -3511,9 +3815,12 @@ def create_app():
     @subscription_required
     def api_schedule_update(event_id: int):
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
         data = request.get_json(silent=True) or {}
 
         with db_session() as s:
+            actor = s.get(User, actor_id)
+            is_employee = bool(getattr(actor, "is_employee", False)) if actor else False
             ev = (
                 s.query(ScheduleEvent)
                 .filter(ScheduleEvent.id == event_id, ScheduleEvent.user_id == uid)
@@ -3521,6 +3828,8 @@ def create_app():
             )
             if not ev:
                 abort(404)
+            if is_employee and int(getattr(ev, "created_by_user_id", 0) or 0) != actor_id:
+                return jsonify({"error": "You cannot edit company schedule items."}), 403
 
             if "event_type" in data:
                 event_type = (data.get("event_type") or "appointment").strip().lower()
@@ -3637,7 +3946,10 @@ def create_app():
     @subscription_required
     def api_schedule_delete(event_id: int):
         uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
         with db_session() as s:
+            actor = s.get(User, actor_id)
+            is_employee = bool(getattr(actor, "is_employee", False)) if actor else False
             ev = (
                 s.query(ScheduleEvent)
                 .filter(ScheduleEvent.id == event_id, ScheduleEvent.user_id == uid)
@@ -3645,9 +3957,11 @@ def create_app():
             )
             if not ev:
                 abort(404)
+            if is_employee and int(getattr(ev, "created_by_user_id", 0) or 0) != actor_id:
+                return jsonify({"error": "You cannot delete company schedule items."}), 403
             s.delete(ev)
             s.commit()
-            return jsonify({"ok": True})
+        return jsonify({"ok": True})
 
     # -----------------------------
     # Customers
@@ -3855,6 +4169,7 @@ def create_app():
     @app.post("/customers/<int:customer_id>/delete")
     @login_required
     @subscription_required
+    @owner_required
     def customer_delete(customer_id: int):
         uid = _current_user_id_int()
         pdf_paths = []
@@ -4793,6 +5108,7 @@ def create_app():
     @app.route("/estimates/<int:estimate_id>/delete", methods=["POST"])
     @login_required
     @subscription_required
+    @owner_required
     def estimate_delete(estimate_id: int):
         delete_pdf = (request.form.get("delete_pdf") or "").strip() == "1"
 
@@ -5096,6 +5412,7 @@ def create_app():
     @app.route("/year-summary")
     @login_required
     @subscription_required
+    @owner_required
     def year_summary():
         year_text = (request.args.get("year") or "").strip()
         month_text = (request.args.get("month") or "").strip()
@@ -5212,6 +5529,7 @@ def create_app():
     @app.route("/business-expenses", methods=["GET", "POST"])
     @login_required
     @subscription_required
+    @owner_required
     def business_expenses():
         uid = _current_user_id_int()
         with db_session() as s:
@@ -5891,6 +6209,7 @@ def create_app():
     @app.route("/profit-loss")
     @login_required
     @subscription_required
+    @owner_required
     def profit_loss():
         uid = _current_user_id_int()
         year_text = (request.args.get("year") or "").strip()
@@ -5924,6 +6243,7 @@ def create_app():
     @app.route("/profit-loss/pdf/preview")
     @login_required
     @subscription_required
+    @owner_required
     def profit_loss_pdf_preview():
         uid = _current_user_id_int()
         year_text = (request.args.get("year") or "").strip()
@@ -5957,6 +6277,7 @@ def create_app():
     @app.route("/profit-loss/pdf/download")
     @login_required
     @subscription_required
+    @owner_required
     def profit_loss_pdf_download():
         uid = _current_user_id_int()
         year_text = (request.args.get("year") or "").strip()
@@ -5993,6 +6314,7 @@ def create_app():
     @app.route("/invoices/<int:invoice_id>/delete", methods=["POST"])
     @login_required
     @subscription_required
+    @owner_required
     def invoice_delete(invoice_id: int):
         delete_pdf = (request.form.get("delete_pdf") or "").strip() == "1"
 
@@ -6125,10 +6447,10 @@ def create_app():
             subject = f"Estimate {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
-                f"Attached is your estimate {display_no}.\n"
-                f"Details: {inv.vehicle}\n"
-                f"Total: ${inv.invoice_total():,.2f}\n"
+                f"Your estimate {display_no} is ready.\n"
+                f"Estimate amount: ${inv.invoice_total():,.2f}\n"
                 f"{card_fee_line}\n"
+                "This secure link is valid for 90 days from the time this email was sent.\n\n"
                 "Thank you."
             )
 
@@ -6281,10 +6603,10 @@ def create_app():
             subject = f"Invoice {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
-                f"Attached is your invoice {display_no}.\n"
-                f"Details: {inv.vehicle}\n"
-                f"Total: ${inv.invoice_total():,.2f}\n"
+                f"Your invoice {display_no} is ready.\n"
+                f"Invoice amount: ${inv.invoice_total():,.2f}\n"
                 f"{card_fee_line}\n"
+                "This secure link is valid for 90 days from the time this email was sent.\n\n"
                 "Thank you."
             )
 

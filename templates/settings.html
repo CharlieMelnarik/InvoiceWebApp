@@ -28,7 +28,9 @@
     <div class="subtitle">Manage account, invoice defaults, and scheduler notifications.</div>
   </div>
   <div class="action-group">
-    <a href="{{ url_for('billing') }}" class="btn btn-outline-primary">Billing</a>
+    {% if not is_employee_account %}
+      <a href="{{ url_for('billing') }}" class="btn btn-outline-primary">Billing</a>
+    {% endif %}
     <a href="{{ url_for('invoices') }}" class="btn btn-outline-secondary">Back to Invoices</a>
   </div>
 </div>
@@ -472,6 +474,31 @@
           </div>
 
         </form>
+
+        <hr class="my-4" />
+        <h5 class="mb-3">Employees</h5>
+        <form method="post" action="{{ url_for('employee_invite_send') }}" class="row g-2 align-items-end mb-3">
+          <div class="col-md-8">
+            <label class="form-label">Invite Employee by Email</label>
+            <input class="form-control" type="email" name="employee_email" placeholder="employee@example.com" required>
+          </div>
+          <div class="col-md-4 d-grid">
+            <button class="btn btn-outline-primary" type="submit">Send Invite</button>
+          </div>
+        </form>
+        {% if employees and employees|length > 0 %}
+          <div class="small-muted mb-1">Current Employees</div>
+          <ul class="list-group">
+            {% for e in employees %}
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>{{ e.username }} <span class="small-muted">({{ e.email or 'no email' }})</span></span>
+                <span class="badge text-bg-light border">Employee</span>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="small-muted">No employees invited yet.</div>
+        {% endif %}
 
       </div>
     </div>

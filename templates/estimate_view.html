@@ -276,10 +276,12 @@
             <button class="btn btn-outline-primary" type="submit">Convert to Invoice</button>
           </form>
 
-          <form method="post" action="{{ url_for('estimate_delete', estimate_id=inv.id) }}"
-                onsubmit="return confirm('Delete this estimate? This cannot be undone.');">
-            <button class="btn btn-outline-danger" type="submit">Delete</button>
-          </form>
+          {% if not is_employee_account %}
+            <form method="post" action="{{ url_for('estimate_delete', estimate_id=inv.id) }}"
+                  onsubmit="return confirm('Delete this estimate? This cannot be undone.');">
+              <button class="btn btn-outline-danger" type="submit">Delete</button>
+            </form>
+          {% endif %}
         </div>
 
       </div>

@@ -27,10 +27,12 @@
     <a class="btn btn-outline-primary" href="{{ url_for('schedule') }}?customer_id={{ c.id }}&customer_name={{ c.name|urlencode }}&open_new=1">Schedule Customer</a>
     <a class="btn btn-outline-primary" href="{{ url_for('invoice_new') }}?customer_id={{ c.id }}">New Invoice</a>
     <a class="btn btn-outline-primary" href="{{ url_for('estimate_new') }}?customer_id={{ c.id }}">New Estimate</a>
-    <form method="post" action="{{ url_for('customer_delete', customer_id=c.id) }}"
-          onsubmit="return confirm('Are you sure you want to delete this customer? This cannot be undone. All associated invoices and estimates will be deleted as well.');">
-      <button class="btn btn-outline-danger" type="submit">Delete Customer</button>
-    </form>
+    {% if not is_employee_account %}
+      <form method="post" action="{{ url_for('customer_delete', customer_id=c.id) }}"
+            onsubmit="return confirm('Are you sure you want to delete this customer? This cannot be undone. All associated invoices and estimates will be deleted as well.');">
+        <button class="btn btn-outline-danger" type="submit">Delete Customer</button>
+      </form>
+    {% endif %}
   </div>
 </div>
 

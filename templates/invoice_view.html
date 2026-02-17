@@ -298,10 +298,12 @@
             <button class="btn btn-outline-success" type="submit">Mark Paid</button>
           </form>
 
-          <form method="post" action="{{ url_for('invoice_delete', invoice_id=inv.id) }}"
-                onsubmit="return confirm('Delete this invoice? This cannot be undone.');">
-            <button class="btn btn-outline-danger" type="submit">Delete</button>
-          </form>
+          {% if not is_employee_account %}
+            <form method="post" action="{{ url_for('invoice_delete', invoice_id=inv.id) }}"
+                  onsubmit="return confirm('Delete this invoice? This cannot be undone.');">
+              <button class="btn btn-outline-danger" type="submit">Delete</button>
+            </form>
+          {% endif %}
         </div>
 
       </div>

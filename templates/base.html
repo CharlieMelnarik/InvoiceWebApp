@@ -360,13 +360,15 @@
             <a class="nav-link" href="{{ url_for('estimates') }}">Estimates</a>
           </li>
 
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('business_expenses') }}">Business Expenses</a>
-          </li>
+          {% if not is_employee_account %}
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('business_expenses') }}">Business Expenses</a>
+            </li>
 
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('year_summary') }}">Financial Summary</a>
-          </li>
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('year_summary') }}">Financial Summary</a>
+            </li>
+          {% endif %}
 
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('settings') }}">Settings</a>

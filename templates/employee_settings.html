@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% set title = "Employee Settings" %}
+
+{% block content %}
+<style>
+  .live-preview-wrap {
+    border: 1px solid #dbe3ee;
+    border-radius: 14px;
+    background: #f7f9fc;
+    padding: 14px;
+  }
+  .live-preview-frame {
+    width: 100%;
+    height: 620px;
+    border: 1px solid #cfd8e5;
+    border-radius: 10px;
+    background: #fff;
+  }
+</style>
+
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Employee Settings</h1>
+    <div class="subtitle">Invoice layout preview and payment calculator.</div>
+  </div>
+  <div class="action-group">
+    <a href="{{ url_for('invoices') }}" class="btn btn-outline-secondary">Back to Invoices</a>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-md-9 col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label req">Invoice Layout Template</label>
+            <div class="row g-3">
+              {% for key, cfg in pdf_templates.items() %}
+                <div class="col-md-6">
+                  <label class="pdf-template-card">
+                    <input class="pdf-template-radio" type="radio" name="pdf_template" value="{{ key }}" {% if (u.pdf_template or 'classic') == key %}checked{% endif %} required>
+                    <div class="pdf-template-body">
+                      <div class="pdf-template-preview">
+                        <img src="{{ url_for('static', filename=cfg.preview) }}" alt="{{ cfg.label }} preview">
+                      </div>
+                      <div class="pdf-template-title">{{ cfg.label }}</div>
+                      <div class="pdf-template-desc">{{ cfg.desc }}</div>
+                    </div>
+                  </label>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="live-preview-wrap mb-3">
+            <div class="fw-semibold mb-2">Live Invoice Preview</div>
+            <iframe id="livePdfPreview" class="live-preview-frame" src="{{ url_for('settings_preview_pdf') }}" title="Live PDF Preview"></iframe>
+          </div>
+
+          <div class="border rounded p-3 mb-3">
+            <div class="fw-semibold mb-2">Stripe Processing Fee Calculator</div>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Invoice Amount ($)</label>
+                <input type="text" class="form-control" id="calcBase" value="100.00" inputmode="decimal">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Stripe Fee (%)</label>
+                <input type="text" class="form-control" id="calcPct" value="2.90" inputmode="decimal">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Fixed Fee ($)</label>
+                <input type="text" class="form-control" id="calcFixed" value="0.30" inputmode="decimal">
+              </div>
+            </div>
+            <div class="small-muted mt-2" id="calcResult"></div>
+          </div>
+
+          <button class="btn btn-primary" type="submit">Save Employee Settings</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const livePdf = document.getElementById("livePdfPreview");
+  function selectedPdfTemplate() {
+    const checked = document.querySelector('input[name="pdf_template"]:checked');
+    return (checked && checked.value) || "classic";
+  }
+  function refreshPdfPreview() {
+    if (!livePdf) return;
+    const params = new URLSearchParams();
+    params.set("pdf_template", selectedPdfTemplate());
+    params.set("_t", String(Date.now()));
+    livePdf.src = `{{ url_for('settings_preview_pdf') }}?${params.toString()}`;
+  }
+  document.addEventListener("change", refreshPdfPreview);
+  refreshPdfPreview();
+
+  function parseNum(v, d=0){ const n = parseFloat(String(v||"").replace(/[$,\s]/g,"")); return Number.isFinite(n) ? n : d; }
+  function money(v){ return `$${(Math.round((v||0)*100)/100).toFixed(2)}`; }
+  function updateCalc(){
+    const amount = Math.max(0, parseNum(document.getElementById("calcBase").value, 0));
+    const pct = Math.max(0, parseNum(document.getElementById("calcPct").value, 2.9));
+    const fixed = Math.max(0, parseNum(document.getElementById("calcFixed").value, 0.30));
+    const fee = (amount * (pct/100)) + fixed;
+    const result = document.getElementById("calcResult");
+    result.textContent = `Estimated Stripe fee: ${money(fee)} | Estimated net: ${money(amount - fee)}`;
+  }
+  ["calcBase","calcPct","calcFixed"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", updateCalc);
+  });
+  updateCalc();
+</script>
+{% endblock %}
