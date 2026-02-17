@@ -5,6 +5,7 @@ import os
 import re
 import io
 import math
+import html
 import zipfile
 import smtplib
 import uuid
@@ -985,7 +986,14 @@ def _send_reset_email(to_email: str, reset_url: str) -> None:
         smtp.send_message(msg)
 
 
-def _send_invoice_pdf_email(to_email: str, subject: str, body_text: str, pdf_path: str) -> None:
+def _send_invoice_pdf_email(
+    to_email: str,
+    subject: str,
+    body_text: str,
+    pdf_path: str,
+    action_url: str | None = None,
+    action_label: str | None = None,
+) -> None:
     host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
@@ -1000,6 +1008,29 @@ def _send_invoice_pdf_email(to_email: str, subject: str, body_text: str, pdf_pat
     msg["From"] = mail_from
     msg["To"] = to_email
     msg.set_content(body_text)
+
+    action_url_clean = (action_url or "").strip()
+    if action_url_clean:
+        safe_label = html.escape((action_label or "Open Document").strip() or "Open Document")
+        safe_url = html.escape(action_url_clean, quote=True)
+        paragraphs = []
+        for block in (body_text or "").split("\n\n"):
+            line = html.escape((block or "").strip())
+            if line:
+                paragraphs.append(f"<p>{line}</p>")
+        html_body = (
+            "<div style=\"font-family: Arial, sans-serif; color: #111; line-height: 1.5;\">"
+            f"{''.join(paragraphs)}"
+            "<p style=\"margin: 18px 0;\">"
+            f"<a href=\"{safe_url}\" "
+            "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;"
+            "padding:10px 16px;border-radius:8px;font-weight:600;\">"
+            f"{safe_label}</a>"
+            "</p>"
+            "<p style=\"color:#555;font-size:13px;\">If the button does not work, contact us and we can resend your document.</p>"
+            "</div>"
+        )
+        msg.add_alternative(html_body, subtype="html")
 
     with open(pdf_path, "rb") as f:
         data = f.read()
@@ -6058,8 +6089,7 @@ def create_app():
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Attached is your estimate {display_no}.\n"
                 f"Details: {inv.vehicle}\n"
-                f"Total: ${inv.invoice_total():,.2f}\n"
-                f"Pay or view online: {portal_url}\n\n"
+                f"Total: ${inv.invoice_total():,.2f}\n\n"
                 "Thank you."
             )
 
@@ -6069,6 +6099,8 @@ def create_app():
                     subject=subject,
                     body_text=body,
                     pdf_path=inv.pdf_path,
+                    action_url=portal_url,
+                    action_label="View & Pay Estimate",
                 )
             except Exception as e:
                 print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={display_no}: {repr(e)}", flush=True)
@@ -6188,8 +6220,7 @@ def create_app():
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Attached is your invoice {display_no}.\n"
                 f"Details: {inv.vehicle}\n"
-                f"Total: ${inv.invoice_total():,.2f}\n"
-                f"Pay or view online: {portal_url}\n\n"
+                f"Total: ${inv.invoice_total():,.2f}\n\n"
                 "Thank you."
             )
 
@@ -6199,6 +6230,8 @@ def create_app():
                     subject=subject,
                     body_text=body,
                     pdf_path=inv.pdf_path,
+                    action_url=portal_url,
+                    action_label="View & Pay Invoice",
                 )
             except Exception as e:
                 print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={display_no}: {repr(e)}", flush=True)
