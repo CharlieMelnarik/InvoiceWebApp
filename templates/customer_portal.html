@@ -46,20 +46,20 @@
         <div class="row g-3 mb-3">
           <div class="col-12 col-md-4">
             <div class="border rounded p-3 h-100">
-              <div class="small-muted mb-1">Total</div>
+              <div class="small-muted mb-1">Invoice Amount</div>
               <div class="h5 mb-0 mono">${{ "%.2f"|format(total) }}</div>
             </div>
           </div>
           <div class="col-12 col-md-4">
             <div class="border rounded p-3 h-100">
               <div class="small-muted mb-1">Paid</div>
-              <div class="h5 mb-0 mono">${{ "%.2f"|format(inv.paid or 0) }}</div>
+              <div class="h5 mb-0 mono">${{ "%.2f"|format(paid_display if paid_display is defined else (inv.paid or 0)) }}</div>
             </div>
           </div>
           <div class="col-12 col-md-4">
             <div class="border rounded p-3 h-100">
               <div class="small-muted mb-1">Amount Due</div>
-              <div class="h5 mb-0 mono">${{ "%.2f"|format(amount_due) }}</div>
+              <div class="h5 mb-0 mono">${{ "%.2f"|format(amount_due_display if amount_due_display is defined else amount_due) }}</div>
             </div>
           </div>
         </div>

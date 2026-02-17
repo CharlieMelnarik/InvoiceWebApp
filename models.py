@@ -344,6 +344,7 @@ class Invoice(Base):
     converted_from_estimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     converted_to_invoice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    paid_processing_fee: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     is_estimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 

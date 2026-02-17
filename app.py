@@ -1480,6 +1480,19 @@ def _migrate_invoice_parts_markup_percent(engine):
             pass
 
 
+def _migrate_invoice_paid_processing_fee(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+    if not _column_exists(engine, "invoices", "paid_processing_fee"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE invoices ADD COLUMN paid_processing_fee FLOAT"))
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE invoices SET paid_processing_fee = 0.0 WHERE paid_processing_fee IS NULL"))
+        except Exception:
+            pass
+
+
 def _migrate_invoice_display_number(engine):
     if not _table_exists(engine, "invoices"):
         return
@@ -1842,6 +1855,7 @@ def create_app():
     _migrate_invoice_tax_fields(engine)
     _migrate_invoice_is_estimate(engine)
     _migrate_invoice_parts_markup_percent(engine)
+    _migrate_invoice_paid_processing_fee(engine)
     _migrate_invoice_display_number(engine)
     _migrate_invoice_display_sequences(engine)
     _migrate_user_billing_fields(engine)
@@ -6364,6 +6378,8 @@ def create_app():
 
             payment_message = ""
             payment_error = ""
+            paid_processing_fee = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
+            paid_display = round(float(inv.paid or 0.0) + paid_processing_fee, 2)
             if payment_state == "success" and checkout_session_id and stripe.api_key:
                 try:
                     retrieve_kwargs = {}
@@ -6375,8 +6391,14 @@ def create_app():
                     iid_meta = int((metadata.get("iid") or "0"))
                     status = (cs.get("payment_status") or "").lower()
                     if uid_meta == user_id and iid_meta == invoice_id and status == "paid":
+                        amount_total_cents = int(cs.get("amount_total") or 0)
+                        invoice_total = float(inv.invoice_total() or 0.0)
+                        if amount_total_cents > 0:
+                            paid_display = round(amount_total_cents / 100.0, 2)
+                            paid_processing_fee = round(max(0.0, paid_display - invoice_total), 2)
                         if inv.amount_due() > 0.0:
-                            inv.paid = inv.invoice_total()
+                            inv.paid = invoice_total
+                            inv.paid_processing_fee = paid_processing_fee
                             s.commit()
                         payment_message = "Payment received. Thank you."
                     else:
@@ -6396,7 +6418,7 @@ def create_app():
             fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
             stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
             stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
-            convenience_fee = _payment_fee_amount(
+            computed_convenience_fee = _payment_fee_amount(
                 amount_due,
                 fee_percent,
                 fee_fixed,
@@ -6404,7 +6426,12 @@ def create_app():
                 stripe_percent=stripe_fee_percent,
                 stripe_fixed=stripe_fee_fixed,
             )
-            pay_total = round(amount_due + convenience_fee, 2)
+            convenience_fee_display = round(
+                paid_processing_fee if amount_due <= 0.0 and paid_processing_fee > 0.0 else computed_convenience_fee,
+                2,
+            )
+            amount_due_display = round(amount_due + computed_convenience_fee, 2) if amount_due > 0.0 else 0.0
+            pay_total = amount_due_display
             doc_number = inv.display_number or inv.invoice_number
             business_name = (owner.business_name if owner else "") or "InvoiceRunner"
             payment_unavailable_reason = ""
@@ -6429,8 +6456,10 @@ def create_app():
                 payment_message=payment_message,
                 payment_error=payment_error,
                 payment_unavailable_reason=payment_unavailable_reason,
-                convenience_fee=convenience_fee,
+                convenience_fee=convenience_fee_display,
+                amount_due_display=amount_due_display,
                 pay_total=pay_total,
+                paid_display=paid_display,
                 fee_percent=fee_percent,
                 fee_fixed=fee_fixed,
                 fee_auto_enabled=fee_auto_enabled,
