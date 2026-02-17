@@ -223,6 +223,36 @@
             </div>
           </div>
 
+          <div class="mb-3">
+            <label class="form-label">Customer Payment Convenience Fee (%)</label>
+            <input
+              type="text"
+              class="form-control"
+              name="payment_fee_percent"
+              inputmode="decimal"
+              value="{{ u.payment_fee_percent if u.payment_fee_percent is not none else '0' }}"
+              placeholder="e.g. 3.00"
+            >
+            <div class="small-muted mt-1">
+              Added only when customer pays online through Stripe checkout.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Customer Payment Convenience Fee (Fixed $)</label>
+            <input
+              type="text"
+              class="form-control"
+              name="payment_fee_fixed"
+              inputmode="decimal"
+              value="{{ u.payment_fee_fixed if u.payment_fee_fixed is not none else '0' }}"
+              placeholder="e.g. 0.30"
+            >
+            <div class="small-muted mt-1">
+              Fixed fee added to online customer checkout total.
+            </div>
+          </div>
+
           <hr class="my-4" />
 
           <!-- Business Name -->

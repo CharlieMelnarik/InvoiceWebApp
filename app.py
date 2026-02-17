@@ -79,6 +79,16 @@ def _to_float(s, default=0.0):
         return float(default)
 
 
+def _payment_fee_amount(base_amount: float, percent: float, fixed: float) -> float:
+    amount = float(base_amount or 0.0)
+    pct = max(0.0, float(percent or 0.0))
+    fixed_amt = max(0.0, float(fixed or 0.0))
+    if amount <= 0:
+        return 0.0
+    fee = (amount * (pct / 100.0)) + fixed_amt
+    return round(max(0.0, fee), 2)
+
+
 def _parse_repeating_fields(names, prices):
     out = []
     n = max(len(names), len(prices))
@@ -1343,6 +1353,16 @@ def _migrate_user_default_rates(engine):
             conn.execute(text("ALTER TABLE users ADD COLUMN default_parts_markup FLOAT"))
         with engine.begin() as conn:
             conn.execute(text("UPDATE users SET default_parts_markup=0 WHERE default_parts_markup IS NULL"))
+    if not _column_exists(engine, "users", "payment_fee_percent"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN payment_fee_percent FLOAT"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET payment_fee_percent=0 WHERE payment_fee_percent IS NULL"))
+    if not _column_exists(engine, "users", "payment_fee_fixed"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN payment_fee_fixed FLOAT"))
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET payment_fee_fixed=0 WHERE payment_fee_fixed IS NULL"))
 
 
 def _migrate_invoice_tax_fields(engine):
@@ -2440,6 +2460,16 @@ def create_app():
                 u.tax_rate = _to_float(request.form.get("tax_rate"), 0.0)
                 u.default_hourly_rate = _to_float(request.form.get("default_hourly_rate"), 0.0)
                 u.default_parts_markup = _to_float(request.form.get("default_parts_markup"), 0.0)
+                payment_fee_percent = _to_float(request.form.get("payment_fee_percent"), 0.0)
+                payment_fee_fixed = _to_float(request.form.get("payment_fee_fixed"), 0.0)
+                if payment_fee_percent < 0 or payment_fee_percent > 25:
+                    flash("Convenience fee percent must be between 0 and 25.", "error")
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                if payment_fee_fixed < 0 or payment_fee_fixed > 100:
+                    flash("Fixed convenience fee must be between 0 and 100.", "error")
+                    return render_template("settings.html", u=u, templates=INVOICE_TEMPLATES, pdf_templates=PDF_TEMPLATES)
+                u.payment_fee_percent = payment_fee_percent
+                u.payment_fee_fixed = payment_fee_fixed
 
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
@@ -6201,6 +6231,11 @@ def create_app():
             pdf_url = url_for("shared_pdf_download", token=pdf_token)
             pay_url = url_for("shared_customer_portal_pay", token=token)
             can_pay_online = (inv.amount_due() > 0.0) and bool(stripe.api_key) and owner_connect_ready
+            amount_due = float(inv.amount_due() or 0.0)
+            fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
+            fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
+            convenience_fee = _payment_fee_amount(amount_due, fee_percent, fee_fixed)
+            pay_total = round(amount_due + convenience_fee, 2)
             doc_number = inv.display_number or inv.invoice_number
             business_name = (owner.business_name if owner else "") or "InvoiceRunner"
             payment_unavailable_reason = ""
@@ -6225,6 +6260,10 @@ def create_app():
                 payment_message=payment_message,
                 payment_error=payment_error,
                 payment_unavailable_reason=payment_unavailable_reason,
+                convenience_fee=convenience_fee,
+                pay_total=pay_total,
+                fee_percent=fee_percent,
+                fee_fixed=fee_fixed,
             )
 
     @app.post("/shared/v/<token>/pay")
@@ -6262,7 +6301,11 @@ def create_app():
             if not owner_connect_acct or not owner_connect_ready:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
 
-            amount_cents = int(round(amount_due * 100))
+            fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
+            fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
+            convenience_fee = _payment_fee_amount(amount_due, fee_percent, fee_fixed)
+            checkout_total = round(amount_due + convenience_fee, 2)
+            amount_cents = int(round(checkout_total * 100))
             display_no = inv.display_number or inv.invoice_number
             doc_label = "Estimate" if inv.is_estimate else "Invoice"
             success_url = _public_url(url_for("shared_customer_portal", token=token, payment="success"))
@@ -6287,6 +6330,8 @@ def create_app():
                         "uid": str(user_id),
                         "iid": str(invoice_id),
                         "type": "invoice_payment",
+                        "base_amount": f"{amount_due:.2f}",
+                        "convenience_fee": f"{convenience_fee:.2f}",
                     },
                     stripe_account=owner_connect_acct,
                 )

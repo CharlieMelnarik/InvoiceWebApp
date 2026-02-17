@@ -68,6 +68,8 @@ class User(Base):
     # Default hourly rate and parts markup for NEW invoices/estimates
     default_hourly_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     default_parts_markup: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    payment_fee_percent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    payment_fee_fixed: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     # Profile / business info (for PDF header)
     business_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
