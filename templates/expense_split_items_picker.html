@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% set title = "Select Split Items" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Select Split Items</h1>
+    <div class="small-muted">
+      {{ category.label }} · {{ entry.item_desc }}
+    </div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ back_to_picker_url }}">Back to Item Picker</a>
+    <a class="btn btn-outline-secondary" href="{{ target_url }}">Back to Form</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <label class="form-label">Search split items</label>
+    <input class="form-control" id="splitSearch" placeholder="e.g. wheel bearing, oil filter">
+  </div>
+</div>
+
+<form class="card shadow-sm" method="post">
+  <input type="hidden" name="doc_type" value="{{ doc_type }}">
+  <input type="hidden" name="mode" value="{{ mode }}">
+  <input type="hidden" name="invoice_id" value="{{ invoice_id }}">
+  <input type="hidden" name="estimate_id" value="{{ estimate_id }}">
+  <div class="card-body">
+    {% if split_items %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0" id="splitTable">
+          <thead>
+            <tr>
+              <th style="width: 50px;">Add</th>
+              <th>Split Item</th>
+              <th class="text-end">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for it in split_items %}
+              <tr data-search="{{ (it.item_desc or '')|lower }}">
+                <td><input class="form-check-input" type="checkbox" name="split_ids" value="{{ it.id }}"></td>
+                <td>{{ it.item_desc }}</td>
+                <td class="text-end mono">${{ '%.2f'|format(it.amount or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-primary" type="submit">
+          Add Selected to {{ "Estimate" if doc_type == "estimate" else "Invoice" }}
+        </button>
+        <a class="btn btn-outline-secondary" href="{{ back_to_picker_url }}">Cancel</a>
+      </div>
+    {% else %}
+      <div class="small-muted">No split items were found for this entry.</div>
+      <div class="mt-3">
+        <a class="btn btn-outline-secondary" href="{{ back_to_picker_url }}">Back</a>
+      </div>
+    {% endif %}
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    const search = document.getElementById("splitSearch");
+    const rows = Array.from(document.querySelectorAll("#splitTable tbody tr"));
+    if (!search || !rows.length) return;
+    search.addEventListener("input", () => {
+      const q = (search.value || "").trim().toLowerCase();
+      rows.forEach((row) => {
+        const hay = (row.dataset.search || "");
+        row.style.display = (!q || hay.includes(q)) ? "" : "none";
+      });
+    });
+  })();
+</script>
+{% endblock %}

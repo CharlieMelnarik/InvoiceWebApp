@@ -6149,37 +6149,205 @@ def create_app():
                 target_url=_target_url(),
             )
 
+    @app.route("/expense-items/split-picker/<int:entry_id>", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def expense_split_items_picker(entry_id: int):
+        uid = _current_user_id_int()
+        doc_type = (request.values.get("doc_type") or "invoice").strip().lower()
+        if doc_type not in ("invoice", "estimate"):
+            doc_type = "invoice"
+        mode = (request.values.get("mode") or "new").strip().lower()
+        if mode not in ("new", "edit"):
+            mode = "new"
+        invoice_id_raw = (request.values.get("invoice_id") or "").strip()
+        estimate_id_raw = (request.values.get("estimate_id") or "").strip()
+
+        def _target_url(add_ids_csv: str | None = None) -> str:
+            kwargs = {}
+            if add_ids_csv:
+                kwargs["add_expense_ids"] = add_ids_csv
+            if doc_type == "estimate":
+                if mode == "edit" and estimate_id_raw.isdigit():
+                    return url_for("estimate_edit", estimate_id=int(estimate_id_raw), **kwargs)
+                return url_for("estimate_new", **kwargs)
+            if mode == "edit" and invoice_id_raw.isdigit():
+                return url_for("invoice_edit", invoice_id=int(invoice_id_raw), **kwargs)
+            return url_for("invoice_new", **kwargs)
+
+        def _back_to_picker_url() -> str:
+            return url_for(
+                "expense_items_picker",
+                doc_type=doc_type,
+                mode=mode,
+                invoice_id=invoice_id_raw,
+                estimate_id=estimate_id_raw,
+            )
+
+        with db_session() as s:
+            row = (
+                s.query(BusinessExpenseEntry, BusinessExpense)
+                .join(BusinessExpense, BusinessExpense.id == BusinessExpenseEntry.expense_id)
+                .filter(
+                    BusinessExpenseEntry.id == entry_id,
+                    BusinessExpenseEntry.user_id == uid,
+                    BusinessExpense.user_id == uid,
+                )
+                .first()
+            )
+            if not row:
+                flash("Expense entry not found.", "error")
+                return redirect(_back_to_picker_url())
+            entry, category = row
+
+            split_items = (
+                s.query(BusinessExpenseEntrySplit)
+                .filter(
+                    BusinessExpenseEntrySplit.entry_id == entry.id,
+                    BusinessExpenseEntrySplit.user_id == uid,
+                )
+                .order_by(BusinessExpenseEntrySplit.item_desc.asc())
+                .all()
+            )
+
+            if request.method == "POST":
+                selected_ids = []
+                for raw in request.form.getlist("split_ids"):
+                    raw = (raw or "").strip()
+                    if raw.isdigit():
+                        selected_ids.append(int(raw))
+                if not selected_ids:
+                    flash("Select at least one split item.", "error")
+                    return redirect(
+                        url_for(
+                            "expense_split_items_picker",
+                            entry_id=entry.id,
+                            doc_type=doc_type,
+                            mode=mode,
+                            invoice_id=invoice_id_raw,
+                            estimate_id=estimate_id_raw,
+                        )
+                    )
+                valid_rows = (
+                    s.query(BusinessExpenseEntrySplit.id)
+                    .filter(
+                        BusinessExpenseEntrySplit.user_id == uid,
+                        BusinessExpenseEntrySplit.entry_id == entry.id,
+                        BusinessExpenseEntrySplit.id.in_(selected_ids),
+                    )
+                    .all()
+                )
+                valid_ids = sorted({int(v[0]) for v in valid_rows})
+                if not valid_ids:
+                    flash("Selected split items are invalid.", "error")
+                    return redirect(
+                        url_for(
+                            "expense_split_items_picker",
+                            entry_id=entry.id,
+                            doc_type=doc_type,
+                            mode=mode,
+                            invoice_id=invoice_id_raw,
+                            estimate_id=estimate_id_raw,
+                        )
+                    )
+                token_csv = ",".join(f"s-{v}" for v in valid_ids)
+                return redirect(_target_url(token_csv))
+
+            return render_template(
+                "expense_split_items_picker.html",
+                entry=entry,
+                category=category,
+                split_items=split_items,
+                doc_type=doc_type,
+                mode=mode,
+                invoice_id=invoice_id_raw,
+                estimate_id=estimate_id_raw,
+                target_url=_target_url(),
+                back_to_picker_url=_back_to_picker_url(),
+            )
+
     @app.get("/api/business-expense-entries")
     @login_required
     @subscription_required
     def api_business_expense_entries():
         uid = _current_user_id_int()
         raw_ids = (request.args.get("ids") or "").strip()
-        ids = []
+        entry_ids = []
+        split_ids = []
+        order_tokens = []
         for tok in raw_ids.split(","):
             tok = tok.strip()
+            if not tok:
+                continue
             if tok.isdigit():
-                ids.append(int(tok))
-        if not ids:
+                entry_ids.append(int(tok))
+                order_tokens.append(f"e-{tok}")
+                continue
+            if tok.startswith("e-") and tok[2:].isdigit():
+                entry_ids.append(int(tok[2:]))
+                order_tokens.append(f"e-{tok[2:]}")
+                continue
+            if tok.startswith("s-") and tok[2:].isdigit():
+                split_ids.append(int(tok[2:]))
+                order_tokens.append(f"s-{tok[2:]}")
+                continue
+            if tok.startswith("split-") and tok[6:].isdigit():
+                split_ids.append(int(tok[6:]))
+                order_tokens.append(f"s-{tok[6:]}")
+                continue
+        if not entry_ids and not split_ids:
             return jsonify({"items": []})
         with db_session() as s:
-            rows = (
-                s.query(BusinessExpenseEntry.id, BusinessExpenseEntry.item_desc, BusinessExpenseEntry.amount, BusinessExpense.label)
-                .join(BusinessExpense, BusinessExpense.id == BusinessExpenseEntry.expense_id)
-                .filter(BusinessExpenseEntry.user_id == uid, BusinessExpense.user_id == uid, BusinessExpenseEntry.id.in_(ids))
-                .all()
-            )
-            order = {v: i for i, v in enumerate(ids)}
-            items = [
-                {
-                    "id": int(r[0]),
-                    "name": (r[1] or "").strip(),
-                    "price": float(r[2] or 0.0),
-                    "category": (r[3] or "").strip(),
-                }
-                for r in rows
-            ]
-            items.sort(key=lambda it: order.get(it["id"], 10**9))
+            items = []
+            if entry_ids:
+                rows = (
+                    s.query(BusinessExpenseEntry.id, BusinessExpenseEntry.item_desc, BusinessExpenseEntry.amount, BusinessExpense.label)
+                    .join(BusinessExpense, BusinessExpense.id == BusinessExpenseEntry.expense_id)
+                    .filter(BusinessExpenseEntry.user_id == uid, BusinessExpense.user_id == uid, BusinessExpenseEntry.id.in_(entry_ids))
+                    .all()
+                )
+                for r in rows:
+                    items.append(
+                        {
+                            "id": int(r[0]),
+                            "token": f"e-{int(r[0])}",
+                            "name": (r[1] or "").strip(),
+                            "price": float(r[2] or 0.0),
+                            "category": (r[3] or "").strip(),
+                        }
+                    )
+            if split_ids:
+                split_rows = (
+                    s.query(
+                        BusinessExpenseEntrySplit.id,
+                        BusinessExpenseEntrySplit.item_desc,
+                        BusinessExpenseEntrySplit.amount,
+                        BusinessExpense.label,
+                        BusinessExpenseEntry.item_desc,
+                    )
+                    .join(BusinessExpenseEntry, BusinessExpenseEntry.id == BusinessExpenseEntrySplit.entry_id)
+                    .join(BusinessExpense, BusinessExpense.id == BusinessExpenseEntry.expense_id)
+                    .filter(
+                        BusinessExpenseEntrySplit.user_id == uid,
+                        BusinessExpenseEntry.user_id == uid,
+                        BusinessExpense.user_id == uid,
+                        BusinessExpenseEntrySplit.id.in_(split_ids),
+                    )
+                    .all()
+                )
+                for r in split_rows:
+                    items.append(
+                        {
+                            "id": int(r[0]),
+                            "token": f"s-{int(r[0])}",
+                            "name": (r[1] or "").strip(),
+                            "price": float(r[2] or 0.0),
+                            "category": f"{(r[3] or '').strip()} / Split",
+                            "parent_item": (r[4] or "").strip(),
+                        }
+                    )
+            order = {v: i for i, v in enumerate(order_tokens)}
+            items.sort(key=lambda it: order.get((it.get("token") or ""), 10**9))
             return jsonify({"items": items})
 
     @app.route("/expense-items/to-business-expenses", methods=["GET", "POST"])

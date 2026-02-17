@@ -34,6 +34,7 @@
               <th>Item</th>
               <th>Category</th>
               <th class="text-end">Amount</th>
+              <th class="text-end">Split</th>
             </tr>
           </thead>
           <tbody>
@@ -43,6 +44,14 @@
                 <td>{{ it.item_desc }}</td>
                 <td class="small-muted">{{ it.category }}</td>
                 <td class="text-end mono">${{ '%.2f'|format(it.amount or 0) }}</td>
+                <td class="text-end">
+                  <a
+                    class="btn btn-sm btn-outline-secondary"
+                    href="{{ url_for('expense_split_items_picker', entry_id=it.id, doc_type=doc_type, mode=mode, invoice_id=invoice_id, estimate_id=estimate_id) }}"
+                  >
+                    Select From Split
+                  </a>
+                </td>
               </tr>
             {% endfor %}
           </tbody>
