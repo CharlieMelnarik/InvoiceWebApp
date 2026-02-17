@@ -2964,6 +2964,48 @@ def create_app():
             flash("Employee invitation sent.", "success")
             return redirect(url_for("settings"))
 
+    @app.post("/employees/<int:employee_id>/delete")
+    @login_required
+    @subscription_required
+    @owner_required
+    def employee_delete(employee_id: int):
+        owner_id = _current_user_id_int()
+        with db_session() as s:
+            employee = (
+                s.query(User)
+                .filter(
+                    User.id == employee_id,
+                    User.account_owner_id == owner_id,
+                    User.is_employee.is_(True),
+                )
+                .first()
+            )
+            if not employee:
+                flash("Employee account not found.", "error")
+                return redirect(url_for("settings"))
+
+            # Preserve company records by assigning historical creator references to owner.
+            s.query(Invoice).filter(
+                Invoice.user_id == owner_id,
+                Invoice.created_by_user_id == employee.id,
+            ).update(
+                {"created_by_user_id": owner_id},
+                synchronize_session=False,
+            )
+            s.query(ScheduleEvent).filter(
+                ScheduleEvent.user_id == owner_id,
+                ScheduleEvent.created_by_user_id == employee.id,
+            ).update(
+                {"created_by_user_id": owner_id},
+                synchronize_session=False,
+            )
+
+            s.delete(employee)
+            s.commit()
+
+        flash("Employee account deleted.", "success")
+        return redirect(url_for("settings"))
+
     @app.route("/employee-invite/<token>", methods=["GET", "POST"])
     def employee_invite_accept(token: str):
         if current_user.is_authenticated:
