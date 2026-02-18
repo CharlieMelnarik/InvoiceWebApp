@@ -267,7 +267,7 @@
       node.style.borderRadius = `${el.radius || 0}px`;
       const rawText = String(el.text || "");
       const renderedText = (showSampleData && showSampleData.checked)
-        ? rawText.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? `{{${key}}}`)
+        ? rawText.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key))
         : rawText;
       node.textContent = renderedText;
       const resize = document.createElement("div");
@@ -346,7 +346,7 @@
       const samplePreview = document.getElementById("samplePreview");
       const renderSamplePreview = () => {
         const raw = String(el.text || "");
-        samplePreview.textContent = raw.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? `{{${key}}}`);
+        samplePreview.textContent = raw.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key));
       };
       renderSamplePreview();
       document.getElementById("propText").addEventListener("input", (e) => { el.text = e.target.value; renderSamplePreview(); renderCanvas(); });
