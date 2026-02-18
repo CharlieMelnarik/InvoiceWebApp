@@ -6946,35 +6946,11 @@ def create_app():
             portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
             portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
 
-            amount_due = max(0.0, float(inv.amount_due() or 0.0))
-            owner_pro_enabled = _has_pro_features(owner)
-            fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
-            fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
-            fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
-            stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
-            stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
-            convenience_fee = _payment_fee_amount(
-                amount_due,
-                fee_percent,
-                fee_fixed,
-                auto_enabled=fee_auto_enabled,
-                stripe_percent=stripe_fee_percent,
-                stripe_fixed=stripe_fee_fixed,
-            )
-            card_total = round(amount_due + convenience_fee, 2)
-            card_fee_line = ""
-            if owner_pro_enabled and convenience_fee > 0:
-                card_fee_line = (
-                    f"Paying by card online adds an additional ${convenience_fee:,.2f} "
-                    f"(card total: ${card_total:,.2f}).\n"
-                )
-
             subject = f"Estimate {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Your estimate {display_no} is ready.\n"
                 f"Estimate amount: ${inv.invoice_total():,.2f}\n"
-                f"{card_fee_line}\n"
                 "This secure link is valid for 90 days from the time this email was sent.\n\n"
                 "Thank you."
             )
@@ -6986,7 +6962,7 @@ def create_app():
                     body_text=body,
                     pdf_path=inv.pdf_path,
                     action_url=portal_url,
-                    action_label=("View & Pay Estimate" if owner_pro_enabled else "View Estimate"),
+                    action_label="View Estimate",
                 )
             except Exception as e:
                 print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={display_no}: {repr(e)}", flush=True)
@@ -7260,7 +7236,13 @@ def create_app():
             pdf_token = make_pdf_share_token(inv.user_id, inv.id)
             pdf_url = url_for("shared_pdf_download", token=pdf_token)
             pay_url = url_for("shared_customer_portal_pay", token=token)
-            can_pay_online = (inv.amount_due() > 0.0) and bool(stripe.api_key) and owner_connect_ready and owner_pro_enabled
+            can_pay_online = (
+                (not bool(inv.is_estimate))
+                and (inv.amount_due() > 0.0)
+                and bool(stripe.api_key)
+                and owner_connect_ready
+                and owner_pro_enabled
+            )
             amount_due = float(inv.amount_due() or 0.0)
             fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
             fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
@@ -7350,6 +7332,8 @@ def create_app():
             owner_pro_enabled = _has_pro_features(owner)
             amount_due = float(inv.amount_due() or 0.0)
             if amount_due <= 0:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+            if bool(inv.is_estimate):
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
             if not owner_pro_enabled or not owner_connect_acct or not owner_connect_ready:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
