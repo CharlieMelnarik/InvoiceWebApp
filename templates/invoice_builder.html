@@ -49,6 +49,38 @@
     background: #1e63c6;
   }
   .tool-btn { width: 100%; margin-bottom: 6px; text-align: left; }
+  .tool-group-title {
+    font-size: 0.8rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    color: #2a4d7f;
+    margin: 8px 0 6px;
+    text-transform: uppercase;
+  }
+  .helper-callout {
+    border: 1px solid #b9cdea;
+    border-radius: 10px;
+    background: #f5f9ff;
+    padding: 8px;
+    font-size: 0.85rem;
+    color: #395a88;
+    margin-bottom: 8px;
+  }
+  .token-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .token-btn {
+    border: 1px solid #b9cdea;
+    border-radius: 999px;
+    background: #f6f9ff;
+    padding: 2px 8px;
+    font-size: 0.77rem;
+    color: #1f4f94;
+    cursor: pointer;
+  }
+  .token-btn:hover { background: #e7f0ff; }
   .template-list { max-height: 280px; overflow: auto; }
   .template-row {
     border: 1px solid #bdd0ea;
@@ -75,23 +107,31 @@
 
   <div class="builder-layout">
     <section class="builder-panel">
-      <h5>Toolbox</h5>
-      <button class="btn btn-outline-primary tool-btn" data-add="text">+ Text Block</button>
-      <button class="btn btn-outline-primary tool-btn" data-add="box">+ Box Shape</button>
-      <button class="btn btn-outline-primary tool-btn" data-add="bill">+ Bill To Block</button>
-      <button class="btn btn-outline-primary tool-btn" data-add="job">+ Job Details Block</button>
-      <button class="btn btn-outline-primary tool-btn" data-add="summary">+ Summary Block</button>
+      <h5>Easy Builder</h5>
+      <div class="helper-callout">
+        1) Pick a quick-start layout<br>
+        2) Add sections you want<br>
+        3) Drag sections where you want them<br>
+        4) Save template
+      </div>
+      <div class="tool-group-title">Quick Start</div>
+      <button class="btn btn-outline-primary tool-btn" data-quick="standard">Use Standard Starter</button>
+      <button class="btn btn-outline-primary tool-btn" data-quick="minimal">Use Minimal Starter</button>
+      <button class="btn btn-outline-primary tool-btn" data-quick="service">Use Service Starter</button>
+      <div class="tool-group-title">Add Sections</div>
+      <button class="btn btn-outline-primary tool-btn" data-add="header">+ Header (Title + Date + Number)</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="bill">+ Bill To Section</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="job">+ Job Details Section</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="labor">+ Labor Section</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="parts">+ Parts Section</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="notes">+ Notes Section</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="summary">+ Summary Section</button>
+      <button class="btn btn-outline-secondary tool-btn" data-add="text">+ Free Text</button>
+      <button class="btn btn-outline-secondary tool-btn" data-add="box">+ Empty Box</button>
       <hr>
       <label class="form-label compact-label">Canvas Background</label>
       <input id="canvasBg" class="form-control form-control-color" type="color" value="#ffffff">
-      <div class="small text-muted mt-2">Tip: click an element to edit text, colors, and size on the right panel.</div>
-      <div class="small text-muted mt-2">
-        Dynamic text tokens: <code>{{'{{invoice_number}}'}}</code>, <code>{{'{{date}}'}}</code>, <code>{{'{{due_date}}'}}</code>,
-        <code>{{'{{customer_name}}'}}</code>, <code>{{'{{customer_email}}'}}</code>, <code>{{'{{customer_phone}}'}}</code>,
-        <code>{{'{{job}}'}}</code>, <code>{{'{{rate}}'}}</code>, <code>{{'{{hours}}'}}</code>, <code>{{'{{parts_total}}'}}</code>,
-        <code>{{'{{labor_total}}'}}</code>, <code>{{'{{tax}}'}}</code>, <code>{{'{{total}}'}}</code>, <code>{{'{{paid}}'}}</code>,
-        <code>{{'{{amount_due}}'}}</code>, <code>{{'{{business_name}}'}}</code>.
-      </div>
+      <div class="small text-muted mt-2">Tip: click a section, then edit text on the right. Drag to move. Pull corner to resize.</div>
     </section>
 
     <section class="builder-canvas-wrap">
@@ -140,6 +180,11 @@
   let state = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
   let selectedId = null;
   let drag = null;
+  const SNAP = 4;
+  const TOKENS = [
+    "doc_label","invoice_number","date","due_date","business_name","customer_name","customer_email","customer_phone",
+    "job","rate","hours","parts_total","labor_total","tax","total","paid","amount_due"
+  ];
 
   function activeTemplate() {
     return templates.find(t => Number(t.id) === Number(currentTemplateId)) || templates[0];
@@ -201,39 +246,86 @@
       propEditor.innerHTML = '<div class="small text-muted">Select an element to edit.</div>';
       return;
     }
-    propEditor.innerHTML = `
-      <div class="mb-2">
-        <label class="form-label compact-label">Text</label>
-        <textarea id="propText" class="form-control" rows="4">${el.text || ""}</textarea>
-      </div>
-      <div class="row g-2">
-        <div class="col-6">
-          <label class="form-label compact-label">Font Size</label>
-          <input id="propFontSize" class="form-control" type="number" min="8" max="80" value="${el.fontSize || 14}">
+    if (el.type === "box") {
+      propEditor.innerHTML = `
+        <div class="mb-2 small text-muted">Box shape selected.</div>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label compact-label">Border Color</label>
+            <input id="propBorder" class="form-control form-control-color" type="color" value="${(el.borderColor && el.borderColor.startsWith("#")) ? el.borderColor : "#111827"}">
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Fill Color</label>
+            <input id="propFill" class="form-control form-control-color" type="color" value="${(el.fillColor && el.fillColor.startsWith("#")) ? el.fillColor : "#ffffff"}">
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Corner Radius</label>
+            <input id="propRadius" class="form-control" type="number" min="0" max="40" value="${el.radius || 0}">
+          </div>
         </div>
-        <div class="col-6">
-          <label class="form-label compact-label">Weight</label>
-          <input id="propWeight" class="form-control" type="number" min="100" max="900" step="100" value="${el.fontWeight || 500}">
+        <div class="d-grid gap-2 mt-2">
+          <button id="duplicateBtn" class="btn btn-outline-primary btn-sm" type="button">Duplicate Element</button>
+          <button id="removeBtn" class="btn btn-outline-danger btn-sm" type="button">Delete Element</button>
         </div>
-        <div class="col-6">
-          <label class="form-label compact-label">Text Color</label>
-          <input id="propColor" class="form-control form-control-color" type="color" value="${el.color || "#111827"}">
+      `;
+      document.getElementById("propBorder").addEventListener("input", (e) => { el.borderColor = e.target.value; renderCanvas(); });
+      document.getElementById("propFill").addEventListener("input", (e) => { el.fillColor = e.target.value; renderCanvas(); });
+      document.getElementById("propRadius").addEventListener("input", (e) => { el.radius = Number(e.target.value || 0); renderCanvas(); });
+    } else {
+      propEditor.innerHTML = `
+        <div class="mb-2">
+          <label class="form-label compact-label">Text</label>
+          <textarea id="propText" class="form-control" rows="4">${el.text || ""}</textarea>
         </div>
-        <div class="col-6">
-          <label class="form-label compact-label">Fill</label>
-          <input id="propFill" class="form-control form-control-color" type="color" value="${(el.fillColor && el.fillColor.startsWith("#")) ? el.fillColor : "#ffffff"}">
+        <div class="mb-2">
+          <div class="small text-muted mb-1">Click to insert data fields:</div>
+          <div class="token-list" id="tokenList"></div>
         </div>
-      </div>
-      <div class="d-grid gap-2 mt-2">
-        <button id="duplicateBtn" class="btn btn-outline-primary btn-sm" type="button">Duplicate Element</button>
-        <button id="removeBtn" class="btn btn-outline-danger btn-sm" type="button">Delete Element</button>
-      </div>
-    `;
-    document.getElementById("propText").addEventListener("input", (e) => { el.text = e.target.value; renderCanvas(); });
-    document.getElementById("propFontSize").addEventListener("input", (e) => { el.fontSize = Number(e.target.value || 14); renderCanvas(); });
-    document.getElementById("propWeight").addEventListener("input", (e) => { el.fontWeight = Number(e.target.value || 500); renderCanvas(); });
-    document.getElementById("propColor").addEventListener("input", (e) => { el.color = e.target.value; renderCanvas(); });
-    document.getElementById("propFill").addEventListener("input", (e) => { el.fillColor = e.target.value; renderCanvas(); });
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label compact-label">Font Size</label>
+            <input id="propFontSize" class="form-control" type="number" min="8" max="80" value="${el.fontSize || 14}">
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Weight</label>
+            <input id="propWeight" class="form-control" type="number" min="100" max="900" step="100" value="${el.fontWeight || 500}">
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Text Color</label>
+            <input id="propColor" class="form-control form-control-color" type="color" value="${el.color || "#111827"}">
+          </div>
+        </div>
+        <div class="d-grid gap-2 mt-2">
+          <button id="duplicateBtn" class="btn btn-outline-primary btn-sm" type="button">Duplicate Element</button>
+          <button id="removeBtn" class="btn btn-outline-danger btn-sm" type="button">Delete Element</button>
+        </div>
+      `;
+      const textArea = document.getElementById("propText");
+      document.getElementById("propText").addEventListener("input", (e) => { el.text = e.target.value; renderCanvas(); });
+      document.getElementById("propFontSize").addEventListener("input", (e) => { el.fontSize = Number(e.target.value || 14); renderCanvas(); });
+      document.getElementById("propWeight").addEventListener("input", (e) => { el.fontWeight = Number(e.target.value || 500); renderCanvas(); });
+      document.getElementById("propColor").addEventListener("input", (e) => { el.color = e.target.value; renderCanvas(); });
+      const tokenList = document.getElementById("tokenList");
+      TOKENS.forEach((t) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "token-btn";
+        b.textContent = `{{${t}}}`;
+        b.addEventListener("click", () => {
+          const token = `{{${t}}}`;
+          const start = textArea.selectionStart || 0;
+          const end = textArea.selectionEnd || 0;
+          const before = textArea.value.slice(0, start);
+          const after = textArea.value.slice(end);
+          textArea.value = `${before}${token}${after}`;
+          el.text = textArea.value;
+          textArea.focus();
+          textArea.selectionStart = textArea.selectionEnd = start + token.length;
+          renderCanvas();
+        });
+        tokenList.appendChild(b);
+      });
+    }
     document.getElementById("duplicateBtn").addEventListener("click", () => {
       const copy = JSON.parse(JSON.stringify(el));
       copy.id = `el_${Date.now()}`;
@@ -265,17 +357,90 @@
   }
 
   function addPreset(type) {
-    const id = `el_${Date.now()}`;
-    const base = {
-      id, type: "text", x: 80, y: 80, w: 260, h: 50, text: "Text", fontSize: 16, fontWeight: 600, color: "#111827", fillColor: "transparent", borderColor: "transparent", radius: 0
+    const createText = (opts = {}) => ({
+      id: `el_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+      type: "text",
+      x: opts.x ?? 80,
+      y: opts.y ?? 80,
+      w: opts.w ?? 260,
+      h: opts.h ?? 50,
+      text: opts.text ?? "Text",
+      fontSize: opts.fontSize ?? 16,
+      fontWeight: opts.fontWeight ?? 600,
+      color: opts.color ?? "#111827",
+      fillColor: "transparent",
+      borderColor: "transparent",
+      radius: 0,
+    });
+    const createBox = (opts = {}) => ({
+      id: `el_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+      type: "box",
+      x: opts.x ?? 80,
+      y: opts.y ?? 80,
+      w: opts.w ?? 260,
+      h: opts.h ?? 140,
+      text: "",
+      borderColor: opts.borderColor ?? "#111827",
+      fillColor: opts.fillColor ?? "#ffffff",
+      radius: opts.radius ?? 8,
+    });
+    const addSection = (x, y, w, h, text, textSize = 14) => {
+      const box = createBox({ x, y, w, h, borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
+      const t = createText({ x: x + 12, y: y + 12, w: w - 24, h: h - 24, text, fontSize: textSize, fontWeight: 600 });
+      state.elements.push(box, t);
+      selectedId = t.id;
     };
-    if (type === "box") Object.assign(base, { type: "box", text: "", w: 260, h: 140, borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
-    if (type === "bill") Object.assign(base, { text: "BILL TO\\nCustomer Name\\nAddress\\nEmail\\nPhone", w: 300, h: 160, x: 60, y: 120 });
-    if (type === "job") Object.assign(base, { text: "JOB DETAILS\\nJob\\nRate\\nHours", w: 300, h: 160, x: 420, y: 120 });
-    if (type === "summary") Object.assign(base, { text: "SUMMARY\\nLabor\\nParts\\nTax\\nTotal", w: 260, h: 180, x: 500, y: 780 });
-    state.elements.push(base);
-    selectedId = id;
+    if (type === "text") {
+      const t = createText();
+      state.elements.push(t);
+      selectedId = t.id;
+    } else if (type === "box") {
+      const b = createBox();
+      state.elements.push(b);
+      selectedId = b.id;
+    } else if (type === "header") {
+      const t1 = createText({ x: 48, y: 36, w: 280, h: 44, text: "{{doc_label}}", fontSize: 40, fontWeight: 700 });
+      const t2 = createText({ x: 560, y: 44, w: 240, h: 62, text: "Invoice #: {{invoice_number}}\\nDate: {{date}}\\nDue: {{due_date}}", fontSize: 13, fontWeight: 500 });
+      state.elements.push(t1, t2);
+      selectedId = t1.id;
+    } else if (type === "bill") {
+      addSection(48, 118, 350, 150, "BILL TO\\n{{customer_name}}\\nEmail: {{customer_email}}\\nPhone: {{customer_phone}}", 14);
+    } else if (type === "job") {
+      addSection(418, 118, 350, 150, "JOB DETAILS\\nJob: {{job}}\\nRate/Hour: {{rate}}\\nTotal Hours: {{hours}}", 14);
+    } else if (type === "labor") {
+      addSection(48, 300, 720, 120, "LABOR\\n{{labor_total}}", 15);
+    } else if (type === "parts") {
+      addSection(48, 430, 720, 120, "PARTS\\n{{parts_total}}", 15);
+    } else if (type === "notes") {
+      addSection(48, 780, 430, 160, "NOTES\\nAdd details for your customer here.", 14);
+    } else if (type === "summary") {
+      addSection(500, 780, 268, 180, "SUMMARY\\nLabor: {{labor_total}}\\nParts: {{parts_total}}\\nTax: {{tax}}\\nTotal: {{total}}\\nAmount Due: {{amount_due}}", 14);
+    }
     renderCanvas();
+  }
+
+  function quickStart(kind) {
+    const base = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
+    state = base;
+    if (kind === "minimal") {
+      addPreset("header");
+      addPreset("bill");
+      addPreset("summary");
+    } else if (kind === "service") {
+      addPreset("header");
+      addPreset("bill");
+      addPreset("job");
+      addPreset("labor");
+      addPreset("parts");
+      addPreset("notes");
+      addPreset("summary");
+    } else {
+      addPreset("header");
+      addPreset("bill");
+      addPreset("job");
+      addPreset("parts");
+      addPreset("summary");
+    }
   }
 
   async function saveTemplate({ asNew = false, activate = false } = {}) {
@@ -358,11 +523,11 @@
     const dx = e.clientX - drag.startX;
     const dy = e.clientY - drag.startY;
     if (drag.isResize) {
-      el.w = Math.max(30, drag.originW + dx);
-      el.h = Math.max(24, drag.originH + dy);
+      el.w = Math.max(30, Math.round((drag.originW + dx) / SNAP) * SNAP);
+      el.h = Math.max(24, Math.round((drag.originH + dy) / SNAP) * SNAP);
     } else {
-      el.x = Math.max(0, Math.min((state.canvas.width || 816) - 20, drag.originX + dx));
-      el.y = Math.max(0, Math.min((state.canvas.height || 1056) - 20, drag.originY + dy));
+      el.x = Math.max(0, Math.min((state.canvas.width || 816) - 20, Math.round((drag.originX + dx) / SNAP) * SNAP));
+      el.y = Math.max(0, Math.min((state.canvas.height || 1056) - 20, Math.round((drag.originY + dy) / SNAP) * SNAP));
     }
     renderCanvas();
   });
@@ -375,6 +540,9 @@
 
   document.querySelectorAll("[data-add]").forEach(btn => {
     btn.addEventListener("click", () => addPreset(btn.dataset.add));
+  });
+  document.querySelectorAll("[data-quick]").forEach(btn => {
+    btn.addEventListener("click", () => quickStart(btn.dataset.quick));
   });
 
   templateList.addEventListener("click", (e) => {
