@@ -206,6 +206,7 @@
     <a class="settings-jump-link" href="#section-preview">PDF Preview</a>
     {% if pro_features_enabled %}
       <a class="settings-jump-link" href="#section-payments">Payments</a>
+      <a class="settings-jump-link" href="#section-reminders">Reminders & Late Fees</a>
     {% endif %}
     <a class="settings-jump-link" href="#section-contact">Business Info</a>
     <a class="settings-jump-link" href="#section-scheduler">Scheduler</a>
@@ -384,6 +385,64 @@
             </div>
           </div>
         </section>
+
+        <section class="settings-card span-2" id="section-reminders">
+          <div class="settings-card-head">
+            <h5>Payment Reminders & Late Fee Rules (Pro)</h5>
+          </div>
+          <div class="settings-help">Automated reminder timing and late-fee accrual for unpaid invoices.</div>
+
+          <div class="row g-3">
+            <div class="col-md-4 d-flex align-items-end">
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="paymentRemindersEnabled" name="payment_reminders_enabled" value="1" {% if u.payment_reminders_enabled %}checked{% endif %}>
+                <label class="form-check-label" for="paymentRemindersEnabled">Enable payment reminders</label>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label compact-label">Default Due Date (days)</label>
+              <input type="text" class="form-control" name="payment_due_days" inputmode="numeric" value="{{ u.payment_due_days if u.payment_due_days is not none else '30' }}" placeholder="30">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label compact-label">Reminder Days Before Due</label>
+              <input type="text" class="form-control" name="payment_reminder_days_before" inputmode="numeric" value="{{ u.payment_reminder_days_before if u.payment_reminder_days_before is not none else '3' }}" placeholder="3">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label compact-label">Reminder Days After Due</label>
+              <input type="text" class="form-control" name="payment_reminder_days_after" inputmode="numeric" value="{{ u.payment_reminder_days_after if u.payment_reminder_days_after is not none else '3' }}" placeholder="3">
+            </div>
+          </div>
+
+          <hr class="my-3">
+
+          <div class="row g-3">
+            <div class="col-md-4 d-flex align-items-end">
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="lateFeeEnabled" name="late_fee_enabled" value="1" {% if u.late_fee_enabled %}checked{% endif %}>
+                <label class="form-check-label" for="lateFeeEnabled">Enable late fee rule</label>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label compact-label">Late Fee Type</label>
+              <select class="form-select" id="lateFeeMode" name="late_fee_mode">
+                <option value="fixed" {% if (u.late_fee_mode or 'fixed') == 'fixed' %}selected{% endif %}>Fixed Amount</option>
+                <option value="percent" {% if (u.late_fee_mode or 'fixed') == 'percent' %}selected{% endif %}>Percent of Invoice</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label compact-label">Accrue Every (days)</label>
+              <input type="text" class="form-control" name="late_fee_frequency_days" inputmode="numeric" value="{{ u.late_fee_frequency_days if u.late_fee_frequency_days is not none else '30' }}" placeholder="30">
+            </div>
+            <div class="col-md-4" id="lateFeeFixedWrap">
+              <label class="form-label compact-label">Late Fee Fixed ($)</label>
+              <input type="text" class="form-control" name="late_fee_fixed" inputmode="decimal" value="{{ u.late_fee_fixed if u.late_fee_fixed is not none else '0' }}" placeholder="25.00">
+            </div>
+            <div class="col-md-4" id="lateFeePercentWrap">
+              <label class="form-label compact-label">Late Fee Percent (%)</label>
+              <input type="text" class="form-control" name="late_fee_percent" inputmode="decimal" value="{{ u.late_fee_percent if u.late_fee_percent is not none else '0' }}" placeholder="5.00">
+            </div>
+          </div>
+        </section>
       {% endif %}
 
       <section class="settings-card" id="section-contact">
@@ -547,6 +606,9 @@
   const customCard = document.getElementById("customProfessionCard");
   const paymentFeeAutoToggle = document.getElementById("paymentFeeAutoEnabled");
   const stripeFeeWrap = document.getElementById("stripeFeeSettingsWrap");
+  const lateFeeModeSelect = document.getElementById("lateFeeMode");
+  const lateFeeFixedWrap = document.getElementById("lateFeeFixedWrap");
+  const lateFeePercentWrap = document.getElementById("lateFeePercentWrap");
   function toggleCustomCard() {
     if (!templateSelect || !customCard) return;
     customCard.style.display = (templateSelect.value === "custom") ? "" : "none";
@@ -555,6 +617,12 @@
     if (!paymentFeeAutoToggle || !stripeFeeWrap) return;
     stripeFeeWrap.style.display = paymentFeeAutoToggle.checked ? "" : "none";
   }
+  function toggleLateFeeModeFields() {
+    if (!lateFeeModeSelect || !lateFeeFixedWrap || !lateFeePercentWrap) return;
+    const mode = (lateFeeModeSelect.value || "fixed").toLowerCase();
+    lateFeeFixedWrap.style.display = (mode === "fixed") ? "" : "none";
+    lateFeePercentWrap.style.display = (mode === "percent") ? "" : "none";
+  }
   if (templateSelect) {
     templateSelect.addEventListener("change", toggleCustomCard);
     toggleCustomCard();
@@ -562,6 +630,10 @@
   if (paymentFeeAutoToggle) {
     paymentFeeAutoToggle.addEventListener("change", toggleStripeFeeFields);
     toggleStripeFeeFields();
+  }
+  if (lateFeeModeSelect) {
+    lateFeeModeSelect.addEventListener("change", toggleLateFeeModeFields);
+    toggleLateFeeModeFields();
   }
 
   function getInput(name) {

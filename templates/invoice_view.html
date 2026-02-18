@@ -274,6 +274,29 @@
             <div class="value mono">${{ "%.2f"|format(tax_amount or 0) }}</div>
           </div>
         </div>
+        {% if pro_features_enabled %}
+          <div class="doc-subsection">
+            <h3 class="doc-subtitle">Late Payment Fees</h3>
+            <div class="doc-summary-grid">
+              <div class="doc-stat">
+                <div class="label">Due Date</div>
+                <div class="value">{{ due_date_display }}</div>
+              </div>
+              <div class="doc-stat">
+                <div class="label">Late Fees Accrued</div>
+                <div class="value mono">${{ "%.2f"|format(late_fee_amount or 0) }}</div>
+              </div>
+              <div class="doc-stat">
+                <div class="label">Invoice Amount Due</div>
+                <div class="value mono">${{ "%.2f"|format(inv.amount_due() or 0) }}</div>
+              </div>
+              <div class="doc-stat">
+                <div class="label">Due Including Late Fees</div>
+                <div class="value mono">${{ "%.2f"|format(due_with_late_fee or 0) }}</div>
+              </div>
+            </div>
+          </div>
+        {% endif %}
       </div>
     </div>
 
@@ -338,6 +361,13 @@
           <form method="post" action="{{ url_for('invoice_send', invoice_id=inv.id) }}">
             <button class="btn btn-outline-success" type="submit">Email PDF</button>
           </form>
+
+          {% if pro_features_enabled %}
+            <form method="post" action="{{ url_for('invoice_send_reminder', invoice_id=inv.id) }}"
+                  onsubmit="return confirm('Send a payment reminder email to this customer now?');">
+              <button class="btn btn-outline-warning" type="submit">Send Payment Reminder</button>
+            </form>
+          {% endif %}
 
           <form method="post" action="{{ url_for('invoice_text', invoice_id=inv.id) }}" class="d-none">
             <button class="btn btn-outline-success" type="submit">Text PDF</button>

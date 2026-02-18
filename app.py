@@ -111,6 +111,49 @@ def _payment_fee_amount(
     return round(max(0.0, fee), 2)
 
 
+def _invoice_due_date_utc(inv: Invoice, owner: User | None) -> datetime:
+    due_days = int(getattr(owner, "payment_due_days", 30) or 30)
+    due_days = max(0, min(3650, due_days))
+    created = getattr(inv, "created_at", None) or datetime.utcnow()
+    return created + timedelta(days=due_days)
+
+
+def _invoice_late_fee_amount(inv: Invoice, owner: User | None, *, as_of: datetime | None = None) -> float:
+    if not owner or not bool(getattr(owner, "late_fee_enabled", False)):
+        return 0.0
+    if bool(getattr(inv, "is_estimate", False)):
+        return 0.0
+    if float(inv.amount_due() or 0.0) <= 0:
+        return 0.0
+
+    now_utc = as_of or datetime.utcnow()
+    due_dt = _invoice_due_date_utc(inv, owner)
+    if now_utc <= due_dt:
+        return 0.0
+
+    frequency_days = int(getattr(owner, "late_fee_frequency_days", 30) or 30)
+    frequency_days = max(1, min(365, frequency_days))
+    days_overdue = (now_utc - due_dt).days
+    cycles = max(0, days_overdue // frequency_days)
+    if cycles <= 0:
+        return 0.0
+
+    mode = (getattr(owner, "late_fee_mode", "fixed") or "fixed").strip().lower()
+    base_total = float(inv.invoice_total() or 0.0)
+    fee_per_cycle = 0.0
+    if mode == "percent":
+        pct = max(0.0, float(getattr(owner, "late_fee_percent", 0.0) or 0.0))
+        fee_per_cycle = base_total * (pct / 100.0)
+    else:
+        fee_per_cycle = max(0.0, float(getattr(owner, "late_fee_fixed", 0.0) or 0.0))
+
+    return round(max(0.0, fee_per_cycle * cycles), 2)
+
+
+def _invoice_due_with_late_fee(inv: Invoice, owner: User | None, *, as_of: datetime | None = None) -> float:
+    return round(max(0.0, float(inv.amount_due() or 0.0) + _invoice_late_fee_amount(inv, owner, as_of=as_of)), 2)
+
+
 def _parse_repeating_fields(names, prices):
     out = []
     n = max(len(names), len(prices))
@@ -1070,7 +1113,7 @@ def _send_invoice_pdf_email(
     to_email: str,
     subject: str,
     body_text: str,
-    pdf_path: str,
+    pdf_path: str | None = None,
     action_url: str | None = None,
     action_label: str | None = None,
 ) -> None:
@@ -1112,11 +1155,13 @@ def _send_invoice_pdf_email(
         )
         msg.add_alternative(html_body, subtype="html")
 
-    with open(pdf_path, "rb") as f:
-        data = f.read()
+    pdf_path_clean = (pdf_path or "").strip()
+    if pdf_path_clean and os.path.exists(pdf_path_clean):
+        with open(pdf_path_clean, "rb") as f:
+            data = f.read()
 
-    filename = os.path.basename(pdf_path) or "invoice.pdf"
-    msg.add_attachment(data, maintype="application", subtype="pdf", filename=filename)
+        filename = os.path.basename(pdf_path_clean) or "invoice.pdf"
+        msg.add_attachment(data, maintype="application", subtype="pdf", filename=filename)
 
     with smtplib.SMTP(host, port) as smtp:
         smtp.starttls()
@@ -1182,6 +1227,139 @@ def _send_schedule_summary_email(to_email: str, subject: str, body_text: str) ->
         smtp.login(user, password)
         smtp.send_message(msg)
     print(f"[SCHEDULE SUMMARY] Sent email to {to_email}", flush=True)
+
+
+def _send_payment_reminder_for_invoice(
+    session,
+    *,
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    reminder_kind: str = "manual",
+    now_utc: datetime | None = None,
+) -> tuple[bool, str]:
+    if bool(getattr(inv, "is_estimate", False)):
+        return False, "Estimates do not send payment reminders."
+    if float(inv.amount_due() or 0.0) <= 0.0:
+        return False, "Invoice is already paid."
+
+    to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
+    if not to_email or "@" not in to_email:
+        return False, "Customer email is missing or invalid."
+
+    now_val = now_utc or datetime.utcnow()
+    due_dt = _invoice_due_date_utc(inv, owner)
+    days_until_due = (due_dt.date() - now_val.date()).days
+    late_fee = _invoice_late_fee_amount(inv, owner, as_of=now_val)
+    due_with_late_fee = _invoice_due_with_late_fee(inv, owner, as_of=now_val)
+    display_no = inv.display_number or inv.invoice_number
+
+    portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
+    portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+    owner_pro_enabled = _has_pro_features(owner)
+
+    if reminder_kind == "before_due":
+        lead = int(getattr(owner, "payment_reminder_days_before", 0) or 0)
+        timing_line = f"This is a friendly reminder that payment is due in {max(0, days_until_due)} day(s)."
+        subject = f"Friendly Reminder: Invoice {display_no} due in {max(0, lead)} day(s)"
+    elif reminder_kind == "after_due":
+        timing_line = f"This invoice is past due by {max(0, -days_until_due)} day(s)."
+        subject = f"Past Due Reminder: Invoice {display_no}"
+    else:
+        timing_line = "This is a friendly reminder to complete payment for your invoice."
+        subject = f"Payment Reminder: Invoice {display_no}"
+
+    late_fee_line = ""
+    if late_fee > 0:
+        late_fee_line = (
+            f"Late fees accrued so far: ${late_fee:,.2f}\n"
+            f"Current amount due including late fees: ${due_with_late_fee:,.2f}\n"
+        )
+
+    body = (
+        f"Hello {(customer.name if customer else 'there') or 'there'},\n\n"
+        f"{timing_line}\n"
+        f"Invoice {display_no}\n"
+        f"Invoice amount due: ${float(inv.amount_due() or 0.0):,.2f}\n"
+        f"{late_fee_line}"
+        f"Due date: {due_dt.strftime('%B %d, %Y')}\n\n"
+        "Thank you."
+    )
+
+    _send_invoice_pdf_email(
+        to_email=to_email,
+        subject=subject,
+        body_text=body,
+        pdf_path=(inv.pdf_path or ""),
+        action_url=portal_url,
+        action_label=("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
+    )
+    inv.payment_reminder_last_sent_at = now_val
+    if reminder_kind == "before_due":
+        inv.payment_reminder_before_sent_at = now_val
+    elif reminder_kind == "after_due":
+        inv.payment_reminder_after_sent_at = now_val
+    session.add(inv)
+    return True, "sent"
+
+
+def _run_automatic_payment_reminders(session, owner: User | None) -> None:
+    if not owner:
+        return
+    if not _has_pro_features(owner):
+        return
+    if not bool(getattr(owner, "payment_reminders_enabled", False)):
+        return
+
+    now_utc = datetime.utcnow()
+    last_run = getattr(owner, "payment_reminder_last_run_at", None)
+    if last_run and (now_utc - last_run) < timedelta(minutes=30):
+        return
+
+    before_days = int(getattr(owner, "payment_reminder_days_before", 0) or 0)
+    after_days = int(getattr(owner, "payment_reminder_days_after", 0) or 0)
+
+    invoices = (
+        session.query(Invoice)
+        .options(selectinload(Invoice.customer))
+        .filter(Invoice.user_id == owner.id, Invoice.is_estimate.is_(False))
+        .all()
+    )
+
+    for inv in invoices:
+        if float(inv.amount_due() or 0.0) <= 0.0:
+            continue
+
+        due_dt = _invoice_due_date_utc(inv, owner)
+        before_target = due_dt - timedelta(days=max(0, before_days))
+        after_target = due_dt + timedelta(days=max(0, after_days))
+
+        try:
+            if before_days >= 0 and now_utc >= before_target and now_utc < due_dt:
+                if getattr(inv, "payment_reminder_before_sent_at", None) is None:
+                    _send_payment_reminder_for_invoice(
+                        session,
+                        inv=inv,
+                        owner=owner,
+                        customer=inv.customer,
+                        reminder_kind="before_due",
+                        now_utc=now_utc,
+                    )
+            if now_utc >= after_target:
+                if getattr(inv, "payment_reminder_after_sent_at", None) is None:
+                    _send_payment_reminder_for_invoice(
+                        session,
+                        inv=inv,
+                        owner=owner,
+                        customer=inv.customer,
+                        reminder_kind="after_due",
+                        now_utc=now_utc,
+                    )
+        except Exception as exc:
+            print(f"[PAYMENT REMINDER] auto send failed invoice={inv.id}: {repr(exc)}", flush=True)
+
+    owner.payment_reminder_last_run_at = now_utc
+    session.add(owner)
 
 
 # -----------------------------
@@ -1337,6 +1515,52 @@ def _migrate_user_schedule_summary(engine):
         pass
 
 
+def _migrate_user_payment_reminder_fields(engine):
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "payment_reminders_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminders_enabled BOOLEAN")
+    if not _column_exists(engine, "users", "payment_due_days"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_due_days INTEGER")
+    if not _column_exists(engine, "users", "payment_reminder_days_before"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_days_before INTEGER")
+    if not _column_exists(engine, "users", "payment_reminder_days_after"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_days_after INTEGER")
+    if not _column_exists(engine, "users", "payment_reminder_last_run_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_last_run_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "late_fee_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN late_fee_enabled BOOLEAN")
+    if not _column_exists(engine, "users", "late_fee_mode"):
+        stmts.append("ALTER TABLE users ADD COLUMN late_fee_mode VARCHAR(20)")
+    if not _column_exists(engine, "users", "late_fee_fixed"):
+        stmts.append("ALTER TABLE users ADD COLUMN late_fee_fixed FLOAT")
+    if not _column_exists(engine, "users", "late_fee_percent"):
+        stmts.append("ALTER TABLE users ADD COLUMN late_fee_percent FLOAT")
+    if not _column_exists(engine, "users", "late_fee_frequency_days"):
+        stmts.append("ALTER TABLE users ADD COLUMN late_fee_frequency_days INTEGER")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET payment_reminders_enabled = FALSE WHERE payment_reminders_enabled IS NULL"))
+            conn.execute(text("UPDATE users SET payment_due_days = 30 WHERE payment_due_days IS NULL"))
+            conn.execute(text("UPDATE users SET payment_reminder_days_before = 3 WHERE payment_reminder_days_before IS NULL"))
+            conn.execute(text("UPDATE users SET payment_reminder_days_after = 3 WHERE payment_reminder_days_after IS NULL"))
+            conn.execute(text("UPDATE users SET late_fee_enabled = FALSE WHERE late_fee_enabled IS NULL"))
+            conn.execute(text("UPDATE users SET late_fee_mode = 'fixed' WHERE late_fee_mode IS NULL"))
+            conn.execute(text("UPDATE users SET late_fee_fixed = 0.0 WHERE late_fee_fixed IS NULL"))
+            conn.execute(text("UPDATE users SET late_fee_percent = 0.0 WHERE late_fee_percent IS NULL"))
+            conn.execute(text("UPDATE users SET late_fee_frequency_days = 30 WHERE late_fee_frequency_days IS NULL"))
+    except Exception:
+        pass
+
+
 def _migrate_invoice_contact_fields(engine):
     if not _table_exists(engine, "invoices"):
         return
@@ -1346,6 +1570,24 @@ def _migrate_invoice_contact_fields(engine):
         stmts.append("ALTER TABLE invoices ADD COLUMN customer_email VARCHAR(255)")
     if not _column_exists(engine, "invoices", "customer_phone"):
         stmts.append("ALTER TABLE invoices ADD COLUMN customer_phone VARCHAR(50)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+
+def _migrate_invoice_payment_reminder_fields(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "invoices", "payment_reminder_before_sent_at"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN payment_reminder_before_sent_at TIMESTAMP NULL")
+    if not _column_exists(engine, "invoices", "payment_reminder_after_sent_at"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN payment_reminder_after_sent_at TIMESTAMP NULL")
+    if not _column_exists(engine, "invoices", "payment_reminder_last_sent_at"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN payment_reminder_last_sent_at TIMESTAMP NULL")
 
     if stmts:
         with engine.begin() as conn:
@@ -2036,7 +2278,9 @@ def create_app():
     _migrate_user_profile_fields(engine)
     _migrate_user_email(engine)
     _migrate_user_schedule_summary(engine)
+    _migrate_user_payment_reminder_fields(engine)
     _migrate_invoice_contact_fields(engine)
+    _migrate_invoice_payment_reminder_fields(engine)
     _migrate_invoice_useful_info(engine)
     _migrate_invoice_converted_flag(engine)
     _migrate_estimate_converted_flag(engine)
@@ -2254,6 +2498,12 @@ def create_app():
                     abort(403)
                 if not _is_subscribed(u):
                     return redirect(url_for("billing"))
+                try:
+                    _run_automatic_payment_reminders(s, u)
+                    s.commit()
+                except Exception as exc:
+                    print(f"[PAYMENT REMINDER] automatic run failed: {repr(exc)}", flush=True)
+                    s.rollback()
             return view_fn(*args, **kwargs)
         return wrapper
 
@@ -2834,6 +3084,15 @@ def create_app():
                     payment_fee_auto_enabled = (request.form.get("payment_fee_auto_enabled") == "1")
                     stripe_fee_percent = _to_float(request.form.get("stripe_fee_percent"), 2.9)
                     stripe_fee_fixed = _to_float(request.form.get("stripe_fee_fixed"), 0.30)
+                    payment_reminders_enabled = (request.form.get("payment_reminders_enabled") == "1")
+                    payment_due_days = int(_to_float(request.form.get("payment_due_days"), 30))
+                    payment_reminder_days_before = int(_to_float(request.form.get("payment_reminder_days_before"), 3))
+                    payment_reminder_days_after = int(_to_float(request.form.get("payment_reminder_days_after"), 3))
+                    late_fee_enabled = (request.form.get("late_fee_enabled") == "1")
+                    late_fee_mode = (request.form.get("late_fee_mode") or "fixed").strip().lower()
+                    late_fee_fixed = _to_float(request.form.get("late_fee_fixed"), 0.0)
+                    late_fee_percent = _to_float(request.form.get("late_fee_percent"), 0.0)
+                    late_fee_frequency_days = int(_to_float(request.form.get("late_fee_frequency_days"), 30))
                     if payment_fee_percent < 0 or payment_fee_percent > 25:
                         flash("Convenience fee percent must be between 0 and 25.", "error")
                         return _render_settings()
@@ -2846,11 +3105,41 @@ def create_app():
                     if stripe_fee_fixed < 0 or stripe_fee_fixed > 100:
                         flash("Stripe fixed fee must be between 0 and 100.", "error")
                         return _render_settings()
+                    if payment_due_days < 0 or payment_due_days > 3650:
+                        flash("Due date period must be between 0 and 3650 days.", "error")
+                        return _render_settings()
+                    if payment_reminder_days_before < 0 or payment_reminder_days_before > 3650:
+                        flash("Reminder days before due must be between 0 and 3650.", "error")
+                        return _render_settings()
+                    if payment_reminder_days_after < 0 or payment_reminder_days_after > 3650:
+                        flash("Reminder days after due must be between 0 and 3650.", "error")
+                        return _render_settings()
+                    if late_fee_mode not in ("fixed", "percent"):
+                        flash("Late fee mode must be fixed or percent.", "error")
+                        return _render_settings()
+                    if late_fee_fixed < 0 or late_fee_fixed > 10000:
+                        flash("Late fee fixed amount must be between 0 and 10,000.", "error")
+                        return _render_settings()
+                    if late_fee_percent < 0 or late_fee_percent > 100:
+                        flash("Late fee percent must be between 0 and 100.", "error")
+                        return _render_settings()
+                    if late_fee_frequency_days < 1 or late_fee_frequency_days > 365:
+                        flash("Late fee frequency must be between 1 and 365 days.", "error")
+                        return _render_settings()
                     u.payment_fee_auto_enabled = payment_fee_auto_enabled
                     u.payment_fee_percent = payment_fee_percent
                     u.payment_fee_fixed = payment_fee_fixed
                     u.stripe_fee_percent = stripe_fee_percent
                     u.stripe_fee_fixed = stripe_fee_fixed
+                    u.payment_reminders_enabled = payment_reminders_enabled
+                    u.payment_due_days = payment_due_days
+                    u.payment_reminder_days_before = payment_reminder_days_before
+                    u.payment_reminder_days_after = payment_reminder_days_after
+                    u.late_fee_enabled = late_fee_enabled
+                    u.late_fee_mode = late_fee_mode
+                    u.late_fee_fixed = late_fee_fixed
+                    u.late_fee_percent = late_fee_percent
+                    u.late_fee_frequency_days = late_fee_frequency_days
 
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
@@ -5531,6 +5820,9 @@ def create_app():
             owner_fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
             owner_stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
             owner_stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
+            due_dt = _invoice_due_date_utc(inv, owner)
+            late_fee_amount = _invoice_late_fee_amount(inv, owner)
+            due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
         return render_template(
             "invoice_view.html",
             inv=inv,
@@ -5543,6 +5835,9 @@ def create_app():
             owner_fee_fixed=owner_fee_fixed,
             owner_stripe_fee_percent=owner_stripe_fee_percent,
             owner_stripe_fee_fixed=owner_stripe_fee_fixed,
+            due_date_display=due_dt.strftime("%B %d, %Y"),
+            late_fee_amount=late_fee_amount,
+            due_with_late_fee=due_with_late_fee,
         )
 
     # -----------------------------
@@ -7176,6 +7471,41 @@ def create_app():
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
         flash("Invoice email sent.", "success")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+    @app.route("/invoices/<int:invoice_id>/reminder", methods=["POST"])
+    @login_required
+    @subscription_required
+    def invoice_send_reminder(invoice_id: int):
+        with db_session() as s:
+            inv = _invoice_owned_or_404(s, invoice_id)
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+
+            if not _has_pro_features(owner):
+                flash("Payment reminders are available on the Pro plan.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+            try:
+                sent, msg = _send_payment_reminder_for_invoice(
+                    s,
+                    inv=inv,
+                    owner=owner,
+                    customer=customer,
+                    reminder_kind="manual",
+                    now_utc=datetime.utcnow(),
+                )
+                if not sent:
+                    flash(msg, "error")
+                    return redirect(url_for("invoice_view", invoice_id=invoice_id))
+                s.commit()
+            except Exception as exc:
+                print(f"[PAYMENT REMINDER] manual send failed invoice={invoice_id}: {repr(exc)}", flush=True)
+                s.rollback()
+                flash("Could not send payment reminder email. Check SMTP settings/logs.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+        flash("Payment reminder email sent.", "success")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
     @app.route("/invoices/<int:invoice_id>/text", methods=["POST"])

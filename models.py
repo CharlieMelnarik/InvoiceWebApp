@@ -129,6 +129,18 @@ class User(Base):
         default=0,
     )
 
+    payment_reminders_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    payment_due_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    payment_reminder_days_before: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    payment_reminder_days_after: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    payment_reminder_last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    late_fee_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    late_fee_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="fixed")  # fixed|percent
+    late_fee_fixed: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    late_fee_percent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    late_fee_frequency_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -375,6 +387,9 @@ class Invoice(Base):
 
     pdf_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     pdf_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    payment_reminder_before_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    payment_reminder_after_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    payment_reminder_last_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
