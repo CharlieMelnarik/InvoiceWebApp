@@ -126,6 +126,36 @@
         ></iframe>
       </div>
     </div>
+
+    {% if pro_features_enabled %}
+      <div class="card shadow-sm mt-3">
+        <div class="card-body">
+          <div class="fw-semibold mb-2">Example Payout Preview</div>
+          <div class="small-muted mb-3">
+            Based on this invoice{% if inv.amount_due() > 0 %} amount due{% else %} total{% endif %}.
+          </div>
+          <div class="row g-3">
+            <div class="col-12 col-md-6">
+              <label class="form-label">Invoice Amount ($)</label>
+              <input
+                type="text"
+                class="form-control"
+                id="invoicePayoutBaseAmount"
+                inputmode="decimal"
+                value="{{ '%.2f'|format((inv.amount_due() if inv.amount_due() > 0 else inv.invoice_total()) or 0) }}"
+              >
+            </div>
+            <div class="col-12">
+              <div class="small-muted mb-1" id="invoicePayoutModeLabel"></div>
+              <div class="small-muted mb-1" id="invoicePayoutConvenienceFee"></div>
+              <div class="small-muted mb-1" id="invoicePayoutCustomerTotal"></div>
+              <div class="small-muted mb-1" id="invoicePayoutStripeFee"></div>
+              <div class="small-muted fw-semibold" id="invoicePayoutNet"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
   </div>
 
   <div class="col-12 col-lg-8">
@@ -318,6 +348,61 @@
 
 {% block scripts %}
 <script>
+  (function () {
+    const baseInput = document.getElementById("invoicePayoutBaseAmount");
+    if (!baseInput) return;
+
+    const modeLabel = document.getElementById("invoicePayoutModeLabel");
+    const feeLabel = document.getElementById("invoicePayoutConvenienceFee");
+    const totalLabel = document.getElementById("invoicePayoutCustomerTotal");
+    const stripeFeeLabel = document.getElementById("invoicePayoutStripeFee");
+    const netLabel = document.getElementById("invoicePayoutNet");
+
+    const autoEnabled = {{ "true" if owner_fee_auto_enabled else "false" }};
+    const manualPct = {{ "%.6f"|format(owner_fee_percent or 0.0) }};
+    const manualFixed = {{ "%.6f"|format(owner_fee_fixed or 0.0) }};
+    const stripePct = {{ "%.6f"|format(owner_stripe_fee_percent or 2.9) }};
+    const stripeFixed = {{ "%.6f"|format(owner_stripe_fee_fixed or 0.30) }};
+
+    function parseMoney(v, d = 0) {
+      const n = parseFloat(String(v || "").replace(/[$,\s]/g, ""));
+      return Number.isFinite(n) ? n : d;
+    }
+    function round2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
+    function ceil2(v) { return Math.ceil((Number(v) || 0) * 100) / 100; }
+    function money(v) { return `$${round2(v).toFixed(2)}`; }
+
+    function updatePayoutPreview() {
+      const base = Math.max(0, parseMoney(baseInput.value, 0));
+      let convenienceFee = 0;
+      if (autoEnabled) {
+        const rate = stripePct / 100.0;
+        if (rate < 0.99) {
+          const gross = (base + stripeFixed) / (1 - rate);
+          convenienceFee = Math.max(0, ceil2(gross - base));
+        }
+      } else {
+        convenienceFee = Math.max(0, round2(base * (manualPct / 100.0) + manualFixed));
+      }
+      const customerTotal = round2(base + convenienceFee);
+      const stripeFee = round2(customerTotal * (stripePct / 100.0) + stripeFixed);
+      const netPayout = round2(customerTotal - stripeFee);
+
+      if (modeLabel) {
+        modeLabel.textContent = autoEnabled
+          ? `Mode: Auto (Stripe ${stripePct.toFixed(2)}% + ${money(stripeFixed)})`
+          : `Mode: Manual (${manualPct.toFixed(2)}% + ${money(manualFixed)})`;
+      }
+      if (feeLabel) feeLabel.textContent = `Convenience fee added: ${money(convenienceFee)}`;
+      if (totalLabel) totalLabel.textContent = `Customer checkout total: ${money(customerTotal)}`;
+      if (stripeFeeLabel) stripeFeeLabel.textContent = `Estimated Stripe fee: ${money(stripeFee)}`;
+      if (netLabel) netLabel.textContent = `Estimated net payout: ${money(netPayout)}`;
+    }
+
+    baseInput.addEventListener("input", updatePayoutPreview);
+    updatePayoutPreview();
+  })();
+
   (function () {
     const textEl = document.getElementById("usefulInfoText");
     if (!textEl) return;

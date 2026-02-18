@@ -2789,28 +2789,30 @@ def create_app():
                 u.tax_rate = _to_float(request.form.get("tax_rate"), 0.0)
                 u.default_hourly_rate = _to_float(request.form.get("default_hourly_rate"), 0.0)
                 u.default_parts_markup = _to_float(request.form.get("default_parts_markup"), 0.0)
-                payment_fee_percent = _to_float(request.form.get("payment_fee_percent"), 0.0)
-                payment_fee_fixed = _to_float(request.form.get("payment_fee_fixed"), 0.0)
-                payment_fee_auto_enabled = (request.form.get("payment_fee_auto_enabled") == "1")
-                stripe_fee_percent = _to_float(request.form.get("stripe_fee_percent"), 2.9)
-                stripe_fee_fixed = _to_float(request.form.get("stripe_fee_fixed"), 0.30)
-                if payment_fee_percent < 0 or payment_fee_percent > 25:
-                    flash("Convenience fee percent must be between 0 and 25.", "error")
-                    return _render_settings()
-                if payment_fee_fixed < 0 or payment_fee_fixed > 100:
-                    flash("Fixed convenience fee must be between 0 and 100.", "error")
-                    return _render_settings()
-                if stripe_fee_percent < 0 or stripe_fee_percent > 25:
-                    flash("Stripe fee percent must be between 0 and 25.", "error")
-                    return _render_settings()
-                if stripe_fee_fixed < 0 or stripe_fee_fixed > 100:
-                    flash("Stripe fixed fee must be between 0 and 100.", "error")
-                    return _render_settings()
-                u.payment_fee_auto_enabled = payment_fee_auto_enabled
-                u.payment_fee_percent = payment_fee_percent
-                u.payment_fee_fixed = payment_fee_fixed
-                u.stripe_fee_percent = stripe_fee_percent
-                u.stripe_fee_fixed = stripe_fee_fixed
+                owner_pro_enabled = _has_pro_features(owner)
+                if owner_pro_enabled:
+                    payment_fee_percent = _to_float(request.form.get("payment_fee_percent"), 0.0)
+                    payment_fee_fixed = _to_float(request.form.get("payment_fee_fixed"), 0.0)
+                    payment_fee_auto_enabled = (request.form.get("payment_fee_auto_enabled") == "1")
+                    stripe_fee_percent = _to_float(request.form.get("stripe_fee_percent"), 2.9)
+                    stripe_fee_fixed = _to_float(request.form.get("stripe_fee_fixed"), 0.30)
+                    if payment_fee_percent < 0 or payment_fee_percent > 25:
+                        flash("Convenience fee percent must be between 0 and 25.", "error")
+                        return _render_settings()
+                    if payment_fee_fixed < 0 or payment_fee_fixed > 100:
+                        flash("Fixed convenience fee must be between 0 and 100.", "error")
+                        return _render_settings()
+                    if stripe_fee_percent < 0 or stripe_fee_percent > 25:
+                        flash("Stripe fee percent must be between 0 and 25.", "error")
+                        return _render_settings()
+                    if stripe_fee_fixed < 0 or stripe_fee_fixed > 100:
+                        flash("Stripe fixed fee must be between 0 and 100.", "error")
+                        return _render_settings()
+                    u.payment_fee_auto_enabled = payment_fee_auto_enabled
+                    u.payment_fee_percent = payment_fee_percent
+                    u.payment_fee_fixed = payment_fee_fixed
+                    u.stripe_fee_percent = stripe_fee_percent
+                    u.stripe_fee_fixed = stripe_fee_fixed
 
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
@@ -5475,6 +5477,11 @@ def create_app():
             c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
             portal_token = make_customer_portal_token(inv.user_id, inv.id)
             customer_portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+            owner_fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
+            owner_fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
+            owner_fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
+            owner_stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
+            owner_stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
         return render_template(
             "invoice_view.html",
             inv=inv,
@@ -5482,6 +5489,11 @@ def create_app():
             customer=c,
             customer_portal_url=customer_portal_url,
             can_edit_document=_can_edit_document(inv),
+            owner_fee_auto_enabled=owner_fee_auto_enabled,
+            owner_fee_percent=owner_fee_percent,
+            owner_fee_fixed=owner_fee_fixed,
+            owner_stripe_fee_percent=owner_stripe_fee_percent,
+            owner_stripe_fee_fixed=owner_stripe_fee_fixed,
         )
 
     # -----------------------------
