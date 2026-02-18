@@ -115,6 +115,52 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--doc-border);
+    border-radius: 12px;
+    background: linear-gradient(180deg, #f8fbff 0%, #f2f7ff 100%);
+  }
+  .doc-action-grid form {
+    margin: 0;
+  }
+  .doc-action-grid .btn {
+    min-height: 38px;
+    border-radius: 10px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    padding: 0.45rem 0.78rem;
+  }
+  .doc-action-grid .btn-outline-primary {
+    border-color: #3f6fb3;
+    color: #1f4f95;
+    background: #f8fbff;
+  }
+  .doc-action-grid .btn-outline-primary:hover {
+    background: #eaf2ff;
+  }
+  .doc-action-grid .btn-outline-secondary {
+    border-color: #a9b8ce;
+    color: #334a6d;
+    background: #fff;
+  }
+  .doc-action-grid .btn-outline-secondary:hover {
+    background: #f4f7fb;
+  }
+  .doc-action-grid .btn-outline-success {
+    border-color: #2a8f68;
+    color: #1f7453;
+    background: #f4fcf8;
+  }
+  .doc-action-grid .btn-outline-success:hover {
+    background: #e8f8f0;
+  }
+  .doc-action-grid .btn-outline-danger {
+    border-color: #c97575;
+    color: #a93f3f;
+    background: #fff7f7;
+  }
+  .doc-action-grid .btn-outline-danger:hover {
+    background: #feecec;
   }
   .pdf-live-preview-frame {
     width: 100%;
@@ -146,6 +192,11 @@
     }
     .doc-info-card-wide {
       grid-column: auto;
+    }
+    .doc-action-grid .btn,
+    .doc-action-grid form,
+    .doc-action-grid form .btn {
+      width: 100%;
     }
   }
 </style>
@@ -228,6 +279,38 @@
   <div class="doc-card">
     <div class="doc-card-body">
       <h2 class="doc-card-title">Estimate Details</h2>
+
+      <div class="doc-subsection" style="padding-top:0; margin-top:0; border-top:0; margin-bottom:12px;">
+        <h3 class="doc-subtitle">Actions</h3>
+        <div class="doc-action-grid">
+          <a class="btn btn-outline-primary" href="{{ customer_portal_url }}" target="_blank" rel="noopener noreferrer">
+            Customer Portal
+          </a>
+
+          <a class="btn btn-outline-secondary" href="{{ url_for('estimate_pdf_download', estimate_id=inv.id) }}">
+            Download PDF
+          </a>
+
+          <form method="post" action="{{ url_for('estimate_send', estimate_id=inv.id) }}">
+            <button class="btn btn-outline-success" type="submit">Email PDF</button>
+          </form>
+
+          <form method="post" action="{{ url_for('estimate_text', estimate_id=inv.id) }}" class="d-none">
+            <button class="btn btn-outline-success" type="submit">Text PDF</button>
+          </form>
+
+          <form method="post" action="{{ url_for('estimate_convert', estimate_id=inv.id) }}">
+            <button class="btn btn-outline-primary" type="submit">Convert to Invoice</button>
+          </form>
+
+          {% if not is_employee_account %}
+            <form method="post" action="{{ url_for('estimate_delete', estimate_id=inv.id) }}"
+                  onsubmit="return confirm('Delete this estimate? This cannot be undone.');">
+              <button class="btn btn-outline-danger" type="submit">Delete</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
 
       <div class="doc-info-grid">
         <div class="doc-info-card doc-info-card-wide">
@@ -354,38 +437,6 @@
         {% else %}
           <div class="small-muted">No useful information.</div>
         {% endif %}
-      </div>
-
-      <div class="doc-subsection">
-        <h3 class="doc-subtitle">Actions</h3>
-        <div class="doc-action-grid">
-          <a class="btn btn-outline-primary" href="{{ customer_portal_url }}" target="_blank" rel="noopener noreferrer">
-            Customer Portal
-          </a>
-
-          <a class="btn btn-outline-secondary" href="{{ url_for('estimate_pdf_download', estimate_id=inv.id) }}">
-            Download PDF
-          </a>
-
-          <form method="post" action="{{ url_for('estimate_send', estimate_id=inv.id) }}">
-            <button class="btn btn-outline-success" type="submit">Email PDF</button>
-          </form>
-
-          <form method="post" action="{{ url_for('estimate_text', estimate_id=inv.id) }}" class="d-none">
-            <button class="btn btn-outline-success" type="submit">Text PDF</button>
-          </form>
-
-          <form method="post" action="{{ url_for('estimate_convert', estimate_id=inv.id) }}">
-            <button class="btn btn-outline-primary" type="submit">Convert to Invoice</button>
-          </form>
-
-          {% if not is_employee_account %}
-            <form method="post" action="{{ url_for('estimate_delete', estimate_id=inv.id) }}"
-                  onsubmit="return confirm('Delete this estimate? This cannot be undone.');">
-              <button class="btn btn-outline-danger" type="submit">Delete</button>
-            </form>
-          {% endif %}
-        </div>
       </div>
 
     </div>
