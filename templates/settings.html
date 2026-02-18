@@ -3,483 +3,415 @@
 
 {% block content %}
 <style>
+  .settings-shell {
+    max-width: 1240px;
+    margin: 0 auto;
+  }
+  .settings-jump {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .settings-jump-link {
+    padding: 0.35rem 0.7rem;
+    border: 1px solid #dbe3ee;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    color: #5b6f8f;
+    text-decoration: none;
+    background: #fff;
+  }
+  .settings-jump-link:hover {
+    color: #24457a;
+    border-color: #bcd0ef;
+    background: #f6f9ff;
+  }
+  .settings-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .settings-card {
+    border: 1px solid #dbe3ee;
+    border-radius: 14px;
+    background: #fff;
+    padding: 16px;
+  }
+  .settings-card h5 {
+    margin: 0;
+    font-size: 1.02rem;
+    font-weight: 700;
+  }
+  .settings-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .settings-help {
+    color: #6c7f9b;
+    font-size: 0.86rem;
+    margin-bottom: 12px;
+  }
+  .compact-label {
+    font-size: 0.88rem;
+    margin-bottom: 0.3rem;
+  }
   .live-preview-wrap {
     border: 1px solid #dbe3ee;
     border-radius: 14px;
     background: #f7f9fc;
-    padding: 14px;
+    padding: 12px;
   }
   .live-preview-title {
     font-weight: 700;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
   }
   .live-preview-frame {
     width: 100%;
-    height: 620px;
+    height: 560px;
     border: 1px solid #cfd8e5;
     border-radius: 10px;
     background: #fff;
   }
+  .save-row {
+    position: sticky;
+    bottom: 12px;
+    z-index: 3;
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
+  }
+  .save-pill {
+    box-shadow: 0 8px 24px rgba(10, 41, 84, 0.16);
+  }
+  @media (min-width: 992px) {
+    .settings-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+    .span-2 {
+      grid-column: span 2;
+    }
+  }
 </style>
 
-<div class="page-header">
-  <div>
-    <h1 class="h3 fw-bold mb-1">Settings</h1>
-    <div class="subtitle">Manage account, invoice defaults, and scheduler notifications.</div>
+<div class="settings-shell">
+  <div class="page-header">
+    <div>
+      <h1 class="h3 fw-bold mb-1">Settings</h1>
+      <div class="subtitle">Cleaner defaults, document styling, scheduler notifications, and account controls.</div>
+    </div>
+    <div class="action-group">
+      {% if not is_employee_account %}
+        <a href="{{ url_for('billing') }}" class="btn btn-outline-primary">Billing</a>
+      {% endif %}
+      <a href="{{ url_for('invoices') }}" class="btn btn-outline-secondary">Back to Invoices</a>
+    </div>
   </div>
-  <div class="action-group">
-    {% if not is_employee_account %}
-      <a href="{{ url_for('billing') }}" class="btn btn-outline-primary">Billing</a>
+
+  <div class="settings-jump">
+    <a class="settings-jump-link" href="#section-account">Account</a>
+    <a class="settings-jump-link" href="#section-invoice">Invoice Defaults</a>
+    <a class="settings-jump-link" href="#section-preview">PDF Preview</a>
+    {% if pro_features_enabled %}
+      <a class="settings-jump-link" href="#section-payments">Payments</a>
     {% endif %}
-    <a href="{{ url_for('invoices') }}" class="btn btn-outline-secondary">Back to Invoices</a>
+    <a class="settings-jump-link" href="#section-contact">Business Info</a>
+    <a class="settings-jump-link" href="#section-scheduler">Scheduler</a>
+    <a class="settings-jump-link" href="#section-logo">Logo</a>
+    {% if not is_employee_account %}
+      <a class="settings-jump-link" href="#section-employees">Employees</a>
+    {% endif %}
   </div>
-</div>
 
-<div class="row justify-content-center">
-  <div class="col-md-8 col-lg-6">
+  <form method="post" enctype="multipart/form-data">
+    <div class="settings-grid">
 
-    <div class="card shadow-sm">
-      <div class="card-body">
+      <section class="settings-card" id="section-account">
+        <div class="settings-card-head">
+          <h5>Account</h5>
+        </div>
+        <div class="settings-help">Your login and top-level profile defaults.</div>
+        <div class="mb-3">
+          <label class="form-label compact-label req">Email Address</label>
+          <input type="email" class="form-control" name="email" value="{{ u.email or '' }}" required>
+          <div class="small-muted mt-1">Used for password resets.</div>
+        </div>
+        <div class="mb-0">
+          <label class="form-label compact-label req">Business Type / Profession</label>
+          <select class="form-select" id="invoiceTemplateSelect" name="invoice_template" required>
+            {% for key, cfg in templates.items() %}
+              <option value="{{ key }}" {% if (u.invoice_template or 'auto_repair') == key %}selected{% endif %}>{{ cfg.label }}</option>
+            {% endfor %}
+          </select>
+          <div class="small-muted mt-1">New documents use this style. Existing documents keep their saved template.</div>
+        </div>
+      </section>
 
-        <h4 class="card-title mb-3">Account & Invoice Settings</h4>
+      <section class="settings-card" id="section-invoice">
+        <div class="settings-card-head">
+          <h5>Invoice Defaults</h5>
+        </div>
+        <div class="settings-help">Defaults applied to new invoices and estimates.</div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label compact-label">Default Tax (%)</label>
+            <input type="text" class="form-control" name="tax_rate" inputmode="decimal" value="{{ u.tax_rate if u.tax_rate is not none else '0' }}" placeholder="0.0">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Default Hourly Rate</label>
+            <input type="text" class="form-control" name="default_hourly_rate" inputmode="decimal" value="{{ u.default_hourly_rate if u.default_hourly_rate is not none else '0' }}" placeholder="0.00">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Default Parts Markup (%)</label>
+            <input type="text" class="form-control" name="default_parts_markup" inputmode="decimal" value="{{ u.default_parts_markup if u.default_parts_markup is not none else '0' }}" placeholder="0.0">
+          </div>
+        </div>
+      </section>
 
-        <p class="text-muted small">
-          Your email is used for login recovery. Business information appears at the top of your PDF invoices.
-        </p>
-
-        <!-- IMPORTANT: multipart for file upload -->
-        <form method="post" enctype="multipart/form-data">
-
-          <!-- Email (required) -->
-          <div class="mb-3">
-            <label class="form-label req">
-              Email Address
-            </label>
-            <input
-              type="email"
-              class="form-control"
-              name="email"
-              value="{{ u.email or '' }}"
-              required
-            >
-            <div class="small-muted mt-1">
-              Used for password resets.
+      <section class="settings-card span-2" id="customProfessionCard" style="display:none;">
+        <div class="settings-card-head">
+          <h5>Custom Profession Builder</h5>
+        </div>
+        <div class="settings-help">Define your own labels and show/hide sections for invoices and estimates.</div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label compact-label">Custom Profession Name</label>
+            <input class="form-control" name="custom_profession_name" value="{{ u.custom_profession_name or '' }}" placeholder="e.g. Window Tinting">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Job Label</label>
+            <input class="form-control" name="custom_job_label" value="{{ u.custom_job_label or '' }}" placeholder="e.g. Service Location">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Labor Section Title</label>
+            <input class="form-control" name="custom_labor_title" value="{{ u.custom_labor_title or '' }}" placeholder="e.g. Services">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Labor Description Label</label>
+            <input class="form-control" name="custom_labor_desc_label" value="{{ u.custom_labor_desc_label or '' }}" placeholder="e.g. Service Description">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Parts Section Title</label>
+            <input class="form-control" name="custom_parts_title" value="{{ u.custom_parts_title or '' }}" placeholder="e.g. Materials">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Parts Item Label</label>
+            <input class="form-control" name="custom_parts_name_label" value="{{ u.custom_parts_name_label or '' }}" placeholder="e.g. Material Name">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Additional Fees Label</label>
+            <input class="form-control" name="custom_shop_supplies_label" value="{{ u.custom_shop_supplies_label or '' }}" placeholder="e.g. Travel Fee">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label compact-label">Show These Sections</label>
+            <div class="d-flex flex-wrap gap-3 pt-1">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="customShowJob" name="custom_show_job" value="1" {% if u.custom_show_job is not defined or u.custom_show_job %}checked{% endif %}>
+                <label class="form-check-label" for="customShowJob">Job</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="customShowLabor" name="custom_show_labor" value="1" {% if u.custom_show_labor is not defined or u.custom_show_labor %}checked{% endif %}>
+                <label class="form-check-label" for="customShowLabor">Labor</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="customShowParts" name="custom_show_parts" value="1" {% if u.custom_show_parts is not defined or u.custom_show_parts %}checked{% endif %}>
+                <label class="form-check-label" for="customShowParts">Parts</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="customShowFees" name="custom_show_shop_supplies" value="1" {% if u.custom_show_shop_supplies is not defined or u.custom_show_shop_supplies %}checked{% endif %}>
+                <label class="form-check-label" for="customShowFees">Additional fees</label>
+              </div>
             </div>
           </div>
+        </div>
+      </section>
 
-          <!-- Profession / Template -->
-          <div class="mb-3">
-            <label class="form-label req">Business Type / Profession</label>
-            <select class="form-select" id="invoiceTemplateSelect" name="invoice_template" required>
-              {% for key, cfg in templates.items() %}
-                <option value="{{ key }}"
-                  {% if (u.invoice_template or 'auto_repair') == key %}selected{% endif %}>
-                  {{ cfg.label }}
-                </option>
-              {% endfor %}
-            </select>
-            <div class="small-muted mt-1">
-              New invoices will use this style. Existing invoices keep the style they were created with.
-            </div>
-          </div>
-
-          <div id="customProfessionCard" class="border rounded p-3 mb-3" style="display:none;">
-            <div class="fw-semibold mb-2">Custom Profession Builder</div>
-            <div class="small-muted mb-3">
-              Create your own label set and control which sections appear on invoices/estimates.
-            </div>
-
-            <div class="mb-3">
-              <label class="form-label">Custom Profession Name</label>
-              <input class="form-control" name="custom_profession_name" value="{{ u.custom_profession_name or '' }}" placeholder="e.g. Window Tinting">
-            </div>
-
-            <div class="row g-3">
-              <div class="col-md-6">
-                <label class="form-label">Job Label</label>
-                <input class="form-control" name="custom_job_label" value="{{ u.custom_job_label or '' }}" placeholder="e.g. Service Location">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Labor Section Title</label>
-                <input class="form-control" name="custom_labor_title" value="{{ u.custom_labor_title or '' }}" placeholder="e.g. Services">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Labor Description Label</label>
-                <input class="form-control" name="custom_labor_desc_label" value="{{ u.custom_labor_desc_label or '' }}" placeholder="e.g. Service Description">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Parts Section Title</label>
-                <input class="form-control" name="custom_parts_title" value="{{ u.custom_parts_title or '' }}" placeholder="e.g. Materials">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Parts Item Label</label>
-                <input class="form-control" name="custom_parts_name_label" value="{{ u.custom_parts_name_label or '' }}" placeholder="e.g. Material Name">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Additional Fees Label</label>
-                <input class="form-control" name="custom_shop_supplies_label" value="{{ u.custom_shop_supplies_label or '' }}" placeholder="e.g. Travel Fee">
-              </div>
-            </div>
-
-            <hr class="my-3" />
-            <div class="fw-semibold mb-2">Show These Sections</div>
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="customShowJob" name="custom_show_job" value="1" {% if u.custom_show_job is not defined or u.custom_show_job %}checked{% endif %}>
-              <label class="form-check-label" for="customShowJob">Job field on form and PDF</label>
-            </div>
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="customShowLabor" name="custom_show_labor" value="1" {% if u.custom_show_labor is not defined or u.custom_show_labor %}checked{% endif %}>
-              <label class="form-check-label" for="customShowLabor">Labor section</label>
-            </div>
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="customShowParts" name="custom_show_parts" value="1" {% if u.custom_show_parts is not defined or u.custom_show_parts %}checked{% endif %}>
-              <label class="form-check-label" for="customShowParts">Parts section</label>
-            </div>
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="customShowFees" name="custom_show_shop_supplies" value="1" {% if u.custom_show_shop_supplies is not defined or u.custom_show_shop_supplies %}checked{% endif %}>
-              <label class="form-check-label" for="customShowFees">Additional fees line (shop supplies)</label>
-            </div>
-          </div>
-
-          <div class="live-preview-wrap mb-3">
-            <div class="live-preview-title">Live Invoice Preview</div>
-            <div class="small-muted mb-2">
-              Exact PDF preview using the same renderer as your downloaded invoices.
-            </div>
-            <iframe id="livePdfPreview" class="live-preview-frame" src="{{ url_for('settings_preview_pdf') }}" title="Live PDF Preview"></iframe>
-          </div>
-
-          <!-- PDF Template -->
-          <div class="mb-3">
-            <label class="form-label req">PDF Layout Template</label>
-            <div class="row g-3">
-              {% for key, cfg in pdf_templates.items() %}
-                <div class="col-md-6">
-                  <label class="pdf-template-card">
-                    <input
-                      class="pdf-template-radio"
-                      type="radio"
-                      name="pdf_template"
-                      value="{{ key }}"
-                      {% if (u.pdf_template or 'classic') == key %}checked{% endif %}
-                      required
-                    >
-                    <div class="pdf-template-body">
-                      <div class="pdf-template-preview">
-                        <img src="{{ url_for('static', filename=cfg.preview) }}" alt="{{ cfg.label }} preview">
-                      </div>
-                      <div class="pdf-template-title">{{ cfg.label }}</div>
-                      <div class="pdf-template-desc">{{ cfg.desc }}</div>
+      <section class="settings-card span-2" id="section-preview">
+        <div class="settings-card-head">
+          <h5>Live PDF Preview & Layout</h5>
+        </div>
+        <div class="settings-help">Exact PDF rendering using your current settings.</div>
+        <div class="live-preview-wrap mb-3">
+          <div class="live-preview-title">Live Invoice Preview</div>
+          <iframe id="livePdfPreview" class="live-preview-frame" src="{{ url_for('settings_preview_pdf') }}" title="Live PDF Preview"></iframe>
+        </div>
+        <div>
+          <label class="form-label compact-label req">PDF Layout Template</label>
+          <div class="row g-3">
+            {% for key, cfg in pdf_templates.items() %}
+              <div class="col-md-6 col-xl-3">
+                <label class="pdf-template-card">
+                  <input class="pdf-template-radio" type="radio" name="pdf_template" value="{{ key }}" {% if (u.pdf_template or 'classic') == key %}checked{% endif %} required>
+                  <div class="pdf-template-body">
+                    <div class="pdf-template-preview">
+                      <img src="{{ url_for('static', filename=cfg.preview) }}" alt="{{ cfg.label }} preview">
                     </div>
-                  </label>
-                </div>
-              {% endfor %}
-            </div>
-            <div class="small-muted mt-2">
-              Applies to all invoices and estimates, new and existing, downloaded after this selection.
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Default Tax (%)</label>
-            <input
-              type="text"
-              class="form-control"
-              name="tax_rate"
-              inputmode="decimal"
-              value="{{ u.tax_rate if u.tax_rate is not none else '0' }}"
-              placeholder="0.0"
-            >
-            <div class="small-muted mt-1">
-              This tax rate is applied to invoices and estimates unless overridden.
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Default Hourly Rate</label>
-            <input
-              type="text"
-              class="form-control"
-              name="default_hourly_rate"
-              inputmode="decimal"
-              value="{{ u.default_hourly_rate if u.default_hourly_rate is not none else '0' }}"
-              placeholder="0.00"
-            >
-            <div class="small-muted mt-1">
-              This rate pre-fills new invoices and estimates.
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Default Parts Markup (%)</label>
-            <input
-              type="text"
-              class="form-control"
-              name="default_parts_markup"
-              inputmode="decimal"
-              value="{{ u.default_parts_markup if u.default_parts_markup is not none else '0' }}"
-              placeholder="0.0"
-            >
-            <div class="small-muted mt-1">
-              This markup pre-fills new invoices and estimates.
-            </div>
-          </div>
-
-          {% if pro_features_enabled %}
-            <div class="mb-3">
-              <label class="form-label">Customer Payment Convenience Fee (%)</label>
-              <input
-                type="text"
-                class="form-control"
-                name="payment_fee_percent"
-                inputmode="decimal"
-                value="{{ u.payment_fee_percent if u.payment_fee_percent is not none else '0' }}"
-                placeholder="e.g. 3.00"
-              >
-              <div class="small-muted mt-1">
-                Added only when customer pays online through Stripe checkout.
-              </div>
-            </div>
-
-            <div class="form-check mb-3">
-              <input
-                class="form-check-input"
-                type="checkbox"
-                id="paymentFeeAutoEnabled"
-                name="payment_fee_auto_enabled"
-                value="1"
-                {% if u.payment_fee_auto_enabled %}checked{% endif %}
-              >
-              <label class="form-check-label" for="paymentFeeAutoEnabled">
-                Auto-calculate convenience fee from Stripe fee settings
-              </label>
-              <div class="small-muted mt-1">
-                Calculates fee so online payment approximately covers Stripe processing fees for each invoice amount.
-              </div>
-            </div>
-
-            <div class="mb-3">
-              <label class="form-label">Customer Payment Convenience Fee (Fixed $)</label>
-              <input
-                type="text"
-                class="form-control"
-                name="payment_fee_fixed"
-                inputmode="decimal"
-                value="{{ u.payment_fee_fixed if u.payment_fee_fixed is not none else '0' }}"
-                placeholder="e.g. 0.30"
-              >
-              <div class="small-muted mt-1">
-                Fixed fee added to online customer checkout total.
-              </div>
-            </div>
-
-            <div id="stripeFeeSettingsWrap">
-              <div class="mb-3">
-                <label class="form-label">Stripe Processing Fee (%)</label>
-                <input
-                  type="text"
-                  class="form-control"
-                  name="stripe_fee_percent"
-                  inputmode="decimal"
-                  value="{{ u.stripe_fee_percent if u.stripe_fee_percent is not none else '2.9' }}"
-                  placeholder="e.g. 2.90"
-                >
-              </div>
-
-              <div class="mb-3">
-                <label class="form-label">Stripe Processing Fixed Fee ($)</label>
-                <input
-                  type="text"
-                  class="form-control"
-                  name="stripe_fee_fixed"
-                  inputmode="decimal"
-                  value="{{ u.stripe_fee_fixed if u.stripe_fee_fixed is not none else '0.30' }}"
-                  placeholder="e.g. 0.30"
-                >
-                <div class="small-muted mt-1">
-                  Used only when auto-calculate is enabled.
-                </div>
-              </div>
-            </div>
-          {% endif %}
-
-          <hr class="my-4" />
-
-          <!-- Business Name -->
-          <div class="mb-3">
-            <label class="form-label">
-              Business Name / Your Name
-            </label>
-            <input
-              type="text"
-              class="form-control"
-              name="business_name"
-              value="{{ u.business_name or '' }}"
-              placeholder="e.g. Summit Auto Repair"
-            >
-          </div>
-
-          <!-- Phone -->
-          <div class="mb-3">
-            <label class="form-label">
-              Phone Number
-            </label>
-            <input
-              type="text"
-              class="form-control"
-              name="phone"
-              value="{{ u.phone or '' }}"
-              placeholder="(406) 555-1234"
-            >
-          </div>
-
-          <!-- Address -->
-          <div class="mb-3">
-            <label class="form-label">
-              Address
-            </label>
-            <textarea
-              class="form-control"
-              name="address"
-              rows="3"
-              placeholder="Street, City, State ZIP"
-            >{{ u.address or '' }}</textarea>
-          </div>
-
-          <hr class="my-4" />
-
-          <div class="mb-3">
-            <h6 class="mb-2">Scheduler Email Summaries</h6>
-            <div class="small-muted">
-              Choose how often to receive an email with upcoming appointments. Emails only send when there are
-              scheduled appointments in the selected window.
-            </div>
-          </div>
-
-          <div class="row g-3 align-items-end mb-3">
-            <div class="col-md-6">
-              <label class="form-label">Summary Frequency</label>
-              <select class="form-select" name="schedule_summary_frequency">
-                {% set freq = (u.schedule_summary_frequency or 'none') %}
-                <option value="none" {% if freq == 'none' %}selected{% endif %}>None</option>
-                <option value="day" {% if freq == 'day' %}selected{% endif %}>Day</option>
-                <option value="week" {% if freq == 'week' %}selected{% endif %}>Week</option>
-                <option value="month" {% if freq == 'month' %}selected{% endif %}>Month</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Summary Start Time (Local)</label>
-              <input
-                type="time"
-                class="form-control"
-                name="schedule_summary_time"
-                value="{{ u.schedule_summary_time or '' }}"
-              >
-              <div class="small-muted mt-1">
-                Appointments within the next day/week/month starting at this time are included.
-              </div>
-              <div class="small-muted mt-1" id="summaryTimezoneLabel"></div>
-            </div>
-          </div>
-          <input
-            type="hidden"
-            name="schedule_summary_tz_offset_minutes"
-            id="scheduleSummaryTzOffset"
-            value="{{ u.schedule_summary_tz_offset_minutes or 0 }}"
-          >
-          <hr class="my-4" />
-
-          <!-- Logo Upload -->
-          <div class="mb-3">
-            <label class="form-label">
-              Logo (shown on invoices)
-            </label>
-            <input
-              class="form-control"
-              type="file"
-              name="logo"
-              accept=".png,.jpg,.jpeg"
-            >
-
-            <div class="small-muted mt-1">
-              Recommended: transparent PNG, about 600px wide. It will be scaled down on the invoice.
-            </div>
-
-            {% if u.logo_path or u.logo_blob %}
-              <div class="mt-2">
-                <div class="small-muted">Current logo:</div>
-                {% if u.logo_blob %}
-                  <div class="mono">Stored in database (optimized image).</div>
-                {% else %}
-                  <div class="mono">{{ u.logo_path }}</div>
-                {% endif %}
-              </div>
-
-              <div class="form-check mt-2">
-                <input
-                  class="form-check-input"
-                  type="checkbox"
-                  value="1"
-                  id="remove_logo"
-                  name="remove_logo"
-                >
-                <label class="form-check-label" for="remove_logo">
-                  Remove logo
+                    <div class="pdf-template-title">{{ cfg.label }}</div>
+                    <div class="pdf-template-desc">{{ cfg.desc }}</div>
+                  </div>
                 </label>
               </div>
-            {% endif %}
+            {% endfor %}
           </div>
+          <div class="small-muted mt-2">Applies to all invoices and estimates downloaded after saving.</div>
+        </div>
+      </section>
 
-          <div class="d-flex justify-content-between align-items-center mt-4">
-            <button type="submit" class="btn btn-primary">
-              Save Settings
-            </button>
+      {% if pro_features_enabled %}
+        <section class="settings-card span-2" id="section-payments">
+          <div class="settings-card-head">
+            <h5>Customer Payment Fee Rules (Pro)</h5>
           </div>
-
-        </form>
-
-        <hr class="my-4" />
-        <h5 class="mb-3">Employees</h5>
-        {% if employee_features_enabled %}
-          <form method="post" action="{{ url_for('employee_invite_send') }}" class="row g-2 align-items-end mb-3">
-            <div class="col-md-8">
-              <label class="form-label">Invite Employee by Email</label>
-              <input class="form-control" type="email" name="employee_email" placeholder="employee@example.com" required>
+          <div class="settings-help">Used for customer portal card payments and payout calculations.</div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label compact-label">Convenience Fee (%)</label>
+              <input type="text" class="form-control" name="payment_fee_percent" inputmode="decimal" value="{{ u.payment_fee_percent if u.payment_fee_percent is not none else '0' }}" placeholder="e.g. 3.00">
             </div>
-            <div class="col-md-4 d-grid">
-              <button class="btn btn-outline-primary" type="submit">Send Invite</button>
+            <div class="col-md-4">
+              <label class="form-label compact-label">Convenience Fee (Fixed $)</label>
+              <input type="text" class="form-control" name="payment_fee_fixed" inputmode="decimal" value="{{ u.payment_fee_fixed if u.payment_fee_fixed is not none else '0' }}" placeholder="e.g. 0.30">
             </div>
-          </form>
-          {% if employees and employees|length > 0 %}
-            <div class="small-muted mb-1">Current Employees</div>
-            <ul class="list-group">
-              {% for e in employees %}
-                <li class="list-group-item d-flex justify-content-between align-items-center">
-                  <span>{{ e.username }} <span class="small-muted">({{ e.email or 'no email' }})</span></span>
-                  <div class="d-flex align-items-center gap-2">
-                    <span class="badge text-bg-light border">Employee</span>
-                    <form method="post" action="{{ url_for('employee_delete', employee_id=e.id) }}" onsubmit="return confirm('Delete this employee account? This removes their login permanently.');">
-                      <button class="btn btn-outline-danger btn-sm" type="submit">Delete</button>
-                    </form>
-                  </div>
-                </li>
-              {% endfor %}
-            </ul>
-          {% else %}
-            <div class="small-muted">No employees invited yet.</div>
+            <div class="col-md-4 d-flex align-items-end">
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="paymentFeeAutoEnabled" name="payment_fee_auto_enabled" value="1" {% if u.payment_fee_auto_enabled %}checked{% endif %}>
+                <label class="form-check-label" for="paymentFeeAutoEnabled">Auto-calculate from Stripe fees</label>
+              </div>
+            </div>
+          </div>
+          <div id="stripeFeeSettingsWrap" class="mt-3">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label compact-label">Stripe Processing Fee (%)</label>
+                <input type="text" class="form-control" name="stripe_fee_percent" inputmode="decimal" value="{{ u.stripe_fee_percent if u.stripe_fee_percent is not none else '2.9' }}" placeholder="e.g. 2.90">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label compact-label">Stripe Processing Fixed Fee ($)</label>
+                <input type="text" class="form-control" name="stripe_fee_fixed" inputmode="decimal" value="{{ u.stripe_fee_fixed if u.stripe_fee_fixed is not none else '0.30' }}" placeholder="e.g. 0.30">
+              </div>
+            </div>
+          </div>
+        </section>
+      {% endif %}
+
+      <section class="settings-card" id="section-contact">
+        <div class="settings-card-head">
+          <h5>Business Information</h5>
+        </div>
+        <div class="settings-help">Shown on invoices and estimates.</div>
+        <div class="mb-3">
+          <label class="form-label compact-label">Business Name / Your Name</label>
+          <input type="text" class="form-control" name="business_name" value="{{ u.business_name or '' }}" placeholder="e.g. Summit Auto Repair">
+        </div>
+        <div class="mb-3">
+          <label class="form-label compact-label">Phone Number</label>
+          <input type="text" class="form-control" name="phone" value="{{ u.phone or '' }}" placeholder="(406) 555-1234">
+        </div>
+        <div class="mb-0">
+          <label class="form-label compact-label">Address</label>
+          <textarea class="form-control" name="address" rows="3" placeholder="Street, City, State ZIP">{{ u.address or '' }}</textarea>
+        </div>
+      </section>
+
+      <section class="settings-card" id="section-scheduler">
+        <div class="settings-card-head">
+          <h5>Scheduler Email Summaries</h5>
+        </div>
+        <div class="settings-help">Send recurring email summaries only when appointments exist in the selected window.</div>
+        <div class="mb-3">
+          <label class="form-label compact-label">Summary Frequency</label>
+          <select class="form-select" name="schedule_summary_frequency">
+            {% set freq = (u.schedule_summary_frequency or 'none') %}
+            <option value="none" {% if freq == 'none' %}selected{% endif %}>None</option>
+            <option value="day" {% if freq == 'day' %}selected{% endif %}>Day</option>
+            <option value="week" {% if freq == 'week' %}selected{% endif %}>Week</option>
+            <option value="month" {% if freq == 'month' %}selected{% endif %}>Month</option>
+          </select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label compact-label">Summary Start Time (Local)</label>
+          <input type="time" class="form-control" name="schedule_summary_time" value="{{ u.schedule_summary_time or '' }}">
+        </div>
+        <div class="small-muted" id="summaryTimezoneLabel"></div>
+        <input type="hidden" name="schedule_summary_tz_offset_minutes" id="scheduleSummaryTzOffset" value="{{ u.schedule_summary_tz_offset_minutes or 0 }}">
+      </section>
+
+      <section class="settings-card span-2" id="section-logo">
+        <div class="settings-card-head">
+          <h5>Logo</h5>
+        </div>
+        <div class="settings-help">Recommended: transparent PNG around 600px wide.</div>
+        <div class="row g-3 align-items-end">
+          <div class="col-md-8">
+            <label class="form-label compact-label">Logo (shown on invoices)</label>
+            <input class="form-control" type="file" name="logo" accept=".png,.jpg,.jpeg">
+          </div>
+          {% if u.logo_path or u.logo_blob %}
+            <div class="col-md-4">
+              <div class="small-muted mb-1">Current logo:</div>
+              {% if u.logo_blob %}
+                <div class="mono small-muted">Stored in database (optimized image).</div>
+              {% else %}
+                <div class="mono small-muted">{{ u.logo_path }}</div>
+              {% endif %}
+              <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" value="1" id="remove_logo" name="remove_logo">
+                <label class="form-check-label" for="remove_logo">Remove logo</label>
+              </div>
+            </div>
           {% endif %}
-        {% else %}
-          <div class="small-muted">
-            Employee accounts are available on the Pro plan. Upgrade in Billing to invite and manage employees.
-          </div>
-        {% endif %}
+        </div>
+      </section>
 
-      </div>
     </div>
 
-  </div>
-</div>
+    <div class="save-row">
+      <button type="submit" class="btn btn-primary save-pill">Save Settings</button>
+    </div>
+  </form>
 
+  {% if not is_employee_account %}
+    <section class="settings-card mt-3" id="section-employees">
+      <div class="settings-card-head">
+        <h5>Employees</h5>
+      </div>
+      {% if employee_features_enabled %}
+        <div class="settings-help">Invite and manage employee logins tied to your company account.</div>
+        <form method="post" action="{{ url_for('employee_invite_send') }}" class="row g-2 align-items-end mb-3">
+          <div class="col-md-8">
+            <label class="form-label compact-label">Invite Employee by Email</label>
+            <input class="form-control" type="email" name="employee_email" placeholder="employee@example.com" required>
+          </div>
+          <div class="col-md-4 d-grid">
+            <button class="btn btn-outline-primary" type="submit">Send Invite</button>
+          </div>
+        </form>
+        {% if employees and employees|length > 0 %}
+          <div class="small-muted mb-1">Current Employees</div>
+          <ul class="list-group">
+            {% for e in employees %}
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>{{ e.username }} <span class="small-muted">({{ e.email or 'no email' }})</span></span>
+                <div class="d-flex align-items-center gap-2">
+                  <span class="badge text-bg-light border">Employee</span>
+                  <form method="post" action="{{ url_for('employee_delete', employee_id=e.id) }}" onsubmit="return confirm('Delete this employee account? This removes their login permanently.');">
+                    <button class="btn btn-outline-danger btn-sm" type="submit">Delete</button>
+                  </form>
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="small-muted">No employees invited yet.</div>
+        {% endif %}
+      {% else %}
+        <div class="small-muted">Employee accounts are available on the Pro plan. Upgrade in Billing to invite and manage employees.</div>
+      {% endif %}
+    </section>
+  {% endif %}
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -521,24 +453,6 @@
 
   function getInput(name) {
     return document.querySelector(`[name="${name}"]`);
-  }
-
-  function parseMoneyInput(value, fallback = 0) {
-    const raw = String(value || "").replace(/[$,\s]/g, "");
-    const n = parseFloat(raw);
-    return Number.isFinite(n) ? n : fallback;
-  }
-
-  function round2(value) {
-    return Math.round((Number(value) || 0) * 100) / 100;
-  }
-
-  function ceil2(value) {
-    return Math.ceil((Number(value) || 0) * 100) / 100;
-  }
-
-  function fmtMoney(value) {
-    return `$${round2(value).toFixed(2)}`;
   }
 
   function inputVal(name, fallback = "") {
