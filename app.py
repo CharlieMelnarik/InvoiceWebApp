@@ -129,15 +129,14 @@ def _invoice_late_fee_amount(inv: Invoice, owner: User | None, *, as_of: datetim
 
     now_utc = as_of or datetime.utcnow()
     due_dt = _invoice_due_date_utc(inv, owner)
-    if now_utc <= due_dt:
+    overdue_days = (now_utc.date() - due_dt.date()).days
+    if overdue_days < 1:
         return 0.0
 
     frequency_days = int(getattr(owner, "late_fee_frequency_days", 30) or 30)
     frequency_days = max(1, min(365, frequency_days))
-    days_overdue = (now_utc - due_dt).days
-    cycles = max(0, days_overdue // frequency_days)
-    if cycles <= 0:
-        return 0.0
+    # First fee applies starting the day after due date, then repeats every frequency_days.
+    cycles = 1 + ((overdue_days - 1) // frequency_days)
 
     mode = (getattr(owner, "late_fee_mode", "fixed") or "fixed").strip().lower()
     base_total = float(inv.invoice_total() or 0.0)
