@@ -1279,11 +1279,28 @@ def _send_payment_reminder_for_invoice(
             f"Current amount due including late fees: ${due_with_late_fee:,.2f}\n"
         )
 
+    late_fee_policy_line = ""
+    if owner and bool(getattr(owner, "late_fee_enabled", False)):
+        freq_days = int(getattr(owner, "late_fee_frequency_days", 30) or 30)
+        freq_days = max(1, min(365, freq_days))
+        late_mode = (getattr(owner, "late_fee_mode", "fixed") or "fixed").strip().lower()
+        if late_mode == "percent":
+            late_pct = max(0.0, float(getattr(owner, "late_fee_percent", 0.0) or 0.0))
+            fee_desc = f"{late_pct:g}% of the invoice amount"
+        else:
+            late_fixed = max(0.0, float(getattr(owner, "late_fee_fixed", 0.0) or 0.0))
+            fee_desc = f"${late_fixed:,.2f}"
+        late_fee_policy_line = (
+            f"After {due_dt.strftime('%B %d, %Y')}, a late fee of {fee_desc} "
+            f"will be charged every {freq_days} day(s).\n"
+        )
+
     body = (
         f"Hello {(customer.name if customer else 'there') or 'there'},\n\n"
         f"{timing_line}\n"
         f"Invoice {display_no}\n"
         f"Invoice amount due: ${float(inv.amount_due() or 0.0):,.2f}\n"
+        f"{late_fee_policy_line}"
         f"{late_fee_line}"
         f"Due date: {due_dt.strftime('%B %d, %Y')}\n\n"
         "Thank you."
