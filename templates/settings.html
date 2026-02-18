@@ -262,7 +262,7 @@
         </div>
       </section>
 
-      <section class="settings-card span-2" id="customProfessionCard" style="display:none;">
+      <section class="settings-card span-2" id="customProfessionCard">
         <div class="settings-card-head">
           <h5>Invoice Builder (V1)</h5>
         </div>
@@ -643,8 +643,7 @@
   const lateFeePercentWrap = document.getElementById("lateFeePercentWrap");
   function toggleCustomCard() {
     if (!templateSelect || !customCard) return;
-    const builderOn = builderEnabledToggle ? builderEnabledToggle.checked : false;
-    customCard.style.display = (templateSelect.value === "custom" || builderOn) ? "" : "none";
+    customCard.style.display = "";
   }
   function syncBuilderTemplate() {
     if (!templateSelect || !builderEnabledToggle) return;
