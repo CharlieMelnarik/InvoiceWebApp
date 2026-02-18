@@ -1334,21 +1334,35 @@ def _send_payment_reminder_for_invoice(
 
 def _run_automatic_payment_reminders(session, owner: User | None) -> None:
     if not owner:
+        print("[PAYMENT REMINDER] skipped (no owner)", flush=True)
         return
     owner_status = (getattr(owner, "subscription_status", None) or "").strip().lower()
     owner_tier = _normalize_plan_tier(getattr(owner, "subscription_tier", None))
     if owner_status not in ("trialing", "active") or owner_tier != "pro":
+        print(
+            f"[PAYMENT REMINDER] user={owner.id} skipped (plan/status not eligible: tier={owner_tier}, status={owner_status})",
+            flush=True,
+        )
         return
     if not bool(getattr(owner, "payment_reminders_enabled", False)):
+        print(f"[PAYMENT REMINDER] user={owner.id} skipped (feature disabled)", flush=True)
         return
 
     now_utc = datetime.utcnow()
     last_run = getattr(owner, "payment_reminder_last_run_at", None)
     if last_run and (now_utc - last_run) < timedelta(minutes=30):
+        print(
+            f"[PAYMENT REMINDER] user={owner.id} skipped (throttled; last_run={last_run.isoformat()})",
+            flush=True,
+        )
         return
 
     before_days = int(getattr(owner, "payment_reminder_days_before", 0) or 0)
     after_days = int(getattr(owner, "payment_reminder_days_after", 0) or 0)
+    print(
+        f"[PAYMENT REMINDER] user={owner.id} running (before_days={before_days}, after_days={after_days})",
+        flush=True,
+    )
 
     invoices = (
         session.query(Invoice)
@@ -1356,9 +1370,19 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
         .filter(Invoice.user_id == owner.id, Invoice.is_estimate.is_(False))
         .all()
     )
+    print(f"[PAYMENT REMINDER] user={owner.id} invoice_count={len(invoices)}", flush=True)
+
+    sent_before = 0
+    sent_after = 0
+    skipped_paid = 0
+    skipped_not_due_before = 0
+    skipped_not_due_after = 0
+    skipped_already_before = 0
+    skipped_already_after = 0
 
     for inv in invoices:
         if float(inv.amount_due() or 0.0) <= 0.0:
+            skipped_paid += 1
             continue
 
         due_dt = _invoice_due_date_utc(inv, owner)
@@ -1376,6 +1400,15 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
                         reminder_kind="before_due",
                         now_utc=now_utc,
                     )
+                    sent_before += 1
+                    print(
+                        f"[PAYMENT REMINDER] user={owner.id} invoice={inv.id} sent kind=before_due due={due_dt.isoformat()}",
+                        flush=True,
+                    )
+                else:
+                    skipped_already_before += 1
+            else:
+                skipped_not_due_before += 1
             if now_utc >= after_target:
                 if getattr(inv, "payment_reminder_after_sent_at", None) is None:
                     _send_payment_reminder_for_invoice(
@@ -1386,11 +1419,28 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
                         reminder_kind="after_due",
                         now_utc=now_utc,
                     )
+                    sent_after += 1
+                    print(
+                        f"[PAYMENT REMINDER] user={owner.id} invoice={inv.id} sent kind=after_due due={due_dt.isoformat()}",
+                        flush=True,
+                    )
+                else:
+                    skipped_already_after += 1
+            else:
+                skipped_not_due_after += 1
         except Exception as exc:
             print(f"[PAYMENT REMINDER] auto send failed invoice={inv.id}: {repr(exc)}", flush=True)
 
     owner.payment_reminder_last_run_at = now_utc
     session.add(owner)
+    print(
+        "[PAYMENT REMINDER] "
+        f"user={owner.id} done sent_before={sent_before} sent_after={sent_after} "
+        f"skipped_paid={skipped_paid} skipped_not_due_before={skipped_not_due_before} "
+        f"skipped_not_due_after={skipped_not_due_after} skipped_already_before={skipped_already_before} "
+        f"skipped_already_after={skipped_already_after}",
+        flush=True,
+    )
 
 
 # -----------------------------

@@ -27,9 +27,12 @@ def main() -> None:
 
     with app.app_context():
         with SessionLocal() as s:
+            print("[PAYMENT REMINDER] cron run start", flush=True)
             reminder_users = s.query(User).all()
+            print(f"[PAYMENT REMINDER] cron user_count={len(reminder_users)}", flush=True)
             for user in reminder_users:
                 try:
+                    print(f"[PAYMENT REMINDER] cron checking user={user.id}", flush=True)
                     _run_automatic_payment_reminders(s, user)
                     s.commit()
                 except Exception as exc:
@@ -38,6 +41,7 @@ def main() -> None:
                         flush=True,
                     )
                     s.rollback()
+            print("[PAYMENT REMINDER] cron run complete", flush=True)
 
             users = (
                 s.query(User)
