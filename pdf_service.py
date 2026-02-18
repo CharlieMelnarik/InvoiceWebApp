@@ -76,7 +76,8 @@ def _invoice_due_date_line(inv: Invoice, owner: User | None, *, is_estimate: boo
         return ""
     if float(inv.amount_due() or 0.0) <= 0.0:
         return ""
-    due_days = int(getattr(owner, "payment_due_days", 30) or 30) if owner else 30
+    raw_due_days = getattr(owner, "payment_due_days", None) if owner else None
+    due_days = 30 if raw_due_days is None else int(raw_due_days)
     due_days = max(0, min(3650, due_days))
     created_at = getattr(inv, "created_at", None) or datetime.utcnow()
     due_dt = created_at + timedelta(days=due_days)
