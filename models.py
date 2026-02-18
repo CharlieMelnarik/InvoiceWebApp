@@ -80,6 +80,11 @@ class User(Base):
     business_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    address_line1: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    address_line2: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    state: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Stripe billing fields
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

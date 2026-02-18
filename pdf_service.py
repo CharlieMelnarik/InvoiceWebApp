@@ -40,6 +40,37 @@ def _format_phone(phone: str | None) -> str:
     return re.sub(r"\)\s+", ") ", raw)
 
 
+def _city_state_postal_line(city: str | None, state: str | None, postal_code: str | None) -> str:
+    city_val = (city or "").strip()
+    state_val = (state or "").strip().upper()
+    postal_val = (postal_code or "").strip()
+    city_state = ", ".join([p for p in [city_val, state_val] if p])
+    if city_state and postal_val:
+        return f"{city_state} {postal_val}"
+    return city_state or postal_val
+
+
+def _owner_address_lines(owner: User | None) -> list[str]:
+    if not owner:
+        return []
+
+    line1 = (getattr(owner, "address_line1", None) or "").strip()
+    line2 = (getattr(owner, "address_line2", None) or "").strip()
+    city = (getattr(owner, "city", None) or "").strip()
+    state = (getattr(owner, "state", None) or "").strip()
+    postal_code = (getattr(owner, "postal_code", None) or "").strip()
+    city_line = _city_state_postal_line(city, state, postal_code)
+    if line1 or line2 or city_line:
+        street_line = ", ".join([p for p in [line1, line2] if p])
+        return [p for p in [street_line, city_line] if p]
+
+    legacy = (getattr(owner, "address", None) or "").strip()
+    if not legacy:
+        return []
+    lines = [ln.strip() for ln in re.split(r"[\r\n]+", legacy) if ln.strip()]
+    return lines or [legacy]
+
+
 def _tax_label(inv: Invoice) -> str:
     if getattr(inv, "tax_override", None) is not None:
         return "Tax"
@@ -146,7 +177,7 @@ def _render_modern_pdf(
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
 
-    brand_dark = colors.HexColor("#0f172a")
+    brand_dark = colors.black
     brand_accent = colors.HexColor("#2563eb")
     brand_muted = colors.HexColor("#64748b")
     line_color = colors.HexColor("#e2e8f0")
@@ -207,18 +238,18 @@ def _render_modern_pdf(
     business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
     header_name = business_name or username or ""
-    header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
+    header_address_lines = _owner_address_lines(owner)
     header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
 
     left_x = M + (logo_w + 10 if logo_w else 0)
     pdf.setFillColor(colors.white)
-    pdf.setFont("Helvetica-Bold", 16)
+    pdf.setFont("Helvetica-Bold", 14)
     pdf.drawString(left_x, PAGE_H - 0.55 * inch, header_name or "InvoiceRunner")
 
     pdf.setFont("Helvetica", 9)
     info_lines = []
-    if header_address:
-        info_lines.extend(_wrap_text(header_address, "Helvetica", 9, 3.6 * inch))
+    for addr_line in header_address_lines:
+        info_lines.extend(_wrap_text(addr_line, "Helvetica", 9, 3.6 * inch))
     if header_phone:
         info_lines.append(header_phone)
     info_y = PAGE_H - 0.82 * inch
@@ -273,7 +304,7 @@ def _render_modern_pdf(
             addr_lines.extend(_wrap_text(line2, "Helvetica", 10, box_w - 24))
 
     draw_card(M, top_y, "BILL TO")
-    pdf.setFont("Helvetica-Bold", 12)
+    pdf.setFont("Helvetica-Bold", 10)
     pdf.drawString(M + 12, top_y - 36, customer_name)
 
     pdf.setFont("Helvetica", 10)
@@ -649,6 +680,7 @@ def _render_split_panel_pdf(
     logo_x = rail_x + 12
     logo_y_top = PAGE_H - M - 36
     logo_drawn = False
+    logo_h_drawn = 0.0
     if owner_logo_blob:
         try:
             img = ImageReader(io.BytesIO(owner_logo_blob))
@@ -660,6 +692,7 @@ def _render_split_panel_pdf(
             h = ih * scale
             pdf.drawImage(img, logo_x, logo_y_top - h, width=w, height=h, mask="auto")
             logo_drawn = True
+            logo_h_drawn = h
         except Exception:
             logo_drawn = False
     elif owner_logo_abs and os.path.exists(owner_logo_abs):
@@ -673,26 +706,31 @@ def _render_split_panel_pdf(
             h = float(ih) * scale
             pdf.drawImage(img, logo_x, logo_y_top - h, width=w, height=h, mask="auto")
             logo_drawn = True
+            logo_h_drawn = h
         except Exception:
             logo_drawn = False
 
     business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
     header_name = business_name or username or "InvoiceRunner"
-    header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
+    header_address_lines = _owner_address_lines(owner)
     header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
 
     pdf.setFillColor(rail_text)
     pdf.setFont("Helvetica-Bold", 10)
-    name_y = logo_y_top - (0.25 * inch if logo_drawn else 0.1 * inch)
+    if logo_drawn:
+        # Start text below the rendered logo so the two never overlap.
+        name_y = logo_y_top - logo_h_drawn - 10
+    else:
+        name_y = logo_y_top - 0.1 * inch
     for ln in _wrap_text(header_name, "Helvetica-Bold", 10, rail_w - 20)[:2]:
         pdf.drawString(rail_x + 12, name_y, ln)
         name_y -= 12
 
     pdf.setFont("Helvetica", 8)
     rail_info = []
-    if header_address:
-        rail_info.extend(_wrap_text(header_address, "Helvetica", 8, rail_w - 20))
+    for addr_line in header_address_lines:
+        rail_info.extend(_wrap_text(addr_line, "Helvetica", 8, rail_w - 20))
     if header_phone:
         rail_info.append(header_phone)
     info_y = name_y - 6
@@ -744,7 +782,7 @@ def _render_split_panel_pdf(
     pdf.setStrokeColor(line_color)
     pdf.roundRect(content_x, PAGE_H - M - 1.0 * inch, content_w, 1.0 * inch, 12, stroke=1, fill=0)
 
-    pdf.setFont("Helvetica-Bold", 16)
+    pdf.setFont("Helvetica-Bold", 12)
     pdf.setFillColor(colors.black)
     pdf.drawString(content_x + 14, PAGE_H - M - 0.55 * inch, doc_label)
 
@@ -1138,17 +1176,17 @@ def _render_strip_pdf(
     business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
     header_name = business_name or username or "InvoiceRunner"
-    pdf.setFont("Helvetica-Bold", 16)
+    pdf.setFont("Helvetica-Bold", 12)
     pdf.setFillColor(colors.black)
     pdf.drawString(M + logo_w, PAGE_H - 0.72 * inch, header_name)
 
     pdf.setFont("Helvetica", 9)
     pdf.setFillColor(muted)
-    header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
+    header_address_lines = _owner_address_lines(owner)
     header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
     info_lines = []
-    if header_address:
-        info_lines.extend(_wrap_text(header_address, "Helvetica", 9, 3.6 * inch))
+    for addr_line in header_address_lines:
+        info_lines.extend(_wrap_text(addr_line, "Helvetica", 9, 3.6 * inch))
     if header_phone:
         info_lines.append(header_phone)
     info_y = PAGE_H - 0.95 * inch
@@ -1638,7 +1676,7 @@ def generate_and_store_pdf(
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
     header_name = business_name or username or ""
 
-    header_address = (getattr(owner, "address", None) or "").strip() if owner else ""
+    header_address_lines = _owner_address_lines(owner)
     header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
 
     # Owner logo (stored relative to instance/)
@@ -1769,91 +1807,74 @@ def generate_and_store_pdf(
         pdf.drawString(M, PAGE_H - M - 16, f"{display_no}  •  Generated: {generated_str}")
 
     # -----------------------------
-    # Header (white, low-ink)
+    # Header (classic printer-friendly)
     # -----------------------------
-    pdf.setFillColorRGB(1, 1, 1)
-    pdf.rect(0, PAGE_H - 1.15 * inch, PAGE_W, 1.15 * inch, stroke=0, fill=1)
-
+    header_h = 1.35 * inch
+    pdf.setFillColor(colors.white)
+    pdf.rect(0, PAGE_H - header_h, PAGE_W, header_h, stroke=0, fill=1)
     pdf.setStrokeColor(colors.HexColor("#CCCCCC"))
     pdf.setLineWidth(1)
-    pdf.line(M, PAGE_H - 1.30 * inch, PAGE_W - M, PAGE_H - 1.30 * inch)
+    pdf.line(M, PAGE_H - header_h - 0.02 * inch, PAGE_W - M, PAGE_H - header_h - 0.02 * inch)
 
-    pdf.setFillColorRGB(0, 0, 0)
-    pdf.setFont("Helvetica-Bold", 20)
-    pdf.drawString(M, PAGE_H - 0.75 * inch, doc_label)
-
-    # Optional logo on far left
+    # Optional logo (same placement behavior as modern)
     logo_w = 0
     if owner_logo_blob:
         try:
             img = ImageReader(io.BytesIO(owner_logo_blob))
             iw, ih = img.getSize()
-
-            max_h = 0.4 * inch
-            max_w = 1.05 * inch
+            max_h = 0.5 * inch
+            max_w = 1.4 * inch
             scale = min(max_w / iw, max_h / ih)
             logo_w = iw * scale
             logo_h = ih * scale
-
             logo_x = M
-            logo_y = PAGE_H - 0.86 * inch - (logo_h / 2)
-            pdf.drawImage(img, logo_x, logo_y, width=logo_w, height=logo_h, mask='auto')
+            logo_y = PAGE_H - (header_h / 2) - (logo_h / 2)
+            pdf.drawImage(img, logo_x, logo_y, width=logo_w, height=logo_h, mask="auto")
         except Exception:
-            pass
+            logo_w = 0
     elif owner_logo_abs and os.path.exists(owner_logo_abs):
         try:
             img = ImageReader(owner_logo_abs)
             iw, ih = img.getSize()
-
-            max_h = 0.4 * inch
-            max_w = 1.05 * inch
-
+            max_h = 0.5 * inch
+            max_w = 1.4 * inch
             scale = min(max_w / float(iw), max_h / float(ih))
-            w = float(iw) * scale
-            h = float(ih) * scale
-
-            x = M
-            y = (PAGE_H - .81 * inch) - h
-
-            pdf.drawImage(img, x, y, width=w, height=h, mask="auto")
-            logo_w = w + 10  # spacing after logo
+            logo_w = float(iw) * scale
+            logo_h = float(ih) * scale
+            logo_x = M
+            logo_y = PAGE_H - (header_h / 2) - (logo_h / 2)
+            pdf.drawImage(img, logo_x, logo_y, width=logo_w, height=logo_h, mask="auto")
         except Exception:
             logo_w = 0
 
+    # Business info (left, black text)
+    left_x = M + (logo_w + 10 if logo_w else 0)
+    pdf.setFillColor(colors.black)
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(left_x, PAGE_H - 0.55 * inch, header_name or "InvoiceRunner")
 
-    # Business info (left)
-    pdf.setFont("Helvetica", 10)
-    business_x = M + logo_w
-
-
-    left_lines = []
-    if header_name:
-        left_lines.append(header_name)
-
-    if header_address:
-        max_w = (PAGE_W / 2) - M
-        addr_lines = _wrap_text(header_address, "Helvetica", 10, max_w)
-        left_lines.extend(addr_lines[:2])
-
+    pdf.setFont("Helvetica", 9)
+    info_lines = []
+    for addr_line in header_address_lines:
+        info_lines.extend(_wrap_text(addr_line, "Helvetica", 9, 3.6 * inch))
     if header_phone:
-        left_lines.append(header_phone)
+        info_lines.append(header_phone)
+    info_y = PAGE_H - 0.82 * inch
+    for ln in info_lines[:2]:
+        pdf.drawString(left_x, info_y, ln)
+        info_y -= 12
 
-    y_positions = [PAGE_H - 0.98 * inch, PAGE_H - 1.12 * inch, PAGE_H - 1.26 * inch]
-    for i, y in enumerate(y_positions):
-        if i < len(left_lines):
-            pdf.drawString(business_x, y, left_lines[i])
-
-
-    # Meta (right)
+    # Meta (right, black text)
     meta_x = PAGE_W - M
-    meta_y = PAGE_H - 0.78 * inch
-    right_text(meta_x, meta_y, f"{doc_label.title()} #: {display_no}", "Helvetica", 10)
-    right_text(meta_x, meta_y - 14, f"Date: {inv.date_in}", "Helvetica", 10)
+    right_text(meta_x, PAGE_H - 0.48 * inch, doc_label, "Helvetica-Bold", 18)
+    right_text(meta_x, PAGE_H - 0.80 * inch, f"{doc_label.title()} #: {display_no}", "Helvetica", 10)
+    right_text(meta_x, PAGE_H - 1.02 * inch, f"Date: {inv.date_in}", "Helvetica", 10)
+    pdf.setFillColor(colors.black)
 
     # -----------------------------
     # Bill To + Job Details boxes
     # -----------------------------
-    top_y = PAGE_H - 1.45 * inch
+    top_y = PAGE_H - header_h - 0.35 * inch
     box_w = (PAGE_W - 2 * M - 0.35 * inch) / 2
     line_step = 12
     name_start_y = top_y - 34

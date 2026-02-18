@@ -403,6 +403,13 @@
     return found ? `${found.username} Schedule` : "Employee Schedule";
   }
 
+  function employeeNameForEvent(e){
+    const creatorId = Number(e && e.created_by_user_id ? e.created_by_user_id : 0);
+    if (!creatorId) return "";
+    const found = (EMPLOYEES_FOR_JS || []).find(emp => Number(emp.id) === creatorId);
+    return found ? (found.username || "").trim() : "";
+  }
+
   function applySchedulerAccessUI(){
     const canCreate = canCreateInCurrentScheduleView();
     if (newBtn){
@@ -545,13 +552,16 @@
       label = `${baseTitle} - ${customerName}`;
     }
 
+    const employeeName = (state.scheduleView === "company") ? employeeNameForEvent(e) : "";
+    const labelWithOwner = employeeName ? `${label} (${employeeName})` : label;
+
     if (e.status === "completed") {
-      return `✓ ${label}`;
+      return `✓ ${labelWithOwner}`;
     }
     if (e.status === "cancelled") {
-      return `Cancelled: ${label}`;
+      return `Cancelled: ${labelWithOwner}`;
     }
-    return label;
+    return labelWithOwner;
   }
 
   function eventShortLabel(e){
@@ -794,11 +804,14 @@
           View ${invoiceLabel} ${escapeHTML(e.invoice_number || "")}
         </a>
       ` : "";
+      const employeeName = (state.scheduleView === "company") ? employeeNameForEvent(e) : "";
+      const employeeLine = employeeName ? `<div class="event-sub">Employee: ${escapeHTML(employeeName)}</div>` : "";
 
       block.innerHTML = `
         ${statusActions}
         <div class="event-title">${escapeHTML(titleLabel)}</div>
         <div class="event-sub">${blockStart.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} - ${blockEnd.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</div>
+        ${employeeLine}
         ${invoiceLink}
       `;
 

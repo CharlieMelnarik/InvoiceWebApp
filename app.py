@@ -347,6 +347,34 @@ def _format_customer_address(
     return ", ".join(parts) if parts else None
 
 
+def _format_city_state_postal(
+    city: str | None,
+    state: str | None,
+    postal_code: str | None,
+) -> str:
+    city_val = (city or "").strip()
+    state_val = (state or "").strip().upper()
+    postal_val = (postal_code or "").strip()
+    city_state = ", ".join([p for p in [city_val, state_val] if p])
+    if city_state and postal_val:
+        return f"{city_state} {postal_val}"
+    return city_state or postal_val
+
+
+def _format_user_address_legacy(
+    line1: str | None,
+    line2: str | None,
+    city: str | None,
+    state: str | None,
+    postal_code: str | None,
+) -> str | None:
+    parts = [p for p in [(line1 or "").strip(), (line2 or "").strip()] if p]
+    city_line = _format_city_state_postal(city, state, postal_code)
+    if city_line:
+        parts.append(city_line)
+    return ", ".join(parts) if parts else None
+
+
 def _summary_period_key(freq: str, window_start: datetime) -> str:
     if freq == "day":
         return window_start.date().isoformat()
@@ -1244,6 +1272,16 @@ def _migrate_user_profile_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN phone VARCHAR(50)")
     if not _column_exists(engine, "users", "address"):
         stmts.append("ALTER TABLE users ADD COLUMN address VARCHAR(300)")
+    if not _column_exists(engine, "users", "address_line1"):
+        stmts.append("ALTER TABLE users ADD COLUMN address_line1 VARCHAR(200)")
+    if not _column_exists(engine, "users", "address_line2"):
+        stmts.append("ALTER TABLE users ADD COLUMN address_line2 VARCHAR(200)")
+    if not _column_exists(engine, "users", "city"):
+        stmts.append("ALTER TABLE users ADD COLUMN city VARCHAR(100)")
+    if not _column_exists(engine, "users", "state"):
+        stmts.append("ALTER TABLE users ADD COLUMN state VARCHAR(50)")
+    if not _column_exists(engine, "users", "postal_code"):
+        stmts.append("ALTER TABLE users ADD COLUMN postal_code VARCHAR(20)")
 
     if stmts:
         with engine.begin() as conn:
@@ -2816,7 +2854,18 @@ def create_app():
 
                 u.business_name = (request.form.get("business_name") or "").strip() or None
                 u.phone = (request.form.get("phone") or "").strip() or None
-                u.address = (request.form.get("address") or "").strip() or None
+                u.address_line1 = (request.form.get("address_line1") or "").strip() or None
+                u.address_line2 = (request.form.get("address_line2") or "").strip() or None
+                u.city = (request.form.get("city") or "").strip() or None
+                u.state = (request.form.get("state") or "").strip().upper() or None
+                u.postal_code = (request.form.get("postal_code") or "").strip() or None
+                u.address = _format_user_address_legacy(
+                    u.address_line1,
+                    u.address_line2,
+                    u.city,
+                    u.state,
+                    u.postal_code,
+                )
 
                 summary_freq = (request.form.get("schedule_summary_frequency") or "none").strip().lower()
                 summary_time_raw = request.form.get("schedule_summary_time") or ""

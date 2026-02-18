@@ -379,7 +379,13 @@
   function removeRow(btn) {
     const tr = btn.closest("tr");
     if (!tr) return;
+    const tbody = tr.closest("tbody");
     tr.remove();
+    if (tbody && tbody.closest("#partsTable")) {
+      ensurePartTrailingBlank();
+    } else if (tbody && tbody.closest("#laborTable")) {
+      ensureLaborTrailingBlank();
+    }
   }
 
   function titleCaseWords(value) {
@@ -458,6 +464,35 @@
       </td>
     `;
     tbody.appendChild(tr);
+  }
+
+  function _isRowBlank(tr, fieldNames) {
+    if (!tr) return true;
+    for (const name of fieldNames) {
+      const input = tr.querySelector(`input[name="${name}"]`);
+      if (input && (input.value || "").trim() !== "") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function _ensureTrailingBlankRow(tableSelector, addRowFn, fieldNames) {
+    const tbody = document.querySelector(`${tableSelector} tbody`);
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    const lastRow = rows[rows.length - 1];
+    if (!lastRow || !_isRowBlank(lastRow, fieldNames)) {
+      addRowFn();
+    }
+  }
+
+  function ensurePartTrailingBlank() {
+    _ensureTrailingBlankRow("#partsTable", addPartRow, ["part_name", "part_price"]);
+  }
+
+  function ensureLaborTrailingBlank() {
+    _ensureTrailingBlankRow("#laborTable", addLaborRow, ["labor_desc", "labor_time_hours"]);
   }
 
   // -----------------------------
@@ -558,6 +593,20 @@
   })();
 
   (function () {
+    document.addEventListener("input", (e) => {
+      if (!e.target || !e.target.name) return;
+      if (e.target.name === "part_name" || e.target.name === "part_price") {
+        ensurePartTrailingBlank();
+      } else if (e.target.name === "labor_desc" || e.target.name === "labor_time_hours") {
+        ensureLaborTrailingBlank();
+      }
+    });
+
+    ensurePartTrailingBlank();
+    ensureLaborTrailingBlank();
+  })();
+
+  (function () {
     const params = new URLSearchParams(window.location.search);
     const ids = (params.get("add_expense_ids") || "").trim();
     if (!ids) return;
@@ -571,6 +620,7 @@
           const price = (it && typeof it.price !== "undefined") ? String(Number(it.price).toFixed(2)) : "";
           addPartRowWithValues(name, price);
         });
+        ensurePartTrailingBlank();
         if (items.length) {
           params.delete("add_expense_ids");
           const qs = params.toString();

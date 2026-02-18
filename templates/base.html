@@ -14,19 +14,22 @@
 
   <style>
     :root {
-      --app-bg: #eef2f7;
+      --app-bg: #d4e2f7;
       --app-card: #ffffff;
-      --app-ink: #0f172a;
-      --app-muted: #64748b;
-      --app-brand: #1f3a5f;
-      --app-brand-2: #2563eb;
-      --app-line: #e5e7eb;
-      --app-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+      --app-ink: #0b1429;
+      --app-muted: #4c6489;
+      --app-brand: #163f86;
+      --app-brand-2: #2a65c8;
+      --app-line: #b9cdea;
+      --app-shadow: 0 14px 34px rgba(12, 34, 73, 0.12);
       --app-radius: 14px;
     }
 
     body {
-      background: radial-gradient(circle at top left, #f5f8ff 0%, #eef2f7 45%, #e8eef7 100%);
+      background:
+        radial-gradient(circle at top left, rgba(42, 101, 200, 0.28) 0%, transparent 42%),
+        radial-gradient(circle at top right, rgba(182, 128, 37, 0.2) 0%, transparent 40%),
+        linear-gradient(180deg, #e4eefc 0%, #d3e0f5 100%);
       color: var(--app-ink);
       font-family: "Source Sans 3", system-ui, -apple-system, sans-serif;
     }
@@ -40,20 +43,20 @@
     }
 
     .navbar {
-      background: #0f172a !important;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(100deg, #0f2749 0%, #143763 48%, #1b4a83 100%) !important;
+      box-shadow: 0 12px 28px rgba(9, 29, 58, 0.28);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
     }
 
     .navbar .nav-link {
-      color: rgba(255, 255, 255, 0.7);
+      color: rgba(238, 246, 255, 0.82);
       font-weight: 500;
     }
     .navbar .nav-link:hover {
       color: #ffffff;
     }
     .navbar .navbar-text {
-      color: rgba(255, 255, 255, 0.7);
+      color: rgba(240, 248, 255, 0.86);
     }
 
     .card {
@@ -62,7 +65,7 @@
       box-shadow: var(--app-shadow);
     }
     .card .card-header {
-      background: #f8fafc;
+      background: linear-gradient(180deg, #eef4ff 0%, #e5eefc 100%);
       border-bottom: 1px solid var(--app-line);
       font-weight: 600;
     }
@@ -90,18 +93,18 @@
     .btn-primary {
       background: linear-gradient(135deg, var(--app-brand), var(--app-brand-2));
       border: none;
-      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.25);
+      box-shadow: 0 12px 24px rgba(22, 63, 134, 0.32);
     }
     .btn-primary:hover {
       filter: brightness(0.98);
     }
     .btn-outline-primary {
-      border-color: rgba(37, 99, 235, 0.35);
-      color: #1f4db8;
-      background: rgba(37, 99, 235, 0.08);
+      border-color: rgba(22, 63, 134, 0.42);
+      color: #1a4688;
+      background: rgba(42, 101, 200, 0.12);
     }
     .btn-outline-primary:hover {
-      background: rgba(37, 99, 235, 0.15);
+      background: rgba(42, 101, 200, 0.2);
     }
     .btn-success {
       background: linear-gradient(135deg, #15803d, #22c55e);
@@ -109,20 +112,20 @@
       box-shadow: 0 12px 24px rgba(34, 197, 94, 0.2);
     }
     .btn-outline-success {
-      border-color: rgba(34, 197, 94, 0.4);
-      color: #15803d;
-      background: rgba(34, 197, 94, 0.08);
+      border-color: rgba(8, 122, 107, 0.45);
+      color: #0e6a5c;
+      background: rgba(8, 122, 107, 0.12);
     }
     .btn-outline-success:hover {
-      background: rgba(34, 197, 94, 0.15);
+      background: rgba(8, 122, 107, 0.2);
     }
     .btn-outline-warning {
-      border-color: rgba(245, 158, 11, 0.4);
-      color: #b45309;
-      background: rgba(245, 158, 11, 0.08);
+      border-color: rgba(182, 128, 37, 0.45);
+      color: #8f6216;
+      background: rgba(182, 128, 37, 0.14);
     }
     .btn-outline-warning:hover {
-      background: rgba(245, 158, 11, 0.15);
+      background: rgba(182, 128, 37, 0.22);
     }
     .btn-outline-danger {
       border-color: rgba(220, 38, 38, 0.35);
@@ -133,12 +136,12 @@
       background: rgba(220, 38, 38, 0.15);
     }
     .btn-outline-secondary {
-      border-color: rgba(15, 23, 42, 0.25);
-      color: #1f2937;
-      background: rgba(15, 23, 42, 0.05);
+      border-color: rgba(30, 60, 104, 0.36);
+      color: #274168;
+      background: rgba(30, 60, 104, 0.1);
     }
     .btn-outline-secondary:hover {
-      background: rgba(15, 23, 42, 0.1);
+      background: rgba(30, 60, 104, 0.18);
     }
 
     .form-control, .form-select {
@@ -147,8 +150,8 @@
       padding: 0.55rem 0.75rem;
     }
     .form-control:focus, .form-select:focus {
-      border-color: rgba(37, 99, 235, 0.6);
-      box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.15);
+      border-color: rgba(22, 63, 134, 0.68);
+      box-shadow: 0 0 0 0.2rem rgba(22, 63, 134, 0.18);
     }
 
     .badge {
@@ -164,24 +167,24 @@
       gap: 1rem;
       margin-bottom: 1.5rem;
       padding: 0.95rem 1rem 0.9rem;
-      border: 1px solid #d7e1f0;
+      border: 1px solid #b7cbe8;
       border-radius: 14px;
       background:
-        radial-gradient(540px 120px at 0% 0%, rgba(39, 102, 194, 0.12), transparent 68%),
-        radial-gradient(420px 120px at 100% 0%, rgba(198, 153, 72, 0.12), transparent 66%),
-        linear-gradient(180deg, #fbfdff 0%, #f4f8ff 100%);
-      box-shadow: 0 10px 24px rgba(15, 35, 67, 0.08);
+        radial-gradient(540px 120px at 0% 0%, rgba(42, 101, 200, 0.2), transparent 68%),
+        radial-gradient(420px 120px at 100% 0%, rgba(182, 128, 37, 0.18), transparent 66%),
+        linear-gradient(180deg, #f5f9ff 0%, #e7effc 100%);
+      box-shadow: 0 12px 28px rgba(12, 34, 73, 0.12);
     }
     .page-header h1 {
       margin-bottom: 0.25rem !important;
-      color: #12335f;
+      color: #102f5b;
       letter-spacing: 0.01em;
       text-wrap: balance;
-      border-left: 4px solid #2d6dc2;
+      border-left: 4px solid #1f58ab;
       padding-left: 10px;
     }
     .page-header .subtitle {
-      color: #576d8f;
+      color: #425f8d;
       font-size: 0.93rem;
       font-weight: 500;
     }
@@ -220,8 +223,8 @@
       height: 100%;
     }
     .pdf-template-card input:checked + .pdf-template-body {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+      border-color: #1f58ab;
+      box-shadow: 0 0 0 3px rgba(31, 88, 171, 0.2);
     }
     .pdf-template-preview img {
       width: 100%;

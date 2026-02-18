@@ -4,15 +4,15 @@
 {% block content %}
 <style>
   :root {
-    --settings-border: #d6deeb;
-    --settings-border-strong: #bfcde0;
-    --settings-bg-soft: #f2f6fc;
-    --settings-text-muted: #556a89;
-    --settings-shadow: 0 16px 36px rgba(16, 38, 72, 0.12);
-    --settings-shadow-soft: 0 8px 20px rgba(16, 38, 72, 0.08);
-    --settings-premium: #c79a4b;
-    --settings-premium-soft: #f4e5c8;
-    --settings-navy: #12335f;
+    --settings-border: #afc4e4;
+    --settings-border-strong: #90afd9;
+    --settings-bg-soft: #dde8f8;
+    --settings-text-muted: #405e8d;
+    --settings-shadow: 0 16px 36px rgba(12, 34, 73, 0.14);
+    --settings-shadow-soft: 0 9px 22px rgba(12, 34, 73, 0.1);
+    --settings-premium: #b68025;
+    --settings-premium-soft: #f0dbb1;
+    --settings-navy: #0f2f5a;
   }
   .settings-shell {
     max-width: 1240px;
@@ -27,7 +27,7 @@
     height: 240px;
     border-radius: 22px;
     background: radial-gradient(1200px 260px at 10% 0%, rgba(31, 88, 168, 0.12), transparent 58%),
-                radial-gradient(900px 220px at 90% 8%, rgba(199, 154, 75, 0.14), transparent 60%);
+                radial-gradient(900px 220px at 90% 8%, rgba(182, 128, 37, 0.22), transparent 60%);
     pointer-events: none;
     z-index: 0;
   }
@@ -43,7 +43,7 @@
     position: sticky;
     top: 10px;
     z-index: 5;
-    background: linear-gradient(180deg, rgba(248, 251, 255, 0.98), rgba(246, 250, 255, 0.92));
+    background: linear-gradient(180deg, rgba(236, 244, 255, 0.98), rgba(226, 238, 255, 0.92));
     border: 1px solid var(--settings-border);
     border-radius: 12px;
     padding: 10px;
@@ -56,15 +56,15 @@
     border-radius: 999px;
     font-size: 0.85rem;
     font-weight: 600;
-    color: #415a81;
+    color: #2d4d7b;
     text-decoration: none;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    background: linear-gradient(180deg, #ffffff 0%, #eaf3ff 100%);
     transition: all 0.18s ease;
   }
   .settings-jump-link:hover {
-    color: #1b3f76;
-    border-color: #acc4e6;
-    background: linear-gradient(180deg, #f8fbff 0%, #edf4ff 100%);
+    color: #143d78;
+    border-color: #89acdd;
+    background: linear-gradient(180deg, #eaf3ff 0%, #dce9ff 100%);
     transform: translateY(-1px);
   }
   .settings-grid {
@@ -73,9 +73,9 @@
     gap: 16px;
   }
   .settings-card {
-    border: 1px solid #d4deed;
+    border: 1px solid #a9c0e2;
     border-radius: 16px;
-    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    background: linear-gradient(180deg, #ffffff 0%, #e9f2ff 100%);
     box-shadow: var(--settings-shadow);
     padding: 18px;
   }
@@ -85,7 +85,7 @@
     font-weight: 850;
     color: var(--settings-navy);
     letter-spacing: 0.01em;
-    border-left: 3px solid #2a66b9;
+    border-left: 3px solid #1d56a7;
     padding-left: 8px;
   }
   .settings-card-head {
@@ -93,7 +93,7 @@
     align-items: center;
     justify-content: space-between;
     margin-bottom: 8px;
-    border-bottom: 1px solid #e4ebf6;
+    border-bottom: 1px solid #c7d7ee;
     padding-bottom: 8px;
   }
   .settings-help {
@@ -105,47 +105,47 @@
   .compact-label {
     font-size: 0.84rem;
     font-weight: 600;
-    color: #324867;
+    color: #24426f;
     margin-bottom: 0.3rem;
   }
   .settings-shell .form-control,
   .settings-shell .form-select {
-    border-color: #c6d3e5;
+    border-color: #98b2d8;
     border-radius: 10px;
     min-height: 40px;
     font-size: 0.95rem;
     box-shadow: none;
-    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
   }
   .settings-shell .form-control:focus,
   .settings-shell .form-select:focus {
-    border-color: #7ca2d8;
-    box-shadow: 0 0 0 0.22rem rgba(30, 86, 161, 0.14);
+    border-color: #5d88c5;
+    box-shadow: 0 0 0 0.22rem rgba(22, 63, 134, 0.18);
   }
   .settings-shell .small-muted {
     color: var(--settings-text-muted) !important;
   }
   .settings-shell .list-group-item {
-    border-color: #e1e9f5;
+    border-color: #bfd0e8;
     padding: 0.72rem 0.86rem;
   }
   .live-preview-wrap {
-    border: 1px solid #d4deed;
+    border: 1px solid #a9c0e2;
     border-radius: 14px;
-    background: linear-gradient(180deg, #f9fcff 0%, #f1f6ff 100%);
+    background: linear-gradient(180deg, #edf4ff 0%, #dfeaff 100%);
     padding: 12px;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   }
   .live-preview-title {
     font-size: 0.93rem;
     font-weight: 800;
-    color: #233f63;
+    color: #133b70;
     margin-bottom: 8px;
   }
   .live-preview-frame {
     width: 100%;
     height: 560px;
-    border: 1px solid #cad6ea;
+    border: 1px solid #9eb7dc;
     border-radius: 10px;
     background: #fff;
   }
@@ -158,15 +158,15 @@
     margin-top: 12px;
   }
   .save-pill {
-    box-shadow: 0 12px 28px rgba(10, 41, 84, 0.2);
+    box-shadow: 0 12px 28px rgba(10, 41, 84, 0.28);
     border-radius: 12px;
     padding-left: 1rem;
     padding-right: 1rem;
-    border: 1px solid #0f3f7d;
-    background: linear-gradient(180deg, #1f5fb5 0%, #174b93 100%);
+    border: 1px solid #123f7e;
+    background: linear-gradient(180deg, #245fab 0%, #143f7d 100%);
   }
   .save-pill:hover {
-    background: linear-gradient(180deg, #225fb1 0%, #133f7e 100%);
+    background: linear-gradient(180deg, #285fa6 0%, #12376d 100%);
   }
   .settings-shell .badge.text-bg-light.border {
     background: linear-gradient(180deg, #fff8ec 0%, #f8ecd5 100%) !important;
@@ -399,9 +399,32 @@
           <label class="form-label compact-label">Phone Number</label>
           <input type="text" class="form-control" name="phone" value="{{ u.phone or '' }}" placeholder="(406) 555-1234">
         </div>
-        <div class="mb-0">
-          <label class="form-label compact-label">Address</label>
-          <textarea class="form-control" name="address" rows="3" placeholder="Street, City, State ZIP">{{ u.address or '' }}</textarea>
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label compact-label">Street Address</label>
+            <input class="form-control" name="address_line1" autocomplete="address-line1"
+              value="{{ u.address_line1 or u.address or '' }}" placeholder="Street address">
+          </div>
+          <div class="col-12">
+            <label class="form-label compact-label">Address Line 2</label>
+            <input class="form-control" name="address_line2" autocomplete="address-line2"
+              value="{{ u.address_line2 or '' }}" placeholder="Apartment, suite, unit, etc. (optional)">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label compact-label">City</label>
+            <input class="form-control" name="city" autocomplete="address-level2"
+              value="{{ u.city or '' }}" placeholder="City">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label compact-label">State</label>
+            <input class="form-control" name="state" autocomplete="address-level1"
+              value="{{ u.state or '' }}" placeholder="State">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label compact-label">ZIP</label>
+            <input class="form-control" name="postal_code" autocomplete="postal-code"
+              value="{{ u.postal_code or '' }}" placeholder="ZIP">
+          </div>
         </div>
       </section>
 

@@ -7,325 +7,402 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
 
   <style>
     :root {
-      --ink: #0b0f16;
-      --ink-soft: #2a3240;
-      --muted: #6b7280;
-      --brand: #1b3a57;
-      --accent: #9cc7ff;
-      --accent-deep: #5aa0ff;
-      --bg: #f1f5fb;
+      --ink: #0b1429;
+      --ink-soft: #223b66;
+      --muted: #425f8d;
+      --line: #abc2e6;
+      --bg: #cfdef5;
       --card: #ffffff;
-      --line: #e6e3dc;
-      --shadow: 0 18px 40px rgba(11, 15, 22, 0.12);
+      --primary: #163f86;
+      --primary-2: #2a65c8;
+      --teal: #087a6b;
+      --gold: #b68025;
+      --danger: #b23a4a;
+      --shadow: 0 18px 44px rgba(12, 34, 73, 0.16);
+      --shadow-soft: 0 10px 24px rgba(12, 34, 73, 0.11);
     }
 
     * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     body {
       margin: 0;
       color: var(--ink);
-      background: radial-gradient(circle at top left, #e7f1ff 0%, #f1f5fb 45%, #e9f0fb 100%);
-      font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
-    }
-
-    .page {
-      min-height: 100vh;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .orb {
-      position: absolute;
-      width: 380px;
-      height: 380px;
-      border-radius: 50%;
-      background: linear-gradient(140deg, rgba(156, 199, 255, 0.6), rgba(90, 160, 255, 0.35));
-      filter: blur(2px);
-      top: -140px;
-      right: -120px;
-      z-index: 0;
-    }
-
-    .orb.secondary {
-      width: 260px;
-      height: 260px;
-      left: -80px;
-      bottom: -80px;
-      background: linear-gradient(160deg, rgba(27, 58, 87, 0.2), rgba(27, 58, 87, 0.04));
+      background:
+        radial-gradient(1100px 560px at 8% -5%, rgba(29, 84, 175, 0.38), transparent 60%),
+        radial-gradient(920px 420px at 98% 2%, rgba(173, 118, 25, 0.3), transparent 62%),
+        radial-gradient(700px 380px at 52% 18%, rgba(8, 122, 107, 0.2), transparent 68%),
+        linear-gradient(180deg, #deebfd 0%, #cfdff7 100%);
+      font-family: "Outfit", system-ui, -apple-system, sans-serif;
+      line-height: 1.45;
     }
 
     .wrap {
-      max-width: 1200px;
+      max-width: 1220px;
       margin: 0 auto;
-      padding: 28px 24px 80px;
-      position: relative;
-      z-index: 1;
+      padding: 26px 22px 72px;
     }
 
     .topbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 20px;
-      padding-bottom: 24px;
+      gap: 14px;
+      margin-bottom: 28px;
     }
 
-    .brand {
+    .top-actions {
       display: flex;
       align-items: center;
-      gap: 12px;
-      font-weight: 700;
-      letter-spacing: 0.2px;
-      font-size: 1.1rem;
-    }
-
-    .brand-mark {
-      width: 42px;
-      height: 42px;
-      border-radius: 12px;
-      background: linear-gradient(135deg, var(--brand), #356d9a);
-      color: #fff;
-      display: grid;
-      place-items: center;
-      font-weight: 700;
-      font-size: 1rem;
-    }
-
-    .login-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px 22px;
-      border-radius: 999px;
-      border: 1px solid rgba(11, 15, 22, 0.15);
-      background: #fff;
-      text-decoration: none;
-      color: var(--ink);
-      font-weight: 600;
-      box-shadow: 0 10px 24px rgba(11, 15, 22, 0.08);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .login-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 16px 30px rgba(11, 15, 22, 0.14);
-    }
-
-    .hero {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 36px;
-      align-items: center;
-      padding: 32px 0 40px;
-    }
-
-    .hero h1 {
-      font-family: "Newsreader", serif;
-      font-size: clamp(2.6rem, 4vw, 3.6rem);
-      line-height: 1.05;
-      margin: 0 0 18px;
-    }
-
-    .hero p {
-      font-size: 1.05rem;
-      color: var(--ink-soft);
-      margin: 0 0 24px;
-    }
-
-    .hero .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.85rem;
-      color: var(--brand);
-      background: rgba(27, 58, 87, 0.08);
-      padding: 6px 12px;
-      border-radius: 999px;
-      margin-bottom: 18px;
-    }
-
-    .hero-actions {
-      display: flex;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
     }
 
-    .cta-primary {
-      background: var(--brand);
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      font-weight: 700;
+      border-radius: 12px;
+      padding: 11px 16px;
+      border: 1px solid transparent;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    .btn:hover { transform: translateY(-1px); }
+
+    .btn-primary {
       color: #fff;
-      border: none;
-      padding: 14px 22px;
-      border-radius: 12px;
-      font-weight: 600;
-      text-decoration: none;
-      box-shadow: var(--shadow);
+      background: linear-gradient(180deg, var(--primary-2) 0%, var(--primary) 100%);
+      box-shadow: var(--shadow-soft);
     }
 
-    .cta-secondary {
-      background: transparent;
-      border: 1px solid rgba(11, 15, 22, 0.2);
-      padding: 14px 22px;
-      border-radius: 12px;
-      text-decoration: none;
+    .btn-ghost {
       color: var(--ink);
-      font-weight: 600;
+      border-color: #86a8d8;
+      background: #eaf2ff;
     }
 
-    .hero-visual {
-      position: relative;
-    }
-
-    .mockup {
-      background: var(--card);
+    .hero {
+      border: 1px solid var(--line);
+      background:
+        radial-gradient(560px 210px at 100% 0%, rgba(182, 128, 37, 0.34), transparent 66%),
+        radial-gradient(640px 270px at 0% 100%, rgba(42, 101, 200, 0.3), transparent 68%),
+        linear-gradient(180deg, #ffffff 0%, #e8f2ff 100%);
       border-radius: 22px;
-      padding: 24px;
       box-shadow: var(--shadow);
-      border: 1px solid var(--line);
+      padding: 30px;
+      margin-bottom: 22px;
     }
 
-    .mockup .placeholder {
-      height: 260px;
-      border-radius: 16px;
-      background: linear-gradient(135deg, #e6edf5, #f8fafc);
-      border: 1px dashed rgba(11, 15, 22, 0.2);
+    .hero-grid {
       display: grid;
-      place-items: center;
-      color: var(--muted);
-      font-weight: 600;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+      gap: 24px;
+      align-items: start;
     }
 
-    .mockup .mini-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: .02em;
+      color: #103f83;
+      border: 1px solid #7ea3db;
+      border-radius: 999px;
+      padding: 5px 11px;
+      background: #d8e9ff;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-family: "Fraunces", serif;
+      font-size: clamp(2.25rem, 4vw, 3.3rem);
+      line-height: 1.07;
+      color: #102e5a;
+      letter-spacing: 0.01em;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 1.02rem;
+      max-width: 640px;
+    }
+
+    .hero-actions {
+      margin-top: 16px;
+      display: flex;
+      flex-wrap: wrap;
       gap: 10px;
-      margin-top: 18px;
     }
 
-    .mockup .mini {
-      height: 52px;
+    .trust-strip {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .trust-item {
+      border: 1px solid #d2dff3;
       border-radius: 12px;
-      background: #f3f4f6;
-      border: 1px solid var(--line);
+      padding: 10px 12px;
+      background: #f6faff;
+      font-size: .92rem;
+      color: #2f466d;
+    }
+    .trust-item:nth-child(1) {
+      background: linear-gradient(180deg, #dbe9ff 0%, #cde1ff 100%);
+      border-color: #9ebeea;
+    }
+    .trust-item:nth-child(2) {
+      background: linear-gradient(180deg, #d9f2ed 0%, #c8ebe3 100%);
+      border-color: #8fcec3;
+    }
+    .trust-item:nth-child(3) {
+      background: linear-gradient(180deg, #ffeecb 0%, #ffe4b3 100%);
+      border-color: #dfba7a;
+    }
+
+    .hero-panel {
+      border: 1px solid #90b2e0;
+      border-radius: 16px;
+      background: linear-gradient(180deg, #eaf3ff 0%, #d9e8ff 100%);
+      padding: 14px;
+    }
+
+    .hero-panel h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      color: #183f76;
+    }
+
+    .hero-list {
+      margin: 0;
+      padding-left: 18px;
+      color: #314b74;
+      display: grid;
+      gap: 7px;
+      font-size: .93rem;
     }
 
     .section {
-      padding: 36px 0;
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff 0%, #e8f2ff 100%);
+      border-radius: 18px;
+      box-shadow: var(--shadow-soft);
+      padding: 22px;
     }
 
     .section h2 {
-      font-size: 2rem;
-      margin-bottom: 14px;
+      margin: 0 0 8px;
+      font-family: "Fraunces", serif;
+      font-size: clamp(1.45rem, 2.2vw, 2rem);
+      color: #123763;
     }
 
-    .section p {
+    .section p.section-lead {
+      margin: 0;
       color: var(--ink-soft);
+      font-size: .98rem;
     }
 
-    .grid-3 {
+    .module-grid {
+      margin-top: 14px;
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 18px;
-      margin-top: 24px;
+      gap: 12px;
     }
 
-    .card {
-      background: var(--card);
-      border-radius: 18px;
-      padding: 20px;
-      border: 1px solid var(--line);
-      box-shadow: 0 12px 30px rgba(11, 15, 22, 0.08);
+    .module {
+      border: 1px solid #99b7e3;
+      border-radius: 14px;
+      background: #fff;
+      padding: 14px;
+      box-shadow: 0 6px 16px rgba(20, 45, 88, 0.06);
+      position: relative;
+      overflow: hidden;
+    }
+    .module::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, #2a65c8 0%, #163f86 100%);
+    }
+    .module:nth-child(3n+2)::before {
+      background: linear-gradient(90deg, #0a9f8d 0%, #087a6b 100%);
+    }
+    .module:nth-child(3n+3)::before {
+      background: linear-gradient(90deg, #cc9332 0%, #9a6818 100%);
     }
 
-    .card h3 {
-      margin-top: 0;
-      font-size: 1.1rem;
+    .module h3 {
+      margin: 0 0 6px;
+      font-size: 1rem;
+      color: #163a6b;
     }
 
-    .card p {
-      margin-bottom: 0;
-      color: var(--muted);
+    .module p {
+      margin: 0;
+      color: #4d6389;
+      font-size: .91rem;
     }
 
-    .feature-row {
+    .module .tag {
+      display: inline-flex;
+      margin-top: 9px;
+      font-size: .72rem;
+      font-weight: 700;
+      color: #173f7b;
+      background: #cddfff;
+      border: 1px solid #97b8eb;
+      border-radius: 999px;
+      padding: 3px 8px;
+    }
+    .module:nth-child(7) .tag,
+    .module:nth-child(8) .tag,
+    .module:nth-child(9) .tag {
+      color: #0b6356;
+      background: #c8ece5;
+      border-color: #83c9bd;
+    }
+
+    .flows {
+      margin-top: 14px;
       display: grid;
-      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-      gap: 26px;
-      align-items: center;
-      margin-top: 28px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
     }
 
-    .feature-placeholder {
-      height: 220px;
-      border-radius: 18px;
-      background: linear-gradient(135deg, rgba(27, 58, 87, 0.12), rgba(27, 58, 87, 0.03));
-      border: 1px dashed rgba(11, 15, 22, 0.2);
+    .flow {
+      border: 1px solid #9bb8e2;
+      border-radius: 12px;
+      background: #fbfdff;
+      padding: 11px;
+      font-size: .88rem;
+      color: #385177;
+    }
+    .flow:nth-child(1) { background: linear-gradient(180deg, #dfebff 0%, #d2e3ff 100%); border-color: #9dbceb; }
+    .flow:nth-child(2) { background: linear-gradient(180deg, #d4efe9 0%, #c2e7df 100%); border-color: #88cabb; }
+    .flow:nth-child(3) { background: linear-gradient(180deg, #ffeac0 0%, #ffdeab 100%); border-color: #d7b06c; }
+    .flow:nth-child(4) { background: linear-gradient(180deg, #e4dcff 0%, #d7ccff 100%); border-color: #ab97e3; }
+
+    .flow b {
+      display: block;
+      margin-bottom: 4px;
+      color: #19427a;
+      font-size: .93rem;
+    }
+
+    .plans {
+      margin-top: 14px;
       display: grid;
-      place-items: center;
-      color: var(--muted);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .plan {
+      border: 1px solid #92b2df;
+      border-radius: 16px;
+      background: linear-gradient(180deg, #ffffff 0%, #e3efff 100%);
+      padding: 16px;
+      box-shadow: 0 8px 18px rgba(18, 45, 88, 0.07);
+    }
+
+    .plan.pro {
+      border-color: #4f8cdf;
+      background:
+        radial-gradient(360px 120px at 100% 0%, rgba(182, 128, 37, 0.36), transparent 66%),
+        linear-gradient(180deg, #ffffff 0%, #dbe9ff 100%);
+    }
+
+    .plan-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .plan h3 {
+      margin: 0;
+      font-size: 1.08rem;
+      color: #153d72;
+    }
+
+    .price {
+      font-size: 1.45rem;
+      font-weight: 800;
+      color: #0f315f;
+    }
+
+    .price small {
+      font-size: .8rem;
+      color: #5f7498;
       font-weight: 600;
     }
 
-    .stats {
+    .plan ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: #3b5378;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 18px;
-      margin-top: 22px;
+      gap: 5px;
+      font-size: .9rem;
     }
 
-    .stat {
-      padding: 18px;
-      border-radius: 14px;
-      background: rgba(156, 199, 255, 0.18);
-      border: 1px solid rgba(156, 199, 255, 0.3);
-    }
-
-    .stat span {
-      display: block;
-      font-size: 1.4rem;
-      font-weight: 700;
-    }
-
-    .cta-band {
-      margin-top: 40px;
-      padding: 28px;
-      border-radius: 20px;
-      background: linear-gradient(135deg, #1b3a57, #1f4c75);
+    .foot-cta {
+      margin-top: 18px;
+      border: 1px solid #224f92;
+      border-radius: 16px;
+      background: linear-gradient(120deg, #1e4f98 0%, #1a3f79 100%);
       color: #fff;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 18px;
+      gap: 12px;
       flex-wrap: wrap;
+      padding: 18px;
+      box-shadow: var(--shadow);
     }
 
-    .cta-band h3 {
+    .foot-cta h3 {
       margin: 0;
-      font-size: 1.6rem;
+      font-size: 1.28rem;
+      font-family: "Fraunces", serif;
     }
 
-    .cta-band p {
-      margin: 6px 0 0;
-      color: rgba(255, 255, 255, 0.8);
+    .foot-cta p {
+      margin: 5px 0 0;
+      color: rgba(255,255,255,0.86);
+      font-size: .95rem;
     }
 
-    .cta-band a {
+    .foot-cta .btn {
       background: #fff;
-      color: #1b3a57;
-      padding: 12px 20px;
-      border-radius: 999px;
-      font-weight: 600;
-      text-decoration: none;
+      color: #1a4585;
+      border-color: #fff;
+      box-shadow: none;
     }
 
     .legal-links {
-      margin-top: 20px;
+      margin-top: 18px;
       display: flex;
       justify-content: center;
-      gap: 10px;
       flex-wrap: wrap;
+      gap: 8px;
     }
 
     .legal-btn {
@@ -333,152 +410,207 @@
       align-items: center;
       justify-content: center;
       text-decoration: none;
-      border: 1px solid rgba(11, 15, 22, 0.18);
-      background: #fff;
-      color: var(--ink);
+      border: 1px solid #bccde8;
+      background: #f8fbff;
+      color: #304d77;
       border-radius: 999px;
-      padding: 10px 16px;
-      font-weight: 600;
-      font-size: 0.92rem;
+      padding: 9px 14px;
+      font-weight: 700;
+      font-size: 0.86rem;
     }
 
-    .fade-in {
-      animation: fadeInUp 0.8s ease forwards;
-      opacity: 0;
-      transform: translateY(12px);
-    }
-
-    .delay-1 { animation-delay: 0.1s; }
-    .delay-2 { animation-delay: 0.2s; }
-    .delay-3 { animation-delay: 0.3s; }
-
-    @keyframes fadeInUp {
-      to {
-        opacity: 1;
-        transform: translateY(0);
+    @media (max-width: 1040px) {
+      .hero-grid,
+      .module-grid,
+      .flows,
+      .plans {
+        grid-template-columns: 1fr 1fr;
       }
     }
 
-    @media (max-width: 960px) {
-      .hero {
+    @media (max-width: 760px) {
+      .wrap { padding: 18px 14px 46px; }
+      .hero,
+      .section,
+      .foot-cta { padding: 16px; }
+      .hero-grid,
+      .module-grid,
+      .flows,
+      .plans,
+      .trust-strip {
         grid-template-columns: 1fr;
       }
-      .feature-row {
-        grid-template-columns: 1fr;
+      .topbar {
+        flex-direction: column;
+        align-items: flex-start;
       }
-      .grid-3 {
-        grid-template-columns: 1fr;
+      .top-actions {
+        width: 100%;
       }
-      .stats {
-        grid-template-columns: 1fr;
+      .top-actions .btn {
+        flex: 1;
       }
     }
   </style>
 </head>
 <body>
-  <div class="page">
-    <div class="orb"></div>
-    <div class="orb secondary"></div>
-
-    <div class="wrap">
-      <header class="topbar">
-        <div class="brand">
-          <img
-            src="{{ url_for('static', filename='images/InvoiceRunner.png') }}"
-            alt="InvoiceRunner"
-            style="height: 46px; width: auto;"
-          >
-        </div>
-        <a class="login-btn" href="{{ url_for('login') }}">Log In</a>
-      </header>
-
-      <section class="hero">
-        <div>
-          <div class="pill">Built for service businesses that want less paperwork</div>
-          <h1 class="fade-in">Invoice, schedule, send estimates and keep track of clients in seconds.</h1>
-          <p class="fade-in delay-1">
-            InvoiceRunner keeps customer details, line items, recurring service plans, and
-            appointment scheduling in one clean workspace. Send professional PDFs, track
-            paid status, and stay on top of what’s next.
-          </p>
-          <div class="hero-actions fade-in delay-2">
-            <a class="cta-primary" href="{{ url_for('login') }}">Log In to Your Workspace</a>
-            <a class="cta-secondary" href="#features">See How It Works</a>
-          </div>
-        </div>
-
-        <div class="hero-visual fade-in delay-3">
-          <div class="mockup">
-            <div class="placeholder">Hero Image Placeholder</div>
-            <div class="mini-grid">
-              <div class="mini"></div>
-              <div class="mini"></div>
-              <div class="mini"></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="features">
-        <h2>Everything you need to run billing with confidence.</h2>
-        <p>
-          Whether you’re managing weekly services or one-off repairs, InvoiceRunner keeps
-          your team fast, organized, and ready to invoice.
-        </p>
-
-        <div class="grid-3">
-          <div class="card">
-            <h3>Smart Estimates</h3>
-            <p>Create estimates that convert to invoices with one click, without losing notes or pricing.</p>
-          </div>
-          <div class="card">
-            <h3>Scheduling Built In</h3>
-            <p>Book appointments, block time, and keep recurring services on the calendar automatically.</p>
-          </div>
-          <div class="card">
-            <h3>Professional PDFs</h3>
-            <p>Send clean, branded invoices and estimates your customers can trust immediately.</p>
-          </div>
-        </div>
-
-        <div class="feature-row">
-          <div>
-            <h3>Know what’s paid, what’s pending, and what’s next.</h3>
-            <p>
-              Track every invoice status, review yearly totals, and see upcoming work for each customer.
-              Stay on top of cash flow without spreadsheets.
-            </p>
-            <div class="stats">
-              <div class="stat">
-                <span>All-in-one</span>
-                Estimates, invoices, scheduling
-              </div>
-              <div class="stat">
-                <span>Customer-ready</span>
-                Clean history and contact details
-              </div>
-              <div class="stat">
-                <span>Fast setup</span>
-                Ready in minutes, no training
-              </div>
-            </div>
-          </div>
-          <div class="feature-placeholder">Feature Image Placeholder</div>
-        </div>
-      </section>
-
-      <section class="cta-band">
-        <div>
-          <h3>Ready to make billing effortless?</h3>
-          <p>Log in and pick up where you left off. New users can subscribe anytime.</p>
-        </div>
-        <a href="{{ url_for('login') }}">Log In</a>
-      </section>
-
-      <div class="legal-links">
-        <a class="legal-btn" href="{{ url_for('privacy') }}">Privacy</a>
-        <a class="legal-btn" href="{{ url_for('terms') }}">Terms</a>
+  <div class="wrap">
+    <header class="topbar">
+      <div>
+        <img
+          src="{{ url_for('static', filename='images/InvoiceRunner.png') }}"
+          alt="InvoiceRunner"
+          style="height: 46px; width: auto;"
+        >
       </div>
+      <div class="top-actions">
+        <a class="btn btn-ghost" href="#plans">View Plans</a>
+        <a class="btn btn-primary" href="{{ url_for('login') }}">Log In</a>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">Get paid faster, keep track easier</div>
+          <h1>Run invoices, estimates, scheduling, and customer payments in one polished workspace.</h1>
+          <p>
+            InvoiceRunner helps shops and field teams create professional documents fast, track work and profitability,
+            and keep operations organized from first estimate to final payment.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="{{ url_for('login') }}">Open Your Workspace</a>
+            <a class="btn btn-ghost" href="#features">Explore Features</a>
+          </div>
+          <div class="trust-strip">
+            <div class="trust-item">Invoice + estimate creation with live PDF styling</div>
+            <div class="trust-item">Customer portal links and online payment support</div>
+            <div class="trust-item">Employee-ready workflows with role restrictions</div>
+          </div>
+        </div>
+        <aside class="hero-panel" aria-label="Key capabilities">
+          <h3>Why InvoiceRunner?</h3>
+          <ul class="hero-list">
+            <li>Invoices and estimates with template-based layouts and instant PDF download</li>
+            <li>Customer records, contact history, and document timelines</li>
+            <li>Scheduler for appointments with employee/company schedule views</li>
+            <li>Business expenses, split expense tracking, and Profit &amp; Loss breakdowns</li>
+            <li>Subscription billing, plan upgrades, and Pro feature controls</li>
+            <li>Portal-based customer viewing and invoice payments via Stripe Connect</li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <h2>Complete operations stack, not just invoicing.</h2>
+      <p class="section-lead">Each core area is built to work together, so your team spends less time switching tools and more time finishing jobs.</p>
+
+      <div class="module-grid">
+        <article class="module">
+          <h3>Invoices &amp; Estimates</h3>
+          <p>Create, edit, duplicate, convert between estimate and invoice, and send customer-ready PDFs by email.</p>
+          <span class="tag">Core</span>
+        </article>
+        <article class="module">
+          <h3>Customer Management</h3>
+          <p>Store contact details, view document history, and manage customer records from one place.</p>
+          <span class="tag">Core</span>
+        </article>
+        <article class="module">
+          <h3>Scheduler</h3>
+          <p>Plan appointments, support employee schedules, and keep a company-wide view of active work.</p>
+          <span class="tag">Core</span>
+        </article>
+
+        <article class="module">
+          <h3>Business Expenses</h3>
+          <p>Track categorized costs, add split items, and reuse expense items directly in documents.</p>
+          <span class="tag">Operations</span>
+        </article>
+        <article class="module">
+          <h3>Financial Summary</h3>
+          <p>Monitor paid/unpaid totals, invoice performance, and annual/filtered summary insights.</p>
+          <span class="tag">Reporting</span>
+        </article>
+        <article class="module">
+          <h3>Bookkeeping</h3>
+          <p>Generate a downloadable breakdown of income and categorized operating expenses.</p>
+          <span class="tag">Reporting</span>
+        </article>
+
+        <article class="module">
+          <h3>Customer Portal</h3>
+          <p>Share secure links so customers can view invoices/estimates and pay invoices online.</p>
+          <span class="tag">Pro</span>
+        </article>
+        <article class="module">
+          <h3>Stripe Connect Payments</h3>
+          <p>Online payments made simple for the customer. Payment to bank transfer made easy for the user.</p>
+          <span class="tag">Pro</span>
+        </article>
+        <article class="module">
+          <h3>Employee Accounts</h3>
+          <p>Invite employees with permission controls for edits, schedules, and sensitive business areas.</p>
+          <span class="tag">Pro</span>
+        </article>
+      </div>
+
+      <div class="flows" aria-label="Workflow highlights">
+        <div class="flow"><b>1. Build</b>Create estimate or invoice with your preferred layout and defaults.</div>
+        <div class="flow"><b>2. Send</b>Email documents with secure customer links and clean presentation.</div>
+        <div class="flow"><b>3. Track</b>Monitor paid status, summaries, business expenses, and profitability.</div>
+        <div class="flow"><b>4. Scale</b>Add employees, scheduling visibility, and online invoice payment.</div>
+      </div>
+    </section>
+
+    <section class="section" id="plans">
+      <h2>Simple plans that match your operations.</h2>
+      <p class="section-lead">Start with essentials or run the full Pro workflow with team and customer payment features.</p>
+
+      <div class="plans">
+        <article class="plan">
+          <div class="plan-head">
+            <h3>Basic</h3>
+            <div class="price">$9.99 <small>/ month</small></div>
+          </div>
+          <ul>
+            <li>Invoices, estimates, and PDF downloads</li>
+            <li>Customer management and scheduler</li>
+            <li>Business expenses + financial summaries</li>
+            <li>Customer portal view links (no online payment)</li>
+            <li>7-day Basic trial</li>
+          </ul>
+        </article>
+
+        <article class="plan pro">
+          <div class="plan-head">
+            <h3>Pro</h3>
+            <div class="price">$24.99 <small>/ month</small></div>
+          </div>
+          <ul>
+            <li>Everything in Basic</li>
+            <li>Invoice online payments through Stripe Connect with easy payment setup</li>
+            <li>Employee invitations + role-based access</li>
+            <li>Company + employee schedule visibility controls</li>
+            <li>Pro payout preview tools and payment fee controls</li>
+            <li>7-day Pro trial</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="foot-cta">
+      <div>
+        <h3>Professional tools, faster workflow, cleaner cash flow.</h3>
+        <p>Log in to continue managing customers, documents, expenses, and scheduling in one system.</p>
+      </div>
+      <a class="btn" href="{{ url_for('login') }}">Log In</a>
+    </section>
+
+    <div class="legal-links">
+      <a class="legal-btn" href="{{ url_for('privacy') }}">Privacy</a>
+      <a class="legal-btn" href="{{ url_for('terms') }}">Terms</a>
     </div>
   </div>
 </body>
