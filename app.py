@@ -40,6 +40,7 @@ from models import (
     Base, make_engine, make_session_factory,
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
     ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
+    InvoiceDesignTemplate,
 )
 from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
 
@@ -563,6 +564,7 @@ INVOICE_TEMPLATES = {
         "show_labor": True,
         "show_parts": True,
         "show_shop_supplies": True,
+        "show_notes": True,
     },
 }
 
@@ -580,6 +582,7 @@ def _template_config_for(key: str | None, user: User | None = None) -> dict:
         cfg.setdefault("show_labor", True)
         cfg.setdefault("show_parts", True)
         cfg.setdefault("show_shop_supplies", True)
+        cfg.setdefault("show_notes", True)
         return cfg
 
     if user:
@@ -601,6 +604,7 @@ def _template_config_for(key: str | None, user: User | None = None) -> dict:
         cfg["show_labor"] = bool(getattr(user, "custom_show_labor", True))
         cfg["show_parts"] = bool(getattr(user, "custom_show_parts", True))
         cfg["show_shop_supplies"] = bool(getattr(user, "custom_show_shop_supplies", True))
+        cfg["show_notes"] = bool(getattr(user, "custom_show_notes", True))
 
     return cfg
 
@@ -630,6 +634,22 @@ PDF_TEMPLATES = {
         "preview": "images/pdf_template_strip.svg",
     },
 }
+
+
+def _default_invoice_builder_design() -> dict:
+    return {
+        "canvas": {"width": 816, "height": 1056, "bg": "#ffffff"},
+        "elements": [
+            {"id": "title", "type": "text", "text": "{{doc_label}}", "x": 48, "y": 36, "w": 260, "h": 44, "fontSize": 40, "fontWeight": 700, "color": "#111827"},
+            {"id": "meta", "type": "text", "text": "Invoice #: {{invoice_number}}\nDate: {{date}}\nDue: {{due_date}}", "x": 560, "y": 44, "w": 240, "h": 62, "fontSize": 13, "fontWeight": 500, "color": "#111827"},
+            {"id": "bill_box", "type": "box", "x": 48, "y": 118, "w": 350, "h": 150, "borderColor": "#111827", "fillColor": "#ffffff", "radius": 8},
+            {"id": "bill_text", "type": "text", "text": "BILL TO\n{{customer_name}}\nEmail: {{customer_email}}\nPhone: {{customer_phone}}", "x": 62, "y": 132, "w": 320, "h": 122, "fontSize": 15, "fontWeight": 600, "color": "#111827"},
+            {"id": "job_box", "type": "box", "x": 418, "y": 118, "w": 350, "h": 150, "borderColor": "#111827", "fillColor": "#ffffff", "radius": 8},
+            {"id": "job_text", "type": "text", "text": "JOB DETAILS\nJob: {{job}}\nRate/Hour: {{rate}}\nTotal Hours: {{hours}}", "x": 432, "y": 132, "w": 320, "h": 122, "fontSize": 15, "fontWeight": 600, "color": "#111827"},
+            {"id": "summary_box", "type": "box", "x": 500, "y": 780, "w": 268, "h": 180, "borderColor": "#111827", "fillColor": "#ffffff", "radius": 8},
+            {"id": "summary_text", "type": "text", "text": "SUMMARY\nLabor: {{labor_total}}\nParts: {{parts_total}}\nTax: {{tax}}\nTotal: {{total}}\nAmount Due: {{amount_due}}", "x": 516, "y": 796, "w": 230, "h": 148, "fontSize": 14, "fontWeight": 600, "color": "#111827"},
+        ],
+    }
 
 BUSINESS_EXPENSE_DEFAULT_LABELS = [
     "Advertising",
@@ -1777,6 +1797,8 @@ def _migrate_user_custom_profession(engine):
         stmts.append("ALTER TABLE users ADD COLUMN custom_show_parts BOOLEAN")
     if not _column_exists(engine, "users", "custom_show_shop_supplies"):
         stmts.append("ALTER TABLE users ADD COLUMN custom_show_shop_supplies BOOLEAN")
+    if not _column_exists(engine, "users", "custom_show_notes"):
+        stmts.append("ALTER TABLE users ADD COLUMN custom_show_notes BOOLEAN")
 
     if stmts:
         with engine.begin() as conn:
@@ -1789,6 +1811,36 @@ def _migrate_user_custom_profession(engine):
             conn.execute(text("UPDATE users SET custom_show_labor = TRUE WHERE custom_show_labor IS NULL"))
             conn.execute(text("UPDATE users SET custom_show_parts = TRUE WHERE custom_show_parts IS NULL"))
             conn.execute(text("UPDATE users SET custom_show_shop_supplies = TRUE WHERE custom_show_shop_supplies IS NULL"))
+            conn.execute(text("UPDATE users SET custom_show_notes = TRUE WHERE custom_show_notes IS NULL"))
+    except Exception:
+        pass
+
+
+def _migrate_invoice_builder_fields(engine):
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "invoice_builder_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN invoice_builder_enabled BOOLEAN")
+    if not _column_exists(engine, "users", "invoice_builder_accent_color"):
+        stmts.append("ALTER TABLE users ADD COLUMN invoice_builder_accent_color VARCHAR(20)")
+    if not _column_exists(engine, "users", "invoice_builder_header_style"):
+        stmts.append("ALTER TABLE users ADD COLUMN invoice_builder_header_style VARCHAR(20)")
+    if not _column_exists(engine, "users", "invoice_builder_compact_mode"):
+        stmts.append("ALTER TABLE users ADD COLUMN invoice_builder_compact_mode BOOLEAN")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET invoice_builder_enabled = FALSE WHERE invoice_builder_enabled IS NULL"))
+            conn.execute(text("UPDATE users SET invoice_builder_accent_color = '#0f172a' WHERE invoice_builder_accent_color IS NULL"))
+            conn.execute(text("UPDATE users SET invoice_builder_header_style = 'classic' WHERE invoice_builder_header_style IS NULL"))
+            conn.execute(text("UPDATE users SET invoice_builder_compact_mode = FALSE WHERE invoice_builder_compact_mode IS NULL"))
     except Exception:
         pass
 
@@ -2369,6 +2421,7 @@ def create_app():
     _migrate_estimate_converted_flag(engine)
     _migrate_user_invoice_template(engine)
     _migrate_user_custom_profession(engine)
+    _migrate_invoice_builder_fields(engine)
     _migrate_invoice_template(engine)
     _migrate_user_pdf_template(engine)
     _migrate_invoice_pdf_template(engine)
@@ -3147,6 +3200,21 @@ def create_app():
                 u.custom_show_labor = (request.form.get("custom_show_labor") == "1")
                 u.custom_show_parts = (request.form.get("custom_show_parts") == "1")
                 u.custom_show_shop_supplies = (request.form.get("custom_show_shop_supplies") == "1")
+                u.custom_show_notes = (request.form.get("custom_show_notes") == "1")
+                builder_enabled = (request.form.get("invoice_builder_enabled") == "1")
+                accent_raw = (request.form.get("invoice_builder_accent_color") or "").strip()
+                if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent_raw or ""):
+                    accent_raw = "#0f172a"
+                header_style = (request.form.get("invoice_builder_header_style") or "classic").strip().lower()
+                if header_style not in ("classic", "banded"):
+                    header_style = "classic"
+                compact_mode = (request.form.get("invoice_builder_compact_mode") == "1")
+                u.invoice_builder_enabled = builder_enabled
+                u.invoice_builder_accent_color = accent_raw
+                u.invoice_builder_header_style = header_style
+                u.invoice_builder_compact_mode = compact_mode
+                if builder_enabled:
+                    u.invoice_template = "custom"
 
                 pdf_tmpl = _pdf_template_key_fallback(request.form.get("pdf_template"))
                 u.pdf_template = pdf_tmpl
@@ -3308,7 +3376,15 @@ def create_app():
                     "show_labor": _arg_bool("custom_show_labor", getattr(u, "custom_show_labor", True)),
                     "show_parts": _arg_bool("custom_show_parts", getattr(u, "custom_show_parts", True)),
                     "show_shop_supplies": _arg_bool("custom_show_shop_supplies", getattr(u, "custom_show_shop_supplies", True)),
+                    "show_notes": _arg_bool("custom_show_notes", getattr(u, "custom_show_notes", True)),
                 }
+
+            builder_cfg_override = {
+                "enabled": _arg_bool("invoice_builder_enabled", bool(getattr(u, "invoice_builder_enabled", False))),
+                "accent_color": _arg_text("invoice_builder_accent_color", (getattr(u, "invoice_builder_accent_color", None) or "#0f172a")),
+                "header_style": _arg_text("invoice_builder_header_style", (getattr(u, "invoice_builder_header_style", None) or "classic")).lower(),
+                "compact_mode": _arg_bool("invoice_builder_compact_mode", bool(getattr(u, "invoice_builder_compact_mode", False))),
+            }
 
             preview_no = f"PV{uid}{uuid.uuid4().hex[:18]}".upper()
             preview_display_no = f"{_user_local_now(u).strftime('%Y')}PREVIEW"
@@ -3358,6 +3434,7 @@ def create_app():
                     inv.id,
                     custom_cfg_override=custom_cfg_override,
                     pdf_template_override=pdf_tmpl,
+                    builder_cfg_override=builder_cfg_override,
                 )
                 with open(pdf_path, "rb") as f:
                     pdf_bytes = f.read()
@@ -3380,6 +3457,184 @@ def create_app():
                 as_attachment=False,
                 download_name="invoice-preview.pdf",
             )
+
+    @app.get("/settings/invoice-builder")
+    @login_required
+    @subscription_required
+    @owner_required
+    def invoice_builder():
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            if not _has_pro_features(owner):
+                flash("Invoice Builder is available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
+
+            templates = (
+                s.query(InvoiceDesignTemplate)
+                .filter(InvoiceDesignTemplate.user_id == owner.id)
+                .order_by(InvoiceDesignTemplate.updated_at.desc(), InvoiceDesignTemplate.id.desc())
+                .all()
+            )
+            if not templates:
+                seed = InvoiceDesignTemplate(
+                    user_id=owner.id,
+                    name="My First Template",
+                    design_json=json.dumps(_default_invoice_builder_design()),
+                    is_active=True,
+                )
+                s.add(seed)
+                s.commit()
+                templates = [seed]
+
+            active = next((t for t in templates if bool(getattr(t, "is_active", False))), None) or templates[0]
+            payload = []
+            for t in templates:
+                try:
+                    design_obj = json.loads(t.design_json or "{}")
+                except Exception:
+                    design_obj = _default_invoice_builder_design()
+                payload.append(
+                    {
+                        "id": int(t.id),
+                        "name": (t.name or "Template").strip() or "Template",
+                        "is_active": bool(getattr(t, "is_active", False)),
+                        "design": design_obj,
+                    }
+                )
+
+            return render_template(
+                "invoice_builder.html",
+                templates_payload=payload,
+                active_template_id=int(active.id),
+            )
+
+    @app.post("/api/invoice-builder/template/save")
+    @login_required
+    @subscription_required
+    @owner_required
+    def api_invoice_builder_save():
+        data = request.get_json(silent=True) or {}
+        name = (data.get("name") or "").strip()[:120] or "Untitled Template"
+        template_id_raw = data.get("template_id")
+        set_active = bool(data.get("set_active", False))
+        design = data.get("design")
+        if not isinstance(design, dict):
+            return jsonify({"ok": False, "error": "Invalid template design payload."}), 400
+
+        # Keep payload bounded.
+        design_text = json.dumps(design)
+        if len(design_text) > 300000:
+            return jsonify({"ok": False, "error": "Template is too large."}), 400
+
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                return jsonify({"ok": False, "error": "User not found."}), 404
+            if not _has_pro_features(owner):
+                return jsonify({"ok": False, "error": "Pro plan required."}), 403
+
+            template = None
+            if template_id_raw is not None:
+                try:
+                    tid = int(template_id_raw)
+                except Exception:
+                    return jsonify({"ok": False, "error": "Invalid template id."}), 400
+                template = (
+                    s.query(InvoiceDesignTemplate)
+                    .filter(
+                        InvoiceDesignTemplate.id == tid,
+                        InvoiceDesignTemplate.user_id == owner.id,
+                    )
+                    .first()
+                )
+                if not template:
+                    return jsonify({"ok": False, "error": "Template not found."}), 404
+                template.name = name
+                template.design_json = design_text
+            else:
+                template = InvoiceDesignTemplate(
+                    user_id=owner.id,
+                    name=name,
+                    design_json=design_text,
+                    is_active=False,
+                )
+                s.add(template)
+                s.flush()
+
+            if set_active:
+                s.query(InvoiceDesignTemplate).filter(
+                    InvoiceDesignTemplate.user_id == owner.id
+                ).update({"is_active": False})
+                template.is_active = True
+            s.commit()
+            return jsonify({"ok": True, "id": int(template.id), "name": template.name, "is_active": bool(template.is_active)})
+
+    @app.post("/api/invoice-builder/template/<int:template_id>/activate")
+    @login_required
+    @subscription_required
+    @owner_required
+    def api_invoice_builder_activate(template_id: int):
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                return jsonify({"ok": False, "error": "User not found."}), 404
+            if not _has_pro_features(owner):
+                return jsonify({"ok": False, "error": "Pro plan required."}), 403
+            template = (
+                s.query(InvoiceDesignTemplate)
+                .filter(
+                    InvoiceDesignTemplate.id == template_id,
+                    InvoiceDesignTemplate.user_id == owner.id,
+                )
+                .first()
+            )
+            if not template:
+                return jsonify({"ok": False, "error": "Template not found."}), 404
+            s.query(InvoiceDesignTemplate).filter(
+                InvoiceDesignTemplate.user_id == owner.id
+            ).update({"is_active": False})
+            template.is_active = True
+            s.commit()
+            return jsonify({"ok": True})
+
+    @app.post("/api/invoice-builder/template/<int:template_id>/delete")
+    @login_required
+    @subscription_required
+    @owner_required
+    def api_invoice_builder_delete(template_id: int):
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                return jsonify({"ok": False, "error": "User not found."}), 404
+            if not _has_pro_features(owner):
+                return jsonify({"ok": False, "error": "Pro plan required."}), 403
+            template = (
+                s.query(InvoiceDesignTemplate)
+                .filter(
+                    InvoiceDesignTemplate.id == template_id,
+                    InvoiceDesignTemplate.user_id == owner.id,
+                )
+                .first()
+            )
+            if not template:
+                return jsonify({"ok": False, "error": "Template not found."}), 404
+
+            was_active = bool(template.is_active)
+            s.delete(template)
+            s.flush()
+            if was_active:
+                fallback = (
+                    s.query(InvoiceDesignTemplate)
+                    .filter(InvoiceDesignTemplate.user_id == owner.id)
+                    .order_by(InvoiceDesignTemplate.updated_at.desc(), InvoiceDesignTemplate.id.desc())
+                    .first()
+                )
+                if fallback:
+                    fallback.is_active = True
+            s.commit()
+            return jsonify({"ok": True})
 
     @app.post("/employees/invite")
     @login_required

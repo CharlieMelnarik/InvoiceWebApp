@@ -2,6 +2,7 @@
 import os
 import re
 import io
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.lib.utils import ImageReader
 
 from config import Config
-from models import Invoice, User, Customer
+from models import Invoice, User, Customer, InvoiceDesignTemplate
 
 
 def _money(x) -> str:
@@ -164,6 +165,129 @@ def _pdf_template_key_fallback(key: str | None) -> str:
     return key if key in {"classic", "modern", "split_panel", "strip"} else "classic"
 
 
+def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer | None, *, is_estimate: bool) -> dict[str, str]:
+    due_line = _invoice_due_date_line(inv, owner, is_estimate=is_estimate)
+    due_date = ""
+    if due_line:
+        due_date = due_line.replace("Payment due date:", "").strip()
+    business_name = (getattr(owner, "business_name", None) or getattr(owner, "username", None) or "InvoiceRunner").strip()
+    customer_name = (getattr(customer, "name", None) or inv.name or "").strip()
+    customer_email = (getattr(inv, "customer_email", None) or getattr(customer, "email", None) or "").strip()
+    customer_phone = _format_phone((getattr(inv, "customer_phone", None) or getattr(customer, "phone", None) or "").strip())
+    return {
+        "doc_label": "ESTIMATE" if is_estimate else "INVOICE",
+        "invoice_number": str(getattr(inv, "display_number", None) or inv.invoice_number or ""),
+        "date": str(inv.date_in or ""),
+        "due_date": due_date,
+        "business_name": business_name,
+        "customer_name": customer_name,
+        "customer_email": customer_email,
+        "customer_phone": customer_phone,
+        "job": str(getattr(inv, "vehicle", None) or ""),
+        "rate": _money(getattr(inv, "price_per_hour", 0.0) or 0.0),
+        "hours": str(getattr(inv, "hours", 0.0) or 0.0),
+        "parts_total": _money(inv.parts_total()),
+        "labor_total": _money(inv.labor_total()),
+        "tax": _money(inv.tax_amount()),
+        "total": _money(inv.invoice_total()),
+        "paid": _money(getattr(inv, "paid", 0.0) or 0.0),
+        "amount_due": _money(inv.amount_due()),
+    }
+
+
+def _render_invoice_builder_pdf(
+    *,
+    session,
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    pdf_path: str,
+    generated_dt: datetime,
+    is_estimate: bool,
+    design_obj: dict,
+) -> str:
+    PAGE_W, PAGE_H = LETTER
+    pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
+    display_no = getattr(inv, "display_number", None) or inv.invoice_number
+    doc_label = "Estimate" if is_estimate else "Invoice"
+    pdf.setTitle(f"{doc_label} - {display_no}")
+
+    canvas_cfg = design_obj.get("canvas") if isinstance(design_obj, dict) else {}
+    canvas_w = float((canvas_cfg or {}).get("width") or 816.0)
+    canvas_h = float((canvas_cfg or {}).get("height") or 1056.0)
+    canvas_bg = str((canvas_cfg or {}).get("bg") or "#ffffff")
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", canvas_bg):
+        canvas_bg = "#ffffff"
+    scale_x = PAGE_W / max(1.0, canvas_w)
+    scale_y = PAGE_H / max(1.0, canvas_h)
+
+    pdf.setFillColor(colors.HexColor(canvas_bg))
+    pdf.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
+
+    vars_map = _builder_template_vars(inv, owner, customer, is_estimate=is_estimate)
+    elements = design_obj.get("elements") if isinstance(design_obj, dict) else []
+    if not isinstance(elements, list):
+        elements = []
+
+    def _map_y(y: float, h: float) -> float:
+        return PAGE_H - ((y + h) * scale_y)
+
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        x = float(el.get("x") or 0.0)
+        y = float(el.get("y") or 0.0)
+        w = max(10.0, float(el.get("w") or 10.0))
+        h = max(10.0, float(el.get("h") or 10.0))
+        rx = x * scale_x
+        ry = _map_y(y, h)
+        rw = w * scale_x
+        rh = h * scale_y
+        etype = str(el.get("type") or "text").strip().lower()
+
+        border_color = str(el.get("borderColor") or "transparent")
+        fill_color = str(el.get("fillColor") or "transparent")
+        text_color = str(el.get("color") or "#111827")
+        radius = float(el.get("radius") or 0.0) * min(scale_x, scale_y)
+
+        if etype == "box":
+            has_fill = re.fullmatch(r"#[0-9a-fA-F]{6}", fill_color or "") is not None
+            has_stroke = re.fullmatch(r"#[0-9a-fA-F]{6}", border_color or "") is not None
+            pdf.setFillColor(colors.HexColor(fill_color if has_fill else "#ffffff"))
+            pdf.setStrokeColor(colors.HexColor(border_color if has_stroke else "#111827"))
+            pdf.roundRect(rx, ry, rw, rh, max(0.0, radius), stroke=1 if has_stroke else 0, fill=1 if has_fill else 0)
+            continue
+
+        text_raw = str(el.get("text") or "")
+        for k, v in vars_map.items():
+            text_raw = text_raw.replace(f"{{{{{k}}}}}", str(v))
+        font_size = max(7.0, min(64.0, float(el.get("fontSize") or 14.0))) * min(scale_x, scale_y)
+        font_weight = int(el.get("fontWeight") or 500)
+        font_name = "Helvetica-Bold" if font_weight >= 600 else "Helvetica"
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", text_color or ""):
+            pdf.setFillColor(colors.HexColor(text_color))
+        else:
+            pdf.setFillColor(colors.black)
+        pdf.setFont(font_name, font_size)
+        line_h = max(8.0, font_size * 1.2)
+        tx = rx + (6 * scale_x)
+        ty = ry + rh - line_h
+        max_w = rw - (12 * scale_x)
+        for ln in str(text_raw).splitlines():
+            for wrapped in _wrap_text(ln, font_name, font_size, max_w):
+                if ty < ry + 2:
+                    break
+                pdf.drawString(tx, ty, wrapped)
+                ty -= line_h
+
+    pdf.save()
+    inv.pdf_path = pdf_path
+    inv.pdf_generated_at = generated_dt
+    session.add(inv)
+    session.commit()
+    return pdf_path
+
+
 def _render_modern_pdf(
     *,
     session,
@@ -183,18 +307,31 @@ def _render_modern_pdf(
     owner_logo_abs: str,
     owner_logo_blob: bytes | None,
     is_estimate: bool,
+    builder_cfg: dict | None = None,
 ):
     PAGE_W, PAGE_H = LETTER
     M = 0.65 * inch
 
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
+    builder_enabled = bool(builder_cfg.get("enabled", False)) if isinstance(builder_cfg, dict) else False
+    builder_accent = colors.HexColor(
+        (builder_cfg.get("accent_color") if isinstance(builder_cfg, dict) else None) or "#0f172a"
+    )
+    builder_header_style = (
+        (builder_cfg.get("header_style") if isinstance(builder_cfg, dict) else None) or "classic"
+    ).strip().lower()
+    builder_compact_mode = bool(builder_cfg.get("compact_mode", False)) if isinstance(builder_cfg, dict) else False
 
     brand_dark = colors.black
     brand_accent = colors.HexColor("#2563eb")
     brand_muted = colors.HexColor("#64748b")
     line_color = colors.HexColor("#e2e8f0")
     soft_bg = colors.HexColor("#f8fafc")
+    if builder_enabled:
+        brand_accent = builder_accent
+        if builder_header_style == "banded":
+            brand_dark = builder_accent
 
     def right_text(x, y, text, font="Helvetica", size=10, color=colors.black):
         pdf.setFont(font, size)
@@ -212,6 +349,7 @@ def _render_modern_pdf(
     show_labor = bool(cfg.get("show_labor", True))
     show_parts = bool(cfg.get("show_parts", True))
     show_shop_supplies = bool(cfg.get("show_shop_supplies", True))
+    show_notes = bool(cfg.get("show_notes", True))
 
     header_h = 1.35 * inch
     pdf.setFillColor(brand_dark)
@@ -363,7 +501,7 @@ def _render_modern_pdf(
     # Tables
     def draw_table(title, x, y_top, col_titles, rows, col_widths, money_cols=None):
         money_cols = set(money_cols or [])
-        base_row_h = 16
+        base_row_h = 14 if builder_compact_mode else 16
         title_gap = 18
 
         pdf.setFont("Helvetica-Bold", 12)
@@ -476,7 +614,7 @@ def _render_modern_pdf(
     bottom_padding = 12
 
     max_width = notes_box_w - left_padding - right_padding
-    all_note_lines = _split_notes_into_lines(inv.notes or "", max_width, font="Helvetica", size=10)
+    all_note_lines = _split_notes_into_lines(inv.notes or "", max_width, font="Helvetica", size=10) if show_notes else []
 
     footer_y = 0.55 * inch
     footer_clearance = 0.20 * inch
@@ -488,33 +626,35 @@ def _render_modern_pdf(
     needed_box_h = header_title_gap + needed_text_h + bottom_padding
 
     max_box_h_this_page = notes_y_top - page_bottom_limit
-    notes_box_h = min(max_box_h_this_page, needed_box_h)
+    notes_box_h = min(max_box_h_this_page, needed_box_h) if show_notes else 0
 
-    pdf.setFillColor(soft_bg)
-    pdf.roundRect(M, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 10, stroke=1, fill=1)
-    pdf.setStrokeColor(line_color)
-    pdf.roundRect(M, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 10, stroke=1, fill=0)
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.setFillColor(brand_muted)
-    pdf.drawString(M + 12, notes_y_top - 18, "NOTES")
+    remaining_lines = []
+    if show_notes:
+        pdf.setFillColor(soft_bg)
+        pdf.roundRect(M, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 10, stroke=1, fill=1)
+        pdf.setStrokeColor(line_color)
+        pdf.roundRect(M, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 10, stroke=1, fill=0)
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.setFillColor(brand_muted)
+        pdf.drawString(M + 12, notes_y_top - 18, "NOTES")
 
-    pdf.setFont("Helvetica", 10)
-    pdf.setFillColor(colors.black)
-    y_note = notes_y_top - header_title_gap
-    bottom_limit = notes_y_top - notes_box_h + bottom_padding
+        pdf.setFont("Helvetica", 10)
+        pdf.setFillColor(colors.black)
+        y_note = notes_y_top - header_title_gap
+        bottom_limit = notes_y_top - notes_box_h + bottom_padding
 
-    lines_fit = 0
-    for line in all_note_lines:
-        if y_note < bottom_limit:
-            break
-        if line == "__SPACER__":
-            y_note -= SPACER_GAP
-        else:
-            pdf.drawString(M + left_padding, y_note, line)
-            y_note -= line_height
-        lines_fit += 1
+        lines_fit = 0
+        for line in all_note_lines:
+            if y_note < bottom_limit:
+                break
+            if line == "__SPACER__":
+                y_note -= SPACER_GAP
+            else:
+                pdf.drawString(M + left_padding, y_note, line)
+                y_note -= line_height
+            lines_fit += 1
 
-    remaining_lines = all_note_lines[lines_fit:]
+        remaining_lines = all_note_lines[lines_fit:]
 
     sum_x = PAGE_W - M - 240
     sum_w = 240
@@ -587,7 +727,7 @@ def _render_modern_pdf(
         pdf.setFillColor(brand_muted)
         pdf.drawString(M, PAGE_H - 0.62 * inch, f"{display_no}  •  Generated: {generated_str}")
 
-    if remaining_lines:
+    if show_notes and remaining_lines:
         footer()
         while remaining_lines:
             start_new_page_with_header()
@@ -654,18 +794,31 @@ def _render_split_panel_pdf(
     owner_logo_abs: str,
     owner_logo_blob: bytes | None,
     is_estimate: bool,
+    builder_cfg: dict | None = None,
 ):
     PAGE_W, PAGE_H = LETTER
     M = 0.55 * inch
 
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
+    builder_enabled = bool(builder_cfg.get("enabled", False)) if isinstance(builder_cfg, dict) else False
+    builder_accent = colors.HexColor(
+        (builder_cfg.get("accent_color") if isinstance(builder_cfg, dict) else None) or "#0f172a"
+    )
+    builder_header_style = (
+        (builder_cfg.get("header_style") if isinstance(builder_cfg, dict) else None) or "classic"
+    ).strip().lower()
+    builder_compact_mode = bool(builder_cfg.get("compact_mode", False)) if isinstance(builder_cfg, dict) else False
 
     rail_color = colors.HexColor("#0f172a")
     rail_text = colors.HexColor("#e2e8f0")
     accent = colors.HexColor("#2563eb")
     line_color = colors.HexColor("#e2e8f0")
     soft_bg = colors.HexColor("#f8fafc")
+    if builder_enabled:
+        accent = builder_accent
+        if builder_header_style == "banded":
+            rail_color = builder_accent
 
     def right_text(x, y, text, font="Helvetica", size=10, color=colors.black):
         pdf.setFont(font, size)
@@ -683,6 +836,7 @@ def _render_split_panel_pdf(
     show_labor = bool(cfg.get("show_labor", True))
     show_parts = bool(cfg.get("show_parts", True))
     show_shop_supplies = bool(cfg.get("show_shop_supplies", True))
+    show_notes = bool(cfg.get("show_notes", True))
 
     # Left summary rail
     rail_w = 1.55 * inch
@@ -881,7 +1035,7 @@ def _render_split_panel_pdf(
     # Tables
     def draw_table(title, x, y_top, col_titles, rows, col_widths, money_cols=None):
         money_cols = set(money_cols or [])
-        base_row_h = 16
+        base_row_h = 14 if builder_compact_mode else 16
         title_gap = 18
 
         pdf.setFont("Helvetica-Bold", 12)
@@ -993,7 +1147,7 @@ def _render_split_panel_pdf(
     bottom_padding = 12
 
     max_width = notes_box_w - left_padding - right_padding
-    all_note_lines = _split_notes_into_lines(inv.notes or "", max_width, font="Helvetica", size=10)
+    all_note_lines = _split_notes_into_lines(inv.notes or "", max_width, font="Helvetica", size=10) if show_notes else []
 
     footer_y = 0.55 * inch
     footer_clearance = 0.2 * inch
@@ -1005,33 +1159,35 @@ def _render_split_panel_pdf(
     needed_box_h = header_title_gap + needed_text_h + bottom_padding
 
     max_box_h_this_page = notes_y_top - page_bottom_limit
-    notes_box_h = min(max_box_h_this_page, needed_box_h)
+    notes_box_h = min(max_box_h_this_page, needed_box_h) if show_notes else 0
 
-    pdf.setFillColor(soft_bg)
-    pdf.roundRect(content_x, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 12, stroke=1, fill=1)
-    pdf.setStrokeColor(line_color)
-    pdf.roundRect(content_x, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 12, stroke=1, fill=0)
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.setFillColor(colors.HexColor("#64748b"))
-    pdf.drawString(content_x + 12, notes_y_top - 18, "NOTES")
+    remaining_lines = []
+    if show_notes:
+        pdf.setFillColor(soft_bg)
+        pdf.roundRect(content_x, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 12, stroke=1, fill=1)
+        pdf.setStrokeColor(line_color)
+        pdf.roundRect(content_x, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 12, stroke=1, fill=0)
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.setFillColor(colors.HexColor("#64748b"))
+        pdf.drawString(content_x + 12, notes_y_top - 18, "NOTES")
 
-    pdf.setFont("Helvetica", 10)
-    pdf.setFillColor(colors.black)
-    y_note = notes_y_top - header_title_gap
-    bottom_limit = notes_y_top - notes_box_h + bottom_padding
+        pdf.setFont("Helvetica", 10)
+        pdf.setFillColor(colors.black)
+        y_note = notes_y_top - header_title_gap
+        bottom_limit = notes_y_top - notes_box_h + bottom_padding
 
-    lines_fit = 0
-    for line in all_note_lines:
-        if y_note < bottom_limit:
-            break
-        if line == "__SPACER__":
-            y_note -= SPACER_GAP
-        else:
-            pdf.drawString(content_x + left_padding, y_note, line)
-            y_note -= line_height
-        lines_fit += 1
+        lines_fit = 0
+        for line in all_note_lines:
+            if y_note < bottom_limit:
+                break
+            if line == "__SPACER__":
+                y_note -= SPACER_GAP
+            else:
+                pdf.drawString(content_x + left_padding, y_note, line)
+                y_note -= line_height
+            lines_fit += 1
 
-    remaining_lines = all_note_lines[lines_fit:]
+        remaining_lines = all_note_lines[lines_fit:]
 
     def footer():
         pdf.setFont("Helvetica-Oblique", 9)
@@ -1053,7 +1209,7 @@ def _render_split_panel_pdf(
         pdf.setFillColor(colors.HexColor("#94a3b8"))
         pdf.drawString(M, PAGE_H - 0.62 * inch, f"{display_no}  •  Generated: {generated_str}")
 
-    if remaining_lines:
+    if show_notes and remaining_lines:
         footer()
         while remaining_lines:
             start_new_page_with_header()
@@ -1119,17 +1275,30 @@ def _render_strip_pdf(
     owner_logo_abs: str,
     owner_logo_blob: bytes | None,
     is_estimate: bool,
+    builder_cfg: dict | None = None,
 ):
     PAGE_W, PAGE_H = LETTER
     M = 0.7 * inch
 
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
+    builder_enabled = bool(builder_cfg.get("enabled", False)) if isinstance(builder_cfg, dict) else False
+    builder_accent = colors.HexColor(
+        (builder_cfg.get("accent_color") if isinstance(builder_cfg, dict) else None) or "#0f172a"
+    )
+    builder_header_style = (
+        (builder_cfg.get("header_style") if isinstance(builder_cfg, dict) else None) or "classic"
+    ).strip().lower()
+    builder_compact_mode = bool(builder_cfg.get("compact_mode", False)) if isinstance(builder_cfg, dict) else False
 
     accent = colors.HexColor("#0ea5a4")
     accent_dark = colors.HexColor("#0f172a")
     line_color = colors.HexColor("#e5e7eb")
     muted = colors.HexColor("#6b7280")
+    if builder_enabled:
+        accent = builder_accent
+        if builder_header_style == "banded":
+            accent_dark = builder_accent
 
     def right_text(x, y, text, font="Helvetica", size=10, color=colors.black):
         pdf.setFont(font, size)
@@ -1154,10 +1323,18 @@ def _render_strip_pdf(
     show_labor = bool(cfg.get("show_labor", True))
     show_parts = bool(cfg.get("show_parts", True))
     show_shop_supplies = bool(cfg.get("show_shop_supplies", True))
+    show_notes = bool(cfg.get("show_notes", True))
 
     # Header
     header_h = 1.1 * inch
-    pdf.setFillColor(colors.white)
+    header_bg = colors.white
+    header_text = colors.black
+    header_muted = muted
+    if builder_enabled and builder_header_style == "banded":
+        header_bg = accent_dark
+        header_text = colors.white
+        header_muted = colors.white
+    pdf.setFillColor(header_bg)
     pdf.rect(0, PAGE_H - header_h, PAGE_W, header_h, stroke=0, fill=1)
     pdf.setStrokeColor(line_color)
     pdf.setLineWidth(1)
@@ -1196,11 +1373,11 @@ def _render_strip_pdf(
     username = (getattr(owner, "username", None) or "").strip() if owner else ""
     header_name = business_name or username or "InvoiceRunner"
     pdf.setFont("Helvetica-Bold", 12)
-    pdf.setFillColor(colors.black)
+    pdf.setFillColor(header_text)
     pdf.drawString(M + logo_w, PAGE_H - 0.72 * inch, header_name)
 
     pdf.setFont("Helvetica", 9)
-    pdf.setFillColor(muted)
+    pdf.setFillColor(header_muted)
     header_address_lines = _owner_address_lines(owner)
     header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
     info_lines = []
@@ -1215,7 +1392,7 @@ def _render_strip_pdf(
 
     # Invoice label right
     right_x = PAGE_W - M
-    right_text(right_x, PAGE_H - 0.55 * inch, f"{doc_label.title()} {display_no}", "Helvetica-Bold", 12, accent_dark)
+    right_text(right_x, PAGE_H - 0.55 * inch, f"{doc_label.title()} {display_no}", "Helvetica-Bold", 12, header_text)
     template_labels = {
         "auto_repair": "Auto Repair",
         "general_service": "General Service",
@@ -1230,7 +1407,7 @@ def _render_strip_pdf(
         custom_name = (getattr(owner, "custom_profession_name", None) or "").strip()
         if custom_name:
             prof_label = custom_name
-    right_text(right_x, PAGE_H - 0.74 * inch, f"{prof_label} {doc_label.lower()}", "Helvetica", 9, muted)
+    right_text(right_x, PAGE_H - 0.74 * inch, f"{prof_label} {doc_label.lower()}", "Helvetica", 9, header_muted)
 
     # Bill to + meta
     top_y = PAGE_H - header_h - 0.35 * inch
@@ -1308,7 +1485,7 @@ def _render_strip_pdf(
     # Table
     def draw_table(title, x, y_top, col_titles, rows, col_widths, money_cols=None):
         money_cols = set(money_cols or [])
-        base_row_h = 16
+        base_row_h = 14 if builder_compact_mode else 16
         title_gap = 18
 
         pdf.setFont("Helvetica-Bold", 11)
@@ -1407,6 +1584,23 @@ def _render_strip_pdf(
             money_cols={1}
         )
 
+    # Optional notes block (left side, below tables)
+    if show_notes and (inv.notes or "").strip():
+        notes_x = M
+        notes_w = max(2.2 * inch, PAGE_W - (3 * M) - 2.5 * inch)
+        notes_y_top = max(body_y - 8, 2.0 * inch + M)
+        notes_h = 1.35 * inch
+        pdf.setStrokeColor(line_color)
+        pdf.roundRect(notes_x, notes_y_top - notes_h, notes_w, notes_h, 8, stroke=1, fill=0)
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.setFillColor(colors.black)
+        pdf.drawString(notes_x + 10, notes_y_top - 16, "Notes")
+        pdf.setFont("Helvetica", 9)
+        y_notes = notes_y_top - 32
+        for ln in _wrap_text(inv.notes or "", "Helvetica", 9, notes_w - 20)[:5]:
+            pdf.drawString(notes_x + 10, y_notes, ln)
+            y_notes -= 12
+
     # Summary block at bottom right
     total_parts = inv.parts_total() if show_parts else 0.0
     total_labor = inv.labor_total() if show_labor else 0.0
@@ -1478,6 +1672,7 @@ def generate_and_store_pdf(
     invoice_id: int,
     custom_cfg_override: dict | None = None,
     pdf_template_override: str | None = None,
+    builder_cfg_override: dict | None = None,
 ) -> str:
     """
     Generates (or regenerates) a PDF for the given invoice_id.
@@ -1649,6 +1844,7 @@ def generate_and_store_pdf(
             "show_labor": True,
             "show_parts": True,
             "show_shop_supplies": True,
+            "show_notes": True,
         },
     }
 
@@ -1675,16 +1871,19 @@ def generate_and_store_pdf(
         cfg["show_labor"] = bool(getattr(owner, "custom_show_labor", True))
         cfg["show_parts"] = bool(getattr(owner, "custom_show_parts", True))
         cfg["show_shop_supplies"] = bool(getattr(owner, "custom_show_shop_supplies", True))
+        cfg["show_notes"] = bool(getattr(owner, "custom_show_notes", True))
     if custom_cfg_override:
         cfg = dict(cfg)
         for k, v in custom_cfg_override.items():
             if k in cfg:
                 cfg[k] = v
+    builder_cfg = _invoice_builder_cfg(owner, override=builder_cfg_override)
 
     show_job = bool(cfg.get("show_job", True))
     show_labor = bool(cfg.get("show_labor", True))
     show_parts = bool(cfg.get("show_parts", True))
     show_shop_supplies = bool(cfg.get("show_shop_supplies", True))
+    show_notes = bool(cfg.get("show_notes", True))
 
     requested_pdf_template = (pdf_template_override or "").strip()
     if requested_pdf_template:
@@ -1739,6 +1938,33 @@ def generate_and_store_pdf(
 
     doc_label = "ESTIMATE" if is_estimate else "INVOICE"
 
+    # Advanced drag/drop invoice builder output (active template).
+    if builder_cfg.get("enabled", False) and owner is not None:
+        active_design = (
+            session.query(InvoiceDesignTemplate)
+            .filter(
+                InvoiceDesignTemplate.user_id == owner.id,
+                InvoiceDesignTemplate.is_active.is_(True),
+            )
+            .order_by(InvoiceDesignTemplate.updated_at.desc(), InvoiceDesignTemplate.id.desc())
+            .first()
+        )
+        if active_design and (active_design.design_json or "").strip():
+            try:
+                design_obj = json.loads(active_design.design_json)
+                return _render_invoice_builder_pdf(
+                    session=session,
+                    inv=inv,
+                    owner=owner,
+                    customer=customer,
+                    pdf_path=pdf_path,
+                    generated_dt=generated_dt,
+                    is_estimate=is_estimate,
+                    design_obj=design_obj,
+                )
+            except Exception:
+                pass
+
     if pdf_template_key == "modern":
         return _render_modern_pdf(
             session=session,
@@ -1758,6 +1984,7 @@ def generate_and_store_pdf(
             owner_logo_abs=owner_logo_abs,
             owner_logo_blob=owner_logo_blob,
             is_estimate=is_estimate,
+            builder_cfg=builder_cfg,
         )
     if pdf_template_key == "split_panel":
         return _render_split_panel_pdf(
@@ -1778,6 +2005,7 @@ def generate_and_store_pdf(
             owner_logo_abs=owner_logo_abs,
             owner_logo_blob=owner_logo_blob,
             is_estimate=is_estimate,
+            builder_cfg=builder_cfg,
         )
     if pdf_template_key == "strip":
         return _render_strip_pdf(
@@ -1798,10 +2026,19 @@ def generate_and_store_pdf(
             owner_logo_abs=owner_logo_abs,
             owner_logo_blob=owner_logo_blob,
             is_estimate=is_estimate,
+            builder_cfg=builder_cfg,
         )
 
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
+    builder_enabled = bool(builder_cfg.get("enabled", False)) if isinstance(builder_cfg, dict) else False
+    builder_accent = colors.HexColor(
+        (builder_cfg.get("accent_color") if isinstance(builder_cfg, dict) else None) or "#0f172a"
+    )
+    builder_header_style = (
+        (builder_cfg.get("header_style") if isinstance(builder_cfg, dict) else None) or "classic"
+    ).strip().lower()
+    builder_compact_mode = bool(builder_cfg.get("compact_mode", False)) if isinstance(builder_cfg, dict) else False
 
     # -----------------------------
     # Helpers bound to this canvas
@@ -1835,9 +2072,16 @@ def generate_and_store_pdf(
     # Header (classic printer-friendly)
     # -----------------------------
     header_h = 1.35 * inch
-    pdf.setFillColor(colors.white)
+    header_fill = colors.white
+    header_text_color = colors.black
+    divider_color = colors.HexColor("#CCCCCC")
+    if builder_enabled and builder_header_style == "banded":
+        header_fill = builder_accent
+        header_text_color = colors.white
+        divider_color = builder_accent
+    pdf.setFillColor(header_fill)
     pdf.rect(0, PAGE_H - header_h, PAGE_W, header_h, stroke=0, fill=1)
-    pdf.setStrokeColor(colors.HexColor("#CCCCCC"))
+    pdf.setStrokeColor(divider_color)
     pdf.setLineWidth(1)
     pdf.line(M, PAGE_H - header_h - 0.02 * inch, PAGE_W - M, PAGE_H - header_h - 0.02 * inch)
 
@@ -1872,9 +2116,9 @@ def generate_and_store_pdf(
         except Exception:
             logo_w = 0
 
-    # Business info (left, black text)
+    # Business info (left)
     left_x = M + (logo_w + 10 if logo_w else 0)
-    pdf.setFillColor(colors.black)
+    pdf.setFillColor(header_text_color)
     pdf.setFont("Helvetica-Bold", 12)
     pdf.drawString(left_x, PAGE_H - 0.55 * inch, header_name or "InvoiceRunner")
 
@@ -1889,7 +2133,7 @@ def generate_and_store_pdf(
         pdf.drawString(left_x, info_y, ln)
         info_y -= 12
 
-    # Meta (right, black text)
+    # Meta (right)
     meta_x = PAGE_W - M
     right_text(meta_x, PAGE_H - 0.48 * inch, doc_label, "Helvetica-Bold", 18)
     right_text(meta_x, PAGE_H - 0.80 * inch, f"{doc_label.title()} #: {display_no}", "Helvetica", 10)
@@ -2000,7 +2244,7 @@ def generate_and_store_pdf(
     # -----------------------------
     def draw_table(title, x, y_top, col_titles, rows, col_widths, money_cols=None):
         money_cols = set(money_cols or [])
-        base_row_h = 16
+        base_row_h = 14 if builder_compact_mode else 16
         title_gap = 16
 
         pdf.setFont("Helvetica-Bold", 12)
@@ -2125,7 +2369,7 @@ def generate_and_store_pdf(
     bottom_padding = 12
 
     max_width = notes_box_w - left_padding - right_padding
-    all_note_lines = _split_notes_into_lines(inv.notes or "", max_width, font="Helvetica", size=10)
+    all_note_lines = _split_notes_into_lines(inv.notes or "", max_width, font="Helvetica", size=10) if show_notes else []
 
     footer_y = 0.55 * inch
     footer_clearance = 0.20 * inch
@@ -2137,28 +2381,30 @@ def generate_and_store_pdf(
     needed_box_h = header_title_gap + needed_text_h + bottom_padding
 
     max_box_h_this_page = notes_y_top - page_bottom_limit
-    notes_box_h = min(max_box_h_this_page, needed_box_h)
+    notes_box_h = min(max_box_h_this_page, needed_box_h) if show_notes else 0
 
-    pdf.roundRect(M, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 8, stroke=1, fill=0)
-    pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawString(M + 10, notes_y_top - 18, "NOTES")
+    remaining_lines = []
+    if show_notes:
+        pdf.roundRect(M, notes_y_top - notes_box_h, notes_box_w, notes_box_h, 8, stroke=1, fill=0)
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawString(M + 10, notes_y_top - 18, "NOTES")
 
-    pdf.setFont("Helvetica", 10)
-    y_note = notes_y_top - header_title_gap
-    bottom_limit = notes_y_top - notes_box_h + bottom_padding
+        pdf.setFont("Helvetica", 10)
+        y_note = notes_y_top - header_title_gap
+        bottom_limit = notes_y_top - notes_box_h + bottom_padding
 
-    lines_fit = 0
-    for line in all_note_lines:
-        if y_note < bottom_limit:
-            break
-        if line == "__SPACER__":
-            y_note -= SPACER_GAP
-        else:
-            pdf.drawString(M + left_padding, y_note, line)
-            y_note -= line_height
-        lines_fit += 1
+        lines_fit = 0
+        for line in all_note_lines:
+            if y_note < bottom_limit:
+                break
+            if line == "__SPACER__":
+                y_note -= SPACER_GAP
+            else:
+                pdf.drawString(M + left_padding, y_note, line)
+                y_note -= line_height
+            lines_fit += 1
 
-    remaining_lines = all_note_lines[lines_fit:]
+        remaining_lines = all_note_lines[lines_fit:]
 
     # Summary box
     sum_x = PAGE_W - M - 240
@@ -2236,7 +2482,7 @@ def generate_and_store_pdf(
             pdf.drawString(M, footer_y, "Thank you for your business.")
         pdf.setFillColorRGB(0, 0, 0)
 
-    if remaining_lines:
+    if show_notes and remaining_lines:
         footer()
         while remaining_lines:
             start_new_page_with_header()
@@ -2383,3 +2629,26 @@ def generate_profit_loss_pdf(
 
     pdf.save()
     return pdf_path
+def _invoice_builder_cfg(owner: User | None, override: dict | None = None) -> dict:
+    raw_enabled = bool(getattr(owner, "invoice_builder_enabled", False)) if owner else False
+    raw_accent = (getattr(owner, "invoice_builder_accent_color", None) or "#0f172a") if owner else "#0f172a"
+    raw_header = (getattr(owner, "invoice_builder_header_style", None) or "classic") if owner else "classic"
+    raw_compact = bool(getattr(owner, "invoice_builder_compact_mode", False)) if owner else False
+    if override:
+        raw_enabled = bool(override.get("enabled", raw_enabled))
+        raw_accent = str(override.get("accent_color", raw_accent) or raw_accent)
+        raw_header = str(override.get("header_style", raw_header) or raw_header)
+        raw_compact = bool(override.get("compact_mode", raw_compact))
+
+    accent = raw_accent.strip()
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
+        accent = "#0f172a"
+    header_style = raw_header.strip().lower()
+    if header_style not in ("classic", "banded"):
+        header_style = "classic"
+    return {
+        "enabled": raw_enabled,
+        "accent_color": accent,
+        "header_style": header_style,
+        "compact_mode": raw_compact,
+    }

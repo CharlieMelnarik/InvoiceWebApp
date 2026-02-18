@@ -60,6 +60,11 @@ class User(Base):
     custom_show_labor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     custom_show_parts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     custom_show_shop_supplies: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    custom_show_notes: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    invoice_builder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    invoice_builder_accent_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#0f172a")
+    invoice_builder_header_style: Mapped[str] = mapped_column(String(20), nullable=False, default="classic")
+    invoice_builder_compact_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Default PDF layout template for NEW invoices/estimates
     pdf_template: Mapped[str] = mapped_column(String(50), nullable=False, default="classic")
@@ -162,6 +167,12 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         order_by="BusinessExpense.sort_order.asc(), BusinessExpense.id.asc()",
+    )
+
+    invoice_design_templates: Mapped[list["InvoiceDesignTemplate"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="InvoiceDesignTemplate.updated_at.desc(), InvoiceDesignTemplate.id.desc()",
     )
 
     schedule_events: Mapped[list["ScheduleEvent"]] = relationship(
@@ -502,6 +513,26 @@ class InvoiceLabor(Base):
     labor_time_hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="labor_items")
+
+
+class InvoiceDesignTemplate(Base):
+    __tablename__ = "invoice_design_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False, default="My Template")
+    design_json: Mapped[str] = mapped_column(String, nullable=False, default="{}")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="invoice_design_templates")
 
 
 class BusinessExpense(Base):

@@ -203,6 +203,7 @@
   <div class="settings-jump">
     <a class="settings-jump-link" href="#section-account">Account</a>
     <a class="settings-jump-link" href="#section-invoice">Invoice Defaults</a>
+    <a class="settings-jump-link" href="#customProfessionCard">Invoice Builder</a>
     <a class="settings-jump-link" href="#section-preview">PDF Preview</a>
     {% if pro_features_enabled %}
       <a class="settings-jump-link" href="#section-payments">Payments</a>
@@ -263,10 +264,32 @@
 
       <section class="settings-card span-2" id="customProfessionCard" style="display:none;">
         <div class="settings-card-head">
-          <h5>Custom Profession Builder</h5>
+          <h5>Invoice Builder (V1)</h5>
         </div>
-        <div class="settings-help">Define your own labels and show/hide sections for invoices and estimates.</div>
+        <div class="settings-help">Build your own invoice/estimate structure with custom labels, section visibility, and style controls.</div>
+        {% if pro_features_enabled and not is_employee_account %}
+          <div class="mb-2">
+            <a class="btn btn-outline-primary btn-sm" href="{{ url_for('invoice_builder') }}">Open Advanced Drag & Drop Builder</a>
+          </div>
+        {% endif %}
         <div class="row g-3">
+          <div class="col-md-4 d-flex align-items-end">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="invoiceBuilderEnabled" name="invoice_builder_enabled" value="1" {% if u.invoice_builder_enabled %}checked{% endif %}>
+              <label class="form-check-label" for="invoiceBuilderEnabled">Enable Invoice Builder</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Accent Color</label>
+            <input class="form-control form-control-color" type="color" name="invoice_builder_accent_color" value="{{ u.invoice_builder_accent_color or '#0f172a' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label compact-label">Header Style</label>
+            <select class="form-select" name="invoice_builder_header_style">
+              <option value="classic" {% if (u.invoice_builder_header_style or 'classic') == 'classic' %}selected{% endif %}>Classic</option>
+              <option value="banded" {% if (u.invoice_builder_header_style or 'classic') == 'banded' %}selected{% endif %}>Banded</option>
+            </select>
+          </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Custom Profession Name</label>
             <input class="form-control" name="custom_profession_name" value="{{ u.custom_profession_name or '' }}" placeholder="e.g. Window Tinting">
@@ -313,6 +336,14 @@
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="customShowFees" name="custom_show_shop_supplies" value="1" {% if u.custom_show_shop_supplies is not defined or u.custom_show_shop_supplies %}checked{% endif %}>
                 <label class="form-check-label" for="customShowFees">Additional fees</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="customShowNotes" name="custom_show_notes" value="1" {% if u.custom_show_notes is not defined or u.custom_show_notes %}checked{% endif %}>
+                <label class="form-check-label" for="customShowNotes">Notes</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="invoiceBuilderCompactMode" name="invoice_builder_compact_mode" value="1" {% if u.invoice_builder_compact_mode %}checked{% endif %}>
+                <label class="form-check-label" for="invoiceBuilderCompactMode">Compact table spacing</label>
               </div>
             </div>
           </div>
@@ -604,6 +635,7 @@
 
   const templateSelect = document.getElementById("invoiceTemplateSelect");
   const customCard = document.getElementById("customProfessionCard");
+  const builderEnabledToggle = document.getElementById("invoiceBuilderEnabled");
   const paymentFeeAutoToggle = document.getElementById("paymentFeeAutoEnabled");
   const stripeFeeWrap = document.getElementById("stripeFeeSettingsWrap");
   const lateFeeModeSelect = document.getElementById("lateFeeMode");
@@ -611,7 +643,14 @@
   const lateFeePercentWrap = document.getElementById("lateFeePercentWrap");
   function toggleCustomCard() {
     if (!templateSelect || !customCard) return;
-    customCard.style.display = (templateSelect.value === "custom") ? "" : "none";
+    const builderOn = builderEnabledToggle ? builderEnabledToggle.checked : false;
+    customCard.style.display = (templateSelect.value === "custom" || builderOn) ? "" : "none";
+  }
+  function syncBuilderTemplate() {
+    if (!templateSelect || !builderEnabledToggle) return;
+    if (builderEnabledToggle.checked && templateSelect.value !== "custom") {
+      templateSelect.value = "custom";
+    }
   }
   function toggleStripeFeeFields() {
     if (!paymentFeeAutoToggle || !stripeFeeWrap) return;
@@ -625,6 +664,14 @@
   }
   if (templateSelect) {
     templateSelect.addEventListener("change", toggleCustomCard);
+    toggleCustomCard();
+  }
+  if (builderEnabledToggle) {
+    builderEnabledToggle.addEventListener("change", () => {
+      syncBuilderTemplate();
+      toggleCustomCard();
+    });
+    syncBuilderTemplate();
     toggleCustomCard();
   }
   if (paymentFeeAutoToggle) {
@@ -674,6 +721,11 @@
     params.set("custom_show_labor", checkboxVal("custom_show_labor", true) ? "1" : "0");
     params.set("custom_show_parts", checkboxVal("custom_show_parts", true) ? "1" : "0");
     params.set("custom_show_shop_supplies", checkboxVal("custom_show_shop_supplies", true) ? "1" : "0");
+    params.set("custom_show_notes", checkboxVal("custom_show_notes", true) ? "1" : "0");
+    params.set("invoice_builder_enabled", checkboxVal("invoice_builder_enabled", false) ? "1" : "0");
+    params.set("invoice_builder_accent_color", inputVal("invoice_builder_accent_color", "#0f172a"));
+    params.set("invoice_builder_header_style", inputVal("invoice_builder_header_style", "classic"));
+    params.set("invoice_builder_compact_mode", checkboxVal("invoice_builder_compact_mode", false) ? "1" : "0");
     params.set("_t", String(Date.now()));
     livePdf.src = `{{ url_for('settings_preview_pdf') }}?${params.toString()}`;
   }

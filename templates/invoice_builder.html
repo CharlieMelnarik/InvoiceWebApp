@@ -1,0 +1,397 @@
+{% extends "base.html" %}
+{% set title = "Invoice Builder" %}
+
+{% block content %}
+<style>
+  .builder-shell { max-width: 1380px; margin: 0 auto; }
+  .builder-layout { display: grid; grid-template-columns: 300px 1fr 280px; gap: 14px; }
+  .builder-panel {
+    border: 1px solid #b6cae8;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
+    box-shadow: 0 10px 26px rgba(12, 34, 73, 0.12);
+    padding: 12px;
+  }
+  .builder-panel h5 { margin: 0 0 8px; color: #123a71; font-weight: 800; }
+  .builder-canvas-wrap {
+    border: 1px solid #a7bfdf;
+    border-radius: 14px;
+    padding: 10px;
+    background: linear-gradient(180deg, #d8e4f7 0%, #cad8ee 100%);
+    overflow: auto;
+  }
+  .builder-canvas {
+    position: relative;
+    width: 816px;
+    height: 1056px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid #a9bedd;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+  }
+  .node {
+    position: absolute;
+    cursor: move;
+    user-select: none;
+    border: 1px dashed transparent;
+    overflow: hidden;
+    white-space: pre-wrap;
+  }
+  .node.selected { border-color: #1e63c6; background: rgba(30, 99, 198, 0.06); }
+  .node.box { background: #fff; }
+  .node .resize {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    right: 0;
+    bottom: 0;
+    cursor: nwse-resize;
+    background: #1e63c6;
+  }
+  .tool-btn { width: 100%; margin-bottom: 6px; text-align: left; }
+  .template-list { max-height: 280px; overflow: auto; }
+  .template-row {
+    border: 1px solid #bdd0ea;
+    border-radius: 10px;
+    padding: 8px;
+    background: #fff;
+    margin-bottom: 8px;
+  }
+  .template-row.active { border-color: #1f58ab; box-shadow: 0 0 0 2px rgba(31, 88, 171, 0.15); }
+  @media (max-width: 1200px) { .builder-layout { grid-template-columns: 1fr; } }
+</style>
+
+<div class="builder-shell">
+  <div class="page-header">
+    <div>
+      <h1 class="h3 fw-bold mb-1">Invoice Builder</h1>
+      <div class="subtitle">Drag, resize, and style invoice elements. Save unlimited templates and set one active.</div>
+    </div>
+    <div class="action-group">
+      <a class="btn btn-outline-secondary" href="{{ url_for('settings') }}">Back to Settings</a>
+      <button id="saveActiveBtn" class="btn btn-primary" type="button">Save Active Template</button>
+    </div>
+  </div>
+
+  <div class="builder-layout">
+    <section class="builder-panel">
+      <h5>Toolbox</h5>
+      <button class="btn btn-outline-primary tool-btn" data-add="text">+ Text Block</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="box">+ Box Shape</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="bill">+ Bill To Block</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="job">+ Job Details Block</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="summary">+ Summary Block</button>
+      <hr>
+      <label class="form-label compact-label">Canvas Background</label>
+      <input id="canvasBg" class="form-control form-control-color" type="color" value="#ffffff">
+      <div class="small text-muted mt-2">Tip: click an element to edit text, colors, and size on the right panel.</div>
+      <div class="small text-muted mt-2">
+        Dynamic text tokens: <code>{{'{{invoice_number}}'}}</code>, <code>{{'{{date}}'}}</code>, <code>{{'{{due_date}}'}}</code>,
+        <code>{{'{{customer_name}}'}}</code>, <code>{{'{{customer_email}}'}}</code>, <code>{{'{{customer_phone}}'}}</code>,
+        <code>{{'{{job}}'}}</code>, <code>{{'{{rate}}'}}</code>, <code>{{'{{hours}}'}}</code>, <code>{{'{{parts_total}}'}}</code>,
+        <code>{{'{{labor_total}}'}}</code>, <code>{{'{{tax}}'}}</code>, <code>{{'{{total}}'}}</code>, <code>{{'{{paid}}'}}</code>,
+        <code>{{'{{amount_due}}'}}</code>, <code>{{'{{business_name}}'}}</code>.
+      </div>
+    </section>
+
+    <section class="builder-canvas-wrap">
+      <div id="canvas" class="builder-canvas"></div>
+    </section>
+
+    <section class="builder-panel">
+      <h5>Properties</h5>
+      <div class="mb-2">
+        <label class="form-label compact-label">Template Name</label>
+        <input id="templateName" class="form-control" type="text" placeholder="My Custom Layout">
+      </div>
+      <div class="d-grid gap-2 mb-3">
+        <button id="saveAsNewBtn" class="btn btn-outline-primary" type="button">Save As New Template</button>
+        <button id="setActiveBtn" class="btn btn-outline-success" type="button">Set Selected Active</button>
+      </div>
+      <hr>
+      <div id="propEditor">
+        <div class="small text-muted">Select an element to edit.</div>
+      </div>
+      <hr>
+      <h5>Templates</h5>
+      <div id="templateList" class="template-list"></div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const saveUrl = "{{ url_for('api_invoice_builder_save') }}";
+  const activateBase = "/api/invoice-builder/template/";
+  const templates = {{ templates_payload|tojson }};
+  let currentTemplateId = {{ active_template_id|tojson }};
+
+  const canvas = document.getElementById("canvas");
+  const canvasBg = document.getElementById("canvasBg");
+  const templateName = document.getElementById("templateName");
+  const templateList = document.getElementById("templateList");
+  const propEditor = document.getElementById("propEditor");
+  const saveAsNewBtn = document.getElementById("saveAsNewBtn");
+  const saveActiveBtn = document.getElementById("saveActiveBtn");
+  const setActiveBtn = document.getElementById("setActiveBtn");
+
+  let state = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
+  let selectedId = null;
+  let drag = null;
+
+  function activeTemplate() {
+    return templates.find(t => Number(t.id) === Number(currentTemplateId)) || templates[0];
+  }
+
+  function nodeById(id) {
+    return state.elements.find(e => String(e.id) === String(id));
+  }
+
+  function renderTemplateList() {
+    templateList.innerHTML = "";
+    templates.forEach(t => {
+      const row = document.createElement("div");
+      row.className = "template-row" + (Number(t.id) === Number(currentTemplateId) ? " active" : "");
+      row.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center">
+          <strong>${t.name}</strong>
+          ${t.is_active ? '<span class="badge text-bg-success">Active</span>' : ""}
+        </div>
+        <div class="d-flex gap-1 mt-2">
+          <button class="btn btn-outline-primary btn-sm" data-load="${t.id}">Load</button>
+          <button class="btn btn-outline-success btn-sm" data-activate="${t.id}">Activate</button>
+          <button class="btn btn-outline-danger btn-sm" data-delete="${t.id}">Delete</button>
+        </div>
+      `;
+      templateList.appendChild(row);
+    });
+  }
+
+  function renderCanvas() {
+    canvas.style.background = state.canvas.bg || "#fff";
+    canvas.innerHTML = "";
+    state.elements.forEach(el => {
+      const node = document.createElement("div");
+      node.className = "node " + (el.type === "box" ? "box " : "") + (String(el.id) === String(selectedId) ? "selected" : "");
+      node.dataset.id = String(el.id);
+      node.style.left = `${el.x || 0}px`;
+      node.style.top = `${el.y || 0}px`;
+      node.style.width = `${Math.max(30, el.w || 80)}px`;
+      node.style.height = `${Math.max(24, el.h || 30)}px`;
+      node.style.color = el.color || "#111827";
+      node.style.fontSize = `${el.fontSize || 14}px`;
+      node.style.fontWeight = String(el.fontWeight || 500);
+      node.style.borderColor = el.borderColor || "transparent";
+      node.style.backgroundColor = el.fillColor || "transparent";
+      node.style.borderRadius = `${el.radius || 0}px`;
+      node.textContent = el.text || "";
+      const resize = document.createElement("div");
+      resize.className = "resize";
+      node.appendChild(resize);
+      canvas.appendChild(node);
+    });
+    renderPropertyEditor();
+  }
+
+  function renderPropertyEditor() {
+    const el = nodeById(selectedId);
+    if (!el) {
+      propEditor.innerHTML = '<div class="small text-muted">Select an element to edit.</div>';
+      return;
+    }
+    propEditor.innerHTML = `
+      <div class="mb-2">
+        <label class="form-label compact-label">Text</label>
+        <textarea id="propText" class="form-control" rows="4">${el.text || ""}</textarea>
+      </div>
+      <div class="row g-2">
+        <div class="col-6">
+          <label class="form-label compact-label">Font Size</label>
+          <input id="propFontSize" class="form-control" type="number" min="8" max="80" value="${el.fontSize || 14}">
+        </div>
+        <div class="col-6">
+          <label class="form-label compact-label">Weight</label>
+          <input id="propWeight" class="form-control" type="number" min="100" max="900" step="100" value="${el.fontWeight || 500}">
+        </div>
+        <div class="col-6">
+          <label class="form-label compact-label">Text Color</label>
+          <input id="propColor" class="form-control form-control-color" type="color" value="${el.color || "#111827"}">
+        </div>
+        <div class="col-6">
+          <label class="form-label compact-label">Fill</label>
+          <input id="propFill" class="form-control form-control-color" type="color" value="${(el.fillColor && el.fillColor.startsWith("#")) ? el.fillColor : "#ffffff"}">
+        </div>
+      </div>
+      <div class="d-grid gap-2 mt-2">
+        <button id="duplicateBtn" class="btn btn-outline-primary btn-sm" type="button">Duplicate Element</button>
+        <button id="removeBtn" class="btn btn-outline-danger btn-sm" type="button">Delete Element</button>
+      </div>
+    `;
+    document.getElementById("propText").addEventListener("input", (e) => { el.text = e.target.value; renderCanvas(); });
+    document.getElementById("propFontSize").addEventListener("input", (e) => { el.fontSize = Number(e.target.value || 14); renderCanvas(); });
+    document.getElementById("propWeight").addEventListener("input", (e) => { el.fontWeight = Number(e.target.value || 500); renderCanvas(); });
+    document.getElementById("propColor").addEventListener("input", (e) => { el.color = e.target.value; renderCanvas(); });
+    document.getElementById("propFill").addEventListener("input", (e) => { el.fillColor = e.target.value; renderCanvas(); });
+    document.getElementById("duplicateBtn").addEventListener("click", () => {
+      const copy = JSON.parse(JSON.stringify(el));
+      copy.id = `el_${Date.now()}`;
+      copy.x = (copy.x || 0) + 18;
+      copy.y = (copy.y || 0) + 18;
+      state.elements.push(copy);
+      selectedId = copy.id;
+      renderCanvas();
+    });
+    document.getElementById("removeBtn").addEventListener("click", () => {
+      state.elements = state.elements.filter(x => String(x.id) !== String(el.id));
+      selectedId = null;
+      renderCanvas();
+    });
+  }
+
+  function loadTemplate(id) {
+    const t = templates.find(x => Number(x.id) === Number(id));
+    if (!t) return;
+    currentTemplateId = Number(t.id);
+    templateName.value = t.name || "";
+    state = JSON.parse(JSON.stringify(t.design || { canvas: { width: 816, height: 1056, bg: "#fff" }, elements: [] }));
+    if (!state.canvas) state.canvas = { width: 816, height: 1056, bg: "#fff" };
+    if (!Array.isArray(state.elements)) state.elements = [];
+    canvasBg.value = state.canvas.bg || "#ffffff";
+    selectedId = null;
+    renderTemplateList();
+    renderCanvas();
+  }
+
+  function addPreset(type) {
+    const id = `el_${Date.now()}`;
+    const base = {
+      id, type: "text", x: 80, y: 80, w: 260, h: 50, text: "Text", fontSize: 16, fontWeight: 600, color: "#111827", fillColor: "transparent", borderColor: "transparent", radius: 0
+    };
+    if (type === "box") Object.assign(base, { type: "box", text: "", w: 260, h: 140, borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
+    if (type === "bill") Object.assign(base, { text: "BILL TO\\nCustomer Name\\nAddress\\nEmail\\nPhone", w: 300, h: 160, x: 60, y: 120 });
+    if (type === "job") Object.assign(base, { text: "JOB DETAILS\\nJob\\nRate\\nHours", w: 300, h: 160, x: 420, y: 120 });
+    if (type === "summary") Object.assign(base, { text: "SUMMARY\\nLabor\\nParts\\nTax\\nTotal", w: 260, h: 180, x: 500, y: 780 });
+    state.elements.push(base);
+    selectedId = id;
+    renderCanvas();
+  }
+
+  async function saveTemplate({ asNew = false, activate = false } = {}) {
+    const payload = {
+      template_id: asNew ? null : currentTemplateId,
+      name: (templateName.value || "").trim() || "Untitled Template",
+      set_active: !!activate,
+      design: state,
+    };
+    const res = await fetch(saveUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      alert(data.error || "Failed to save template.");
+      return;
+    }
+    if (asNew) {
+      templates.unshift({ id: data.id, name: data.name, is_active: !!data.is_active, design: JSON.parse(JSON.stringify(state)) });
+      currentTemplateId = data.id;
+    } else {
+      const t = templates.find(x => Number(x.id) === Number(currentTemplateId));
+      if (t) {
+        t.name = payload.name;
+        t.design = JSON.parse(JSON.stringify(state));
+      }
+    }
+    if (activate) {
+      templates.forEach(t => t.is_active = Number(t.id) === Number(currentTemplateId));
+    }
+    renderTemplateList();
+  }
+
+  async function activateTemplate(id) {
+    const res = await fetch(`${activateBase}${id}/activate`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) return alert(data.error || "Failed to activate template.");
+    templates.forEach(t => t.is_active = Number(t.id) === Number(id));
+    currentTemplateId = Number(id);
+    renderTemplateList();
+  }
+
+  async function deleteTemplate(id) {
+    if (!confirm("Delete this template?")) return;
+    const res = await fetch(`${activateBase}${id}/delete`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) return alert(data.error || "Failed to delete template.");
+    const idx = templates.findIndex(t => Number(t.id) === Number(id));
+    if (idx >= 0) templates.splice(idx, 1);
+    if (!templates.length) return location.reload();
+    if (Number(currentTemplateId) === Number(id)) loadTemplate(templates[0].id);
+    renderTemplateList();
+  }
+
+  canvas.addEventListener("mousedown", (e) => {
+    const node = e.target.closest(".node");
+    if (!node) { selectedId = null; renderCanvas(); return; }
+    const id = node.dataset.id;
+    selectedId = id;
+    const el = nodeById(id);
+    if (!el) return;
+    const rect = canvas.getBoundingClientRect();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const originX = Number(el.x || 0);
+    const originY = Number(el.y || 0);
+    const originW = Number(el.w || 80);
+    const originH = Number(el.h || 30);
+    const isResize = e.target.classList.contains("resize");
+    drag = { id, startX, startY, originX, originY, originW, originH, isResize, rect };
+    renderCanvas();
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    const el = nodeById(drag.id);
+    if (!el) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (drag.isResize) {
+      el.w = Math.max(30, drag.originW + dx);
+      el.h = Math.max(24, drag.originH + dy);
+    } else {
+      el.x = Math.max(0, Math.min((state.canvas.width || 816) - 20, drag.originX + dx));
+      el.y = Math.max(0, Math.min((state.canvas.height || 1056) - 20, drag.originY + dy));
+    }
+    renderCanvas();
+  });
+  window.addEventListener("mouseup", () => { drag = null; });
+
+  canvasBg.addEventListener("input", () => {
+    state.canvas.bg = canvasBg.value;
+    renderCanvas();
+  });
+
+  document.querySelectorAll("[data-add]").forEach(btn => {
+    btn.addEventListener("click", () => addPreset(btn.dataset.add));
+  });
+
+  templateList.addEventListener("click", (e) => {
+    const load = e.target.getAttribute("data-load");
+    const activate = e.target.getAttribute("data-activate");
+    const del = e.target.getAttribute("data-delete");
+    if (load) return loadTemplate(Number(load));
+    if (activate) return activateTemplate(Number(activate));
+    if (del) return deleteTemplate(Number(del));
+  });
+
+  saveAsNewBtn.addEventListener("click", () => saveTemplate({ asNew: true, activate: false }));
+  saveActiveBtn.addEventListener("click", () => saveTemplate({ asNew: false, activate: false }));
+  setActiveBtn.addEventListener("click", () => saveTemplate({ asNew: false, activate: true }));
+
+  renderTemplateList();
+  loadTemplate(currentTemplateId);
+})();
+</script>
+{% endblock %}
