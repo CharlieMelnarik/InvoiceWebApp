@@ -108,6 +108,7 @@
     <div class="action-group">
       <a class="btn btn-outline-secondary" href="{{ url_for('settings') }}">Back to Settings</a>
       <button id="saveActiveBtn" class="btn btn-primary" type="button">Save Active Template</button>
+      <span id="saveStatus" class="badge text-bg-light border align-self-center"></span>
     </div>
   </div>
 
@@ -189,6 +190,7 @@
   const saveAsNewBtn = document.getElementById("saveAsNewBtn");
   const saveActiveBtn = document.getElementById("saveActiveBtn");
   const setActiveBtn = document.getElementById("setActiveBtn");
+  const saveStatus = document.getElementById("saveStatus");
   const showSampleData = document.getElementById("showSampleData");
 
   let state = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
@@ -200,6 +202,18 @@
     "job","rate","hours","parts_total","labor_total","tax","total","paid","amount_due"
   ];
   const tok = (name) => "{" + "{" + name + "}" + "}";
+  function setStatus(msg, kind = "info") {
+    if (!saveStatus) return;
+    saveStatus.textContent = msg || "";
+    saveStatus.className = "badge border align-self-center";
+    if (kind === "ok") {
+      saveStatus.classList.add("text-bg-success");
+    } else if (kind === "error") {
+      saveStatus.classList.add("text-bg-danger");
+    } else {
+      saveStatus.classList.add("text-bg-light");
+    }
+  }
   const SAMPLE_VALUES = {
     doc_label: "INVOICE",
     invoice_number: "2026-0001",
@@ -522,13 +536,27 @@
       set_active: !!activate,
       design: state,
     };
-    const res = await fetch(saveUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
+    let res;
+    let data = null;
+    try {
+      res = await fetch(saveUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const raw = await res.text();
+      try {
+        data = JSON.parse(raw || "{}");
+      } catch (_e) {
+        data = { ok: false, error: `Unexpected server response (${res.status}).` };
+      }
+    } catch (err) {
+      setStatus("Save failed (network error).", "error");
+      alert(`Could not save template: ${err?.message || err}`);
+      return false;
+    }
     if (!res.ok || !data.ok) {
+      setStatus("Save failed.", "error");
       alert(data.error || "Failed to save template.");
       return false;
     }
@@ -546,16 +574,34 @@
       templates.forEach(t => t.is_active = Number(t.id) === Number(currentTemplateId));
     }
     renderTemplateList();
+    setStatus(`Saved at ${new Date().toLocaleTimeString()}`, "ok");
     return true;
   }
 
   async function activateTemplate(id) {
-    const res = await fetch(`${activateBase}${id}/activate`, { method: "POST" });
-    const data = await res.json();
-    if (!res.ok || !data.ok) return alert(data.error || "Failed to activate template.");
+    let res;
+    let data = null;
+    try {
+      res = await fetch(`${activateBase}${id}/activate`, { method: "POST" });
+      const raw = await res.text();
+      try {
+        data = JSON.parse(raw || "{}");
+      } catch (_e) {
+        data = { ok: false, error: `Unexpected server response (${res.status}).` };
+      }
+    } catch (err) {
+      setStatus("Activate failed (network error).", "error");
+      alert(`Could not activate template: ${err?.message || err}`);
+      return;
+    }
+    if (!res.ok || !data.ok) {
+      setStatus("Activate failed.", "error");
+      return alert(data.error || "Failed to activate template.");
+    }
     templates.forEach(t => t.is_active = Number(t.id) === Number(id));
     currentTemplateId = Number(id);
     renderTemplateList();
+    setStatus("Template is now active.", "ok");
   }
 
   async function deleteTemplate(id) {
@@ -630,8 +676,14 @@
     if (del) return deleteTemplate(Number(del));
   });
 
-  saveAsNewBtn.addEventListener("click", () => saveTemplate({ asNew: true, activate: false }));
-  saveActiveBtn.addEventListener("click", () => saveTemplate({ asNew: false, activate: false }));
+  saveAsNewBtn.addEventListener("click", async () => {
+    setStatus("Saving as new template...");
+    await saveTemplate({ asNew: true, activate: false });
+  });
+  saveActiveBtn.addEventListener("click", async () => {
+    setStatus("Saving current template...");
+    await saveTemplate({ asNew: false, activate: false });
+  });
   setActiveBtn.addEventListener("click", async () => {
     if (!currentTemplateId) {
       alert("Please load a template first.");
