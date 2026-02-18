@@ -454,29 +454,29 @@
         y: 44,
         w: 240,
         h: 62,
-        text: `Invoice #: ${tok("invoice_number")}\\nDate: ${tok("date")}\\nDue: ${tok("due_date")}`,
+        text: `Invoice #: ${tok("invoice_number")}\nDate: ${tok("date")}\nDue: ${tok("due_date")}`,
         fontSize: 13,
         fontWeight: 500
       });
       state.elements.push(t1, t2);
       selectedId = t1.id;
     } else if (type === "bill") {
-      addSection(48, 118, 350, 150, `BILL TO\\n${tok("customer_name")}\\nEmail: ${tok("customer_email")}\\nPhone: ${tok("customer_phone")}`, 14);
+      addSection(48, 118, 350, 150, `BILL TO\n${tok("customer_name")}\nEmail: ${tok("customer_email")}\nPhone: ${tok("customer_phone")}`, 14);
     } else if (type === "job") {
-      addSection(418, 118, 350, 150, `JOB DETAILS\\nJob: ${tok("job")}\\nRate/Hour: ${tok("rate")}\\nTotal Hours: ${tok("hours")}`, 14);
+      addSection(418, 118, 350, 150, `JOB DETAILS\nJob: ${tok("job")}\nRate/Hour: ${tok("rate")}\nTotal Hours: ${tok("hours")}`, 14);
     } else if (type === "labor") {
-      addSection(48, 300, 720, 140, `LABOR\\nOil change service - 1.0 hr - $100.00\\nBrake inspection - 1.5 hr - $150.00\\nLabor Total: ${tok("labor_total")}`, 13);
+      addSection(48, 300, 720, 140, `LABOR\nOil change service - 1.0 hr - $100.00\nBrake inspection - 1.5 hr - $150.00\nLabor Total: ${tok("labor_total")}`, 13);
     } else if (type === "parts") {
-      addSection(48, 450, 720, 150, `PARTS\\nOil Filter - $18.99\\nEngine Oil - $37.95\\nAir Filter - $27.99\\nParts Total: ${tok("parts_total")}`, 13);
+      addSection(48, 450, 720, 150, `PARTS\nOil Filter - $18.99\nEngine Oil - $37.95\nAir Filter - $27.99\nParts Total: ${tok("parts_total")}`, 13);
     } else if (type === "notes") {
-      addSection(48, 780, 430, 160, "NOTES\\nThank you for your business.\\nRecommended: tire rotation in 5,000 miles.", 13);
+      addSection(48, 780, 430, 160, "NOTES\nThank you for your business.\nRecommended: tire rotation in 5,000 miles.", 13);
     } else if (type === "summary") {
       addSection(
         500,
         780,
         268,
         180,
-        `SUMMARY\\nLabor: ${tok("labor_total")}\\nParts: ${tok("parts_total")}\\nTax: ${tok("tax")}\\nTotal: ${tok("total")}\\nAmount Due: ${tok("amount_due")}`,
+        `SUMMARY\nLabor: ${tok("labor_total")}\nParts: ${tok("parts_total")}\nTax: ${tok("tax")}\nTotal: ${tok("total")}\nAmount Due: ${tok("amount_due")}`,
         14
       );
     }
@@ -530,7 +530,7 @@
     const data = await res.json();
     if (!res.ok || !data.ok) {
       alert(data.error || "Failed to save template.");
-      return;
+      return false;
     }
     if (asNew) {
       templates.unshift({ id: data.id, name: data.name, is_active: !!data.is_active, design: JSON.parse(JSON.stringify(state)) });
@@ -546,6 +546,7 @@
       templates.forEach(t => t.is_active = Number(t.id) === Number(currentTemplateId));
     }
     renderTemplateList();
+    return true;
   }
 
   async function activateTemplate(id) {
@@ -631,7 +632,15 @@
 
   saveAsNewBtn.addEventListener("click", () => saveTemplate({ asNew: true, activate: false }));
   saveActiveBtn.addEventListener("click", () => saveTemplate({ asNew: false, activate: false }));
-  setActiveBtn.addEventListener("click", () => saveTemplate({ asNew: false, activate: true }));
+  setActiveBtn.addEventListener("click", async () => {
+    if (!currentTemplateId) {
+      alert("Please load a template first.");
+      return;
+    }
+    const ok = await saveTemplate({ asNew: false, activate: false });
+    if (!ok) return;
+    await activateTemplate(Number(currentTemplateId));
+  });
 
   renderTemplateList();
   loadTemplate(currentTemplateId);
