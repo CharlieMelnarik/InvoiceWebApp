@@ -29,6 +29,12 @@
     border: 1px solid #a9bedd;
     box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
   }
+  .canvas-guide {
+    position: absolute;
+    inset: 16px;
+    border: 1px dashed rgba(30, 99, 198, 0.22);
+    pointer-events: none;
+  }
   .node {
     position: absolute;
     cursor: move;
@@ -115,6 +121,7 @@
         4) Save template
       </div>
       <div class="tool-group-title">Quick Start</div>
+      <button class="btn btn-primary tool-btn" data-quick="pdf_like">Use PDF-Like Starter (Recommended)</button>
       <button class="btn btn-outline-primary tool-btn" data-quick="standard">Use Standard Starter</button>
       <button class="btn btn-outline-primary tool-btn" data-quick="minimal">Use Minimal Starter</button>
       <button class="btn btn-outline-primary tool-btn" data-quick="service">Use Service Starter</button>
@@ -131,11 +138,17 @@
       <hr>
       <label class="form-label compact-label">Canvas Background</label>
       <input id="canvasBg" class="form-control form-control-color" type="color" value="#ffffff">
+      <div class="form-check mt-2">
+        <input class="form-check-input" type="checkbox" id="showSampleData" checked>
+        <label class="form-check-label" for="showSampleData">Show sample data in builder preview</label>
+      </div>
       <div class="small text-muted mt-2">Tip: click a section, then edit text on the right. Drag to move. Pull corner to resize.</div>
     </section>
 
     <section class="builder-canvas-wrap">
-      <div id="canvas" class="builder-canvas"></div>
+      <div id="canvas" class="builder-canvas">
+        <div class="canvas-guide"></div>
+      </div>
     </section>
 
     <section class="builder-panel">
@@ -176,6 +189,7 @@
   const saveAsNewBtn = document.getElementById("saveAsNewBtn");
   const saveActiveBtn = document.getElementById("saveActiveBtn");
   const setActiveBtn = document.getElementById("setActiveBtn");
+  const showSampleData = document.getElementById("showSampleData");
 
   let state = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
   let selectedId = null;
@@ -186,6 +200,25 @@
     "job","rate","hours","parts_total","labor_total","tax","total","paid","amount_due"
   ];
   const tok = (name) => "{" + "{" + name + "}" + "}";
+  const SAMPLE_VALUES = {
+    doc_label: "INVOICE",
+    invoice_number: "2026-0001",
+    date: "February 18, 2026",
+    due_date: "March 20, 2026",
+    business_name: "Summit Auto Repair",
+    customer_name: "John Sample",
+    customer_email: "john.sample@email.com",
+    customer_phone: "(406) 555-1234",
+    job: "2018 Ford F-150",
+    rate: "$100.00",
+    hours: "2.5",
+    parts_total: "$182.00",
+    labor_total: "$250.00",
+    tax: "$34.56",
+    total: "$466.56",
+    paid: "$100.00",
+    amount_due: "$366.56",
+  };
 
   function activeTemplate() {
     return templates.find(t => Number(t.id) === Number(currentTemplateId)) || templates[0];
@@ -217,7 +250,7 @@
 
   function renderCanvas() {
     canvas.style.background = state.canvas.bg || "#fff";
-    canvas.innerHTML = "";
+    canvas.innerHTML = '<div class="canvas-guide"></div>';
     state.elements.forEach(el => {
       const node = document.createElement("div");
       node.className = "node " + (el.type === "box" ? "box " : "") + (String(el.id) === String(selectedId) ? "selected" : "");
@@ -232,7 +265,11 @@
       node.style.borderColor = el.borderColor || "transparent";
       node.style.backgroundColor = el.fillColor || "transparent";
       node.style.borderRadius = `${el.radius || 0}px`;
-      node.textContent = el.text || "";
+      const rawText = String(el.text || "");
+      const renderedText = (showSampleData && showSampleData.checked)
+        ? rawText.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? `{{${key}}}`)
+        : rawText;
+      node.textContent = renderedText;
       const resize = document.createElement("div");
       resize.className = "resize";
       node.appendChild(resize);
@@ -282,6 +319,10 @@
           <div class="small text-muted mb-1">Click to insert data fields:</div>
           <div class="token-list" id="tokenList"></div>
         </div>
+        <div class="mb-2">
+          <label class="form-label compact-label">Sample Preview</label>
+          <div class="helper-callout" id="samplePreview"></div>
+        </div>
         <div class="row g-2">
           <div class="col-6">
             <label class="form-label compact-label">Font Size</label>
@@ -302,7 +343,13 @@
         </div>
       `;
       const textArea = document.getElementById("propText");
-      document.getElementById("propText").addEventListener("input", (e) => { el.text = e.target.value; renderCanvas(); });
+      const samplePreview = document.getElementById("samplePreview");
+      const renderSamplePreview = () => {
+        const raw = String(el.text || "");
+        samplePreview.textContent = raw.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? `{{${key}}}`);
+      };
+      renderSamplePreview();
+      document.getElementById("propText").addEventListener("input", (e) => { el.text = e.target.value; renderSamplePreview(); renderCanvas(); });
       document.getElementById("propFontSize").addEventListener("input", (e) => { el.fontSize = Number(e.target.value || 14); renderCanvas(); });
       document.getElementById("propWeight").addEventListener("input", (e) => { el.fontWeight = Number(e.target.value || 500); renderCanvas(); });
       document.getElementById("propColor").addEventListener("input", (e) => { el.color = e.target.value; renderCanvas(); });
@@ -322,6 +369,7 @@
           el.text = textArea.value;
           textArea.focus();
           textArea.selectionStart = textArea.selectionEnd = start + token.length;
+          renderSamplePreview();
           renderCanvas();
         });
         tokenList.appendChild(b);
@@ -417,11 +465,11 @@
     } else if (type === "job") {
       addSection(418, 118, 350, 150, `JOB DETAILS\\nJob: ${tok("job")}\\nRate/Hour: ${tok("rate")}\\nTotal Hours: ${tok("hours")}`, 14);
     } else if (type === "labor") {
-      addSection(48, 300, 720, 120, `LABOR\\n${tok("labor_total")}`, 15);
+      addSection(48, 300, 720, 140, `LABOR\\nOil change service - 1.0 hr - $100.00\\nBrake inspection - 1.5 hr - $150.00\\nLabor Total: ${tok("labor_total")}`, 13);
     } else if (type === "parts") {
-      addSection(48, 430, 720, 120, `PARTS\\n${tok("parts_total")}`, 15);
+      addSection(48, 450, 720, 150, `PARTS\\nOil Filter - $18.99\\nEngine Oil - $37.95\\nAir Filter - $27.99\\nParts Total: ${tok("parts_total")}`, 13);
     } else if (type === "notes") {
-      addSection(48, 780, 430, 160, "NOTES\\nAdd details for your customer here.", 14);
+      addSection(48, 780, 430, 160, "NOTES\\nThank you for your business.\\nRecommended: tire rotation in 5,000 miles.", 13);
     } else if (type === "summary") {
       addSection(
         500,
@@ -438,7 +486,15 @@
   function quickStart(kind) {
     const base = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
     state = base;
-    if (kind === "minimal") {
+    if (kind === "pdf_like") {
+      addPreset("header");
+      addPreset("bill");
+      addPreset("job");
+      addPreset("labor");
+      addPreset("parts");
+      addPreset("notes");
+      addPreset("summary");
+    } else if (kind === "minimal") {
       addPreset("header");
       addPreset("bill");
       addPreset("summary");
@@ -553,6 +609,9 @@
     state.canvas.bg = canvasBg.value;
     renderCanvas();
   });
+  if (showSampleData) {
+    showSampleData.addEventListener("change", renderCanvas);
+  }
 
   document.querySelectorAll("[data-add]").forEach(btn => {
     btn.addEventListener("click", () => addPreset(btn.dataset.add));
@@ -576,6 +635,9 @@
 
   renderTemplateList();
   loadTemplate(currentTemplateId);
+  if (!templates || !templates.length) {
+    quickStart("pdf_like");
+  }
 })();
 </script>
 {% endblock %}
