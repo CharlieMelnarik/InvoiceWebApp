@@ -1237,6 +1237,7 @@ def _send_payment_reminder_for_invoice(
     customer: Customer | None,
     reminder_kind: str = "manual",
     now_utc: datetime | None = None,
+    include_pdf: bool = False,
 ) -> tuple[bool, str]:
     if bool(getattr(inv, "is_estimate", False)):
         return False, "Estimates do not send payment reminders."
@@ -1286,11 +1287,19 @@ def _send_payment_reminder_for_invoice(
         "Thank you."
     )
 
+    pdf_path = (inv.pdf_path or "").strip()
+    if include_pdf and (not pdf_path or not os.path.exists(pdf_path)):
+        try:
+            pdf_path = generate_and_store_pdf(session, inv.id)
+            inv = session.get(Invoice, inv.id) or inv
+        except Exception:
+            pdf_path = ""
+
     _send_invoice_pdf_email(
         to_email=to_email,
         subject=subject,
         body_text=body,
-        pdf_path=(inv.pdf_path or ""),
+        pdf_path=pdf_path,
         action_url=portal_url,
         action_label=("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
     )
@@ -7494,6 +7503,7 @@ def create_app():
                     customer=customer,
                     reminder_kind="manual",
                     now_utc=datetime.utcnow(),
+                    include_pdf=True,
                 )
                 if not sent:
                     flash(msg, "error")

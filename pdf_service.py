@@ -71,6 +71,18 @@ def _owner_address_lines(owner: User | None) -> list[str]:
     return lines or [legacy]
 
 
+def _invoice_due_date_line(inv: Invoice, owner: User | None, *, is_estimate: bool) -> str:
+    if is_estimate:
+        return ""
+    if float(inv.amount_due() or 0.0) <= 0.0:
+        return ""
+    due_days = int(getattr(owner, "payment_due_days", 30) or 30) if owner else 30
+    due_days = max(0, min(3650, due_days))
+    created_at = getattr(inv, "created_at", None) or datetime.utcnow()
+    due_dt = created_at + timedelta(days=due_days)
+    return f"Payment due date: {due_dt.strftime('%B %d, %Y')}"
+
+
 def _tax_label(inv: Invoice) -> str:
     if getattr(inv, "tax_override", None) is not None:
         return "Tax"
@@ -261,6 +273,9 @@ def _render_modern_pdf(
     right_text(right_x, PAGE_H - 0.48 * inch, doc_label, "Helvetica-Bold", 18, colors.white)
     right_text(right_x, PAGE_H - 0.80 * inch, f"{doc_label.title()} #: {display_no}", "Helvetica", 10, colors.white)
     right_text(right_x, PAGE_H - 1.02 * inch, f"Date: {inv.date_in}", "Helvetica", 10, colors.white)
+    due_line = _invoice_due_date_line(inv, owner, is_estimate=is_estimate)
+    if due_line:
+        right_text(right_x, PAGE_H - 1.24 * inch, due_line, "Helvetica", 9, colors.white)
 
     # Info cards
     top_y = PAGE_H - header_h - 0.35 * inch
@@ -788,6 +803,9 @@ def _render_split_panel_pdf(
 
     right_text(content_x + content_w - 14, PAGE_H - M - 0.48 * inch, f"{doc_label.title()} #: {display_no}", "Helvetica", 9, colors.black)
     right_text(content_x + content_w - 14, PAGE_H - M - 0.70 * inch, f"Date: {inv.date_in}", "Helvetica", 9, colors.black)
+    due_line = _invoice_due_date_line(inv, owner, is_estimate=is_estimate)
+    if due_line:
+        right_text(content_x + content_w - 14, PAGE_H - M - 0.88 * inch, due_line, "Helvetica", 8, colors.black)
 
     # Info cards
     card_y_top = PAGE_H - M - 1.35 * inch
@@ -1250,6 +1268,12 @@ def _render_strip_pdf(
     meta_y = top_y - 4
     label_value(meta_x, meta_y, "Issue date:", inv.date_in)
     label_value(meta_x, meta_y - 14, "Reference:", display_no)
+    due_line = _invoice_due_date_line(inv, owner, is_estimate=is_estimate)
+    if due_line:
+        pdf.setFont("Helvetica", 8)
+        pdf.setFillColor(muted)
+        pdf.drawString(meta_x, meta_y - 28, due_line)
+        pdf.setFillColor(colors.black)
 
     # Summary strip
     strip_y = top_y - 70
@@ -1869,6 +1893,9 @@ def generate_and_store_pdf(
     right_text(meta_x, PAGE_H - 0.48 * inch, doc_label, "Helvetica-Bold", 18)
     right_text(meta_x, PAGE_H - 0.80 * inch, f"{doc_label.title()} #: {display_no}", "Helvetica", 10)
     right_text(meta_x, PAGE_H - 1.02 * inch, f"Date: {inv.date_in}", "Helvetica", 10)
+    due_line = _invoice_due_date_line(inv, owner, is_estimate=is_estimate)
+    if due_line:
+        right_text(meta_x, PAGE_H - 1.24 * inch, due_line, "Helvetica", 9)
     pdf.setFillColor(colors.black)
 
     # -----------------------------

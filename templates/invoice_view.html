@@ -362,7 +362,7 @@
             <button class="btn btn-outline-success" type="submit">Email PDF</button>
           </form>
 
-          {% if pro_features_enabled %}
+          {% if pro_features_enabled and inv.amount_due() > 0 %}
             <form method="post" action="{{ url_for('invoice_send_reminder', invoice_id=inv.id) }}"
                   onsubmit="return confirm('Send a payment reminder email to this customer now?');">
               <button class="btn btn-outline-warning" type="submit">Send Payment Reminder</button>
