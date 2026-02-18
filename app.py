@@ -1845,6 +1845,47 @@ def _migrate_invoice_builder_fields(engine):
         pass
 
 
+def _migrate_invoice_design_templates(engine):
+    if _table_exists(engine, "invoice_design_templates"):
+        return
+
+    ddl_pg = """
+    CREATE TABLE invoice_design_templates (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(120) NOT NULL DEFAULT 'My Template',
+        design_json TEXT NOT NULL DEFAULT '{}',
+        is_active BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    ddl_sqlite = """
+    CREATE TABLE invoice_design_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(120) NOT NULL DEFAULT 'My Template',
+        design_json TEXT NOT NULL DEFAULT '{}',
+        is_active BOOLEAN NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    try:
+        with engine.begin() as conn:
+            if str(engine.url).startswith("sqlite"):
+                conn.execute(text(ddl_sqlite))
+            else:
+                conn.execute(text(ddl_pg))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_invoice_design_templates_user_id ON invoice_design_templates(user_id)"))
+    except Exception:
+        # Fallback: let SQLAlchemy create it if DDL branch fails.
+        try:
+            Base.metadata.create_all(bind=engine, tables=[InvoiceDesignTemplate.__table__])
+        except Exception:
+            pass
+
+
 def _migrate_invoice_template(engine):
     if not _table_exists(engine, "invoices"):
         return
@@ -2422,6 +2463,7 @@ def create_app():
     _migrate_user_invoice_template(engine)
     _migrate_user_custom_profession(engine)
     _migrate_invoice_builder_fields(engine)
+    _migrate_invoice_design_templates(engine)
     _migrate_invoice_template(engine)
     _migrate_user_pdf_template(engine)
     _migrate_invoice_pdf_template(engine)
