@@ -12,6 +12,7 @@ from app import (
     _summary_window_for_user,
     _send_schedule_summary_email,
     _format_event_line,
+    _run_automatic_payment_reminders,
 )
 from config import Config
 from models import Customer, ScheduleEvent, User, make_engine, make_session_factory
@@ -26,6 +27,18 @@ def main() -> None:
 
     with app.app_context():
         with SessionLocal() as s:
+            reminder_users = s.query(User).all()
+            for user in reminder_users:
+                try:
+                    _run_automatic_payment_reminders(s, user)
+                    s.commit()
+                except Exception as exc:
+                    print(
+                        f"[PAYMENT REMINDER] automatic run failed for user={user.id}: {exc!r}",
+                        flush=True,
+                    )
+                    s.rollback()
+
             users = (
                 s.query(User)
                 .filter(User.schedule_summary_frequency.isnot(None))

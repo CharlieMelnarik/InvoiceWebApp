@@ -2528,12 +2528,6 @@ def create_app():
                     abort(403)
                 if not _is_subscribed(u):
                     return redirect(url_for("billing"))
-                try:
-                    _run_automatic_payment_reminders(s, u)
-                    s.commit()
-                except Exception as exc:
-                    print(f"[PAYMENT REMINDER] automatic run failed: {repr(exc)}", flush=True)
-                    s.rollback()
             return view_fn(*args, **kwargs)
         return wrapper
 
