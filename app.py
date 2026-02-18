@@ -22,7 +22,7 @@ from werkzeug.utils import secure_filename
 import stripe
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, send_file, abort, current_app, jsonify
+    flash, send_file, abort, current_app, jsonify, has_request_context
 )
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -909,7 +909,10 @@ def _public_url(path: str) -> str:
     base = _public_base_url()
     if base:
         return f"{base}{path}"
-    return url_for("landing", _external=True).rstrip("/") + path
+    if has_request_context():
+        return url_for("landing", _external=True).rstrip("/") + path
+    # Cron/background fallback when APP_BASE_URL is not configured.
+    return f"http://127.0.0.1:5000{path}"
 
 
 def _client_ip() -> str:
@@ -1257,7 +1260,7 @@ def _send_payment_reminder_for_invoice(
     display_no = inv.display_number or inv.invoice_number
 
     portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
-    portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+    portal_url = _public_url(f"/shared/v/{portal_token}")
     owner_status = (getattr(owner, "subscription_status", None) or "").strip().lower() if owner else ""
     owner_tier = _normalize_plan_tier(getattr(owner, "subscription_tier", None) if owner else None)
     owner_pro_enabled = owner_status in ("trialing", "active") and owner_tier == "pro"
