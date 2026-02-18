@@ -1257,7 +1257,9 @@ def _send_payment_reminder_for_invoice(
 
     portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
     portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
-    owner_pro_enabled = _has_pro_features(owner)
+    owner_status = (getattr(owner, "subscription_status", None) or "").strip().lower() if owner else ""
+    owner_tier = _normalize_plan_tier(getattr(owner, "subscription_tier", None) if owner else None)
+    owner_pro_enabled = owner_status in ("trialing", "active") and owner_tier == "pro"
 
     if reminder_kind == "before_due":
         lead = int(getattr(owner, "payment_reminder_days_before", 0) or 0)
@@ -1315,7 +1317,9 @@ def _send_payment_reminder_for_invoice(
 def _run_automatic_payment_reminders(session, owner: User | None) -> None:
     if not owner:
         return
-    if not _has_pro_features(owner):
+    owner_status = (getattr(owner, "subscription_status", None) or "").strip().lower()
+    owner_tier = _normalize_plan_tier(getattr(owner, "subscription_tier", None))
+    if owner_status not in ("trialing", "active") or owner_tier != "pro":
         return
     if not bool(getattr(owner, "payment_reminders_enabled", False)):
         return
