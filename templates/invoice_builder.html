@@ -185,6 +185,7 @@
     "doc_label","invoice_number","date","due_date","business_name","customer_name","customer_email","customer_phone",
     "job","rate","hours","parts_total","labor_total","tax","total","paid","amount_due"
   ];
+  const tok = (name) => "{" + "{" + name + "}" + "}";
 
   function activeTemplate() {
     return templates.find(t => Number(t.id) === Number(currentTemplateId)) || templates[0];
@@ -310,9 +311,9 @@
         const b = document.createElement("button");
         b.type = "button";
         b.className = "token-btn";
-        b.textContent = `{{${t}}}`;
+        b.textContent = tok(t);
         b.addEventListener("click", () => {
-          const token = `{{${t}}}`;
+          const token = tok(t);
           const start = textArea.selectionStart || 0;
           const end = textArea.selectionEnd || 0;
           const before = textArea.value.slice(0, start);
@@ -399,22 +400,37 @@
       state.elements.push(b);
       selectedId = b.id;
     } else if (type === "header") {
-      const t1 = createText({ x: 48, y: 36, w: 280, h: 44, text: "{{doc_label}}", fontSize: 40, fontWeight: 700 });
-      const t2 = createText({ x: 560, y: 44, w: 240, h: 62, text: "Invoice #: {{invoice_number}}\\nDate: {{date}}\\nDue: {{due_date}}", fontSize: 13, fontWeight: 500 });
+      const t1 = createText({ x: 48, y: 36, w: 280, h: 44, text: tok("doc_label"), fontSize: 40, fontWeight: 700 });
+      const t2 = createText({
+        x: 560,
+        y: 44,
+        w: 240,
+        h: 62,
+        text: `Invoice #: ${tok("invoice_number")}\\nDate: ${tok("date")}\\nDue: ${tok("due_date")}`,
+        fontSize: 13,
+        fontWeight: 500
+      });
       state.elements.push(t1, t2);
       selectedId = t1.id;
     } else if (type === "bill") {
-      addSection(48, 118, 350, 150, "BILL TO\\n{{customer_name}}\\nEmail: {{customer_email}}\\nPhone: {{customer_phone}}", 14);
+      addSection(48, 118, 350, 150, `BILL TO\\n${tok("customer_name")}\\nEmail: ${tok("customer_email")}\\nPhone: ${tok("customer_phone")}`, 14);
     } else if (type === "job") {
-      addSection(418, 118, 350, 150, "JOB DETAILS\\nJob: {{job}}\\nRate/Hour: {{rate}}\\nTotal Hours: {{hours}}", 14);
+      addSection(418, 118, 350, 150, `JOB DETAILS\\nJob: ${tok("job")}\\nRate/Hour: ${tok("rate")}\\nTotal Hours: ${tok("hours")}`, 14);
     } else if (type === "labor") {
-      addSection(48, 300, 720, 120, "LABOR\\n{{labor_total}}", 15);
+      addSection(48, 300, 720, 120, `LABOR\\n${tok("labor_total")}`, 15);
     } else if (type === "parts") {
-      addSection(48, 430, 720, 120, "PARTS\\n{{parts_total}}", 15);
+      addSection(48, 430, 720, 120, `PARTS\\n${tok("parts_total")}`, 15);
     } else if (type === "notes") {
       addSection(48, 780, 430, 160, "NOTES\\nAdd details for your customer here.", 14);
     } else if (type === "summary") {
-      addSection(500, 780, 268, 180, "SUMMARY\\nLabor: {{labor_total}}\\nParts: {{parts_total}}\\nTax: {{tax}}\\nTotal: {{total}}\\nAmount Due: {{amount_due}}", 14);
+      addSection(
+        500,
+        780,
+        268,
+        180,
+        `SUMMARY\\nLabor: ${tok("labor_total")}\\nParts: ${tok("parts_total")}\\nTax: ${tok("tax")}\\nTotal: ${tok("total")}\\nAmount Due: ${tok("amount_due")}`,
+        14
+      );
     }
     renderCanvas();
   }
