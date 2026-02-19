@@ -573,6 +573,12 @@ def _render_invoice_builder_pdf(
                 best = oy
         return best
 
+    anchored_targets = {
+        target_id
+        for target_id, parent_id in grow_parent_by_target.items()
+        if target_id in elements_by_id and parent_id in elements_by_id and _is_base_contained(target_id, parent_id)
+    }
+
     for _ in range(6):
         changed = False
         # Lock-follow Y position first so growth caps can account for moved elements.
@@ -645,7 +651,7 @@ def _render_invoice_builder_pdf(
         ordered_ids = [
             str(e.get("id"))
             for e in sorted(
-                [e for e in elements if isinstance(e, dict) and e.get("id") is not None],
+                [e for e in elements if isinstance(e, dict) and e.get("id") is not None and str(e.get("id")) not in anchored_targets],
                 key=lambda e: float(effective_y.get(str(e.get("id")), base_y.get(str(e.get("id")), float(e.get("y") or 0.0))))
             )
         ]
@@ -664,18 +670,6 @@ def _render_invoice_builder_pdf(
                     effective_y[lower_id] = needed_y
                     changed = True
 
-        # Keep growWith targets anchored inside their parent boxes (if originally inside).
-        for box_id, box_el in ((str(e.get("id")), e) for e in elements if isinstance(e, dict) and str(e.get("type") or "").lower() == "box" and e.get("id") is not None):
-            target_id = str(box_el.get("growWithId") or "").strip()
-            if not target_id or target_id not in elements_by_id:
-                continue
-            if not _is_base_contained(target_id, box_id):
-                continue
-            rel_y = float(base_y.get(target_id, 0.0)) - float(base_y.get(box_id, 0.0))
-            desired_target_y = float(effective_y.get(box_id, base_y.get(box_id, 0.0))) + rel_y
-            if abs(float(effective_y.get(target_id, base_y.get(target_id, 0.0))) - desired_target_y) > 0.1:
-                effective_y[target_id] = desired_target_y
-                changed = True
         if not changed:
             break
 
@@ -710,11 +704,21 @@ def _render_invoice_builder_pdf(
         text_raw = str(el.get("text") or "")
         rich_raw = str(el.get("richText") or "")
         if "{{labor_table}}" in text_raw or "{{labor_table}}" in rich_raw:
+            parent_id = grow_parent_by_target.get(el_id)
+            if parent_id and el_id in anchored_targets:
+                rel_y = float(base_y.get(el_id, 0.0)) - float(base_y.get(parent_id, 0.0))
+                y = float(effective_y.get(parent_id, base_y.get(parent_id, 0.0))) + rel_y
+                ry = _map_y(y, h)
             remaining = _draw_builder_table("labor", rx, ry, rw, rh, auto_grow=True)
             if remaining:
                 table_overflow_jobs.append({"kind": "labor", "rows": remaining, "x": rx, "w": rw})
             continue
         if "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
+            parent_id = grow_parent_by_target.get(el_id)
+            if parent_id and el_id in anchored_targets:
+                rel_y = float(base_y.get(el_id, 0.0)) - float(base_y.get(parent_id, 0.0))
+                y = float(effective_y.get(parent_id, base_y.get(parent_id, 0.0))) + rel_y
+                ry = _map_y(y, h)
             remaining = _draw_builder_table("parts", rx, ry, rw, rh, auto_grow=True)
             if remaining:
                 table_overflow_jobs.append({"kind": "parts", "rows": remaining, "x": rx, "w": rw})
