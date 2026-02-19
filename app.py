@@ -744,6 +744,50 @@ def _render_email_template_tokens(raw: str, context: dict[str, str]) -> str:
     return re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", _rep, str(raw or ""))
 
 
+def _email_action_button_html(action_url: str | None, action_label: str | None) -> str:
+    action_url_clean = (action_url or "").strip()
+    if not action_url_clean:
+        return ""
+    label_clean = (action_label or "Open Document").strip() or "Open Document"
+    return (
+        f"<a href=\"{html.escape(action_url_clean, quote=True)}\" "
+        "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;"
+        "padding:10px 16px;border-radius:8px;font-weight:600;\">"
+        f"{html.escape(label_clean)}</a>"
+    )
+
+
+def _email_template_preview_action(template_key: str) -> tuple[str, bool]:
+    key = _normalize_email_template_key(template_key)
+    if key == "estimate_ready":
+        return "View Estimate", False
+    return "View & Pay Invoice", True
+
+
+def _email_template_sample_context(owner: User, template_key: str) -> dict[str, str]:
+    action_label, _can_pay = _email_template_preview_action(template_key)
+    action_url = _public_url(url_for("email_template_mock_portal", template_key=template_key))
+    due_days = max(0, int(getattr(owner, "payment_due_days", 30) or 30))
+    due_date_text = (_user_local_now(owner) + timedelta(days=due_days)).strftime("%B %d, %Y")
+    return {
+        "customer_name": "Sample Customer",
+        "business_name": ((owner.business_name or "").strip() or owner.username or "Your Business"),
+        "document_number": f"{_user_local_now(owner).strftime('%Y')}-0001",
+        "invoice_amount": "129.60",
+        "estimate_amount": "129.60",
+        "amount_due": "129.60",
+        "due_date": due_date_text,
+        "card_fee_line": "Paying by card online adds an additional $4.06 (card total: $133.66).",
+        "portal_validity_line": "This secure link is valid for 90 days from the time this email was sent.",
+        "timing_line": "This is a friendly reminder to complete payment for your invoice.",
+        "late_fee_policy_line": "After March 21, 2026, a late fee of 5% of the invoice amount will be charged every 30 day(s).",
+        "late_fee_line": "Late fees accrued so far: $6.48. Current amount due including late fees: $136.08.",
+        "action_label": action_label,
+        "action_url": action_url,
+        "action_button": _email_action_button_html(action_url, action_label),
+    }
+
+
 def _default_invoice_builder_design() -> dict:
     return {
         "canvas": {"width": 816, "height": 1056, "bg": "#ffffff"},
@@ -1433,14 +1477,7 @@ def _customer_email_template_payload(
 
     action_label = (context.get("action_label") or fallback_action_label or "Open Document").strip()
     action_url_clean = (action_url or "").strip()
-    action_button_html = ""
-    if action_url_clean:
-        action_button_html = (
-            f"<a href=\"{html.escape(action_url_clean, quote=True)}\" "
-            "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;"
-            "padding:10px 16px;border-radius:8px;font-weight:600;\">"
-            f"{html.escape(action_label)}</a>"
-        )
+    action_button_html = _email_action_button_html(action_url_clean, action_label)
 
     render_ctx = dict(context)
     render_ctx["action_button"] = action_button_html
@@ -3528,10 +3565,10 @@ def create_app():
                     late_fee_percent = _to_float(request.form.get("late_fee_percent"), 0.0)
                     late_fee_frequency_days = int(_to_float(request.form.get("late_fee_frequency_days"), 30))
                     if payment_fee_percent < 0 or payment_fee_percent > 25:
-                        flash("Convenience fee percent must be between 0 and 25.", "error")
+                        flash("Credit Card Processing Fee percent must be between 0 and 25.", "error")
                         return _render_settings()
                     if payment_fee_fixed < 0 or payment_fee_fixed > 100:
-                        flash("Fixed convenience fee must be between 0 and 100.", "error")
+                        flash("Fixed Credit Card Processing Fee must be between 0 and 100.", "error")
                         return _render_settings()
                     if stripe_fee_percent < 0 or stripe_fee_percent > 25:
                         flash("Stripe fee percent must be between 0 and 25.", "error")
@@ -3978,23 +4015,7 @@ def create_app():
                         if not _looks_like_email(to_email):
                             flash("Your account email is missing or invalid. Update it in Settings > Account.", "error")
                         else:
-                            sample_context = {
-                                "customer_name": "Sample Customer",
-                                "business_name": ((owner.business_name or "").strip() or owner.username or "Your Business"),
-                                "document_number": f"{_user_local_now(owner).strftime('%Y')}-0001",
-                                "invoice_amount": "129.60",
-                                "estimate_amount": "129.60",
-                                "amount_due": "129.60",
-                                "due_date": (_user_local_now(owner) + timedelta(days=max(0, int(getattr(owner, "payment_due_days", 30) or 30)))).strftime("%B %d, %Y"),
-                                "card_fee_line": "Paying by card online adds an additional $4.06 (card total: $133.66).",
-                                "portal_validity_line": "This secure link is valid for 90 days from the time this email was sent.",
-                                "timing_line": "This is a friendly reminder to complete payment for your invoice.",
-                                "late_fee_policy_line": "After March 21, 2026, a late fee of 5% of the invoice amount will be charged every 30 day(s).",
-                                "late_fee_line": "Late fees accrued so far: $6.48. Current amount due including late fees: $136.08.",
-                                "action_label": "Open Document",
-                                "action_url": "#",
-                                "action_button": "<a href=\"#\" style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;\">Open Document</a>",
-                            }
+                            sample_context = _email_template_sample_context(owner, key)
                             subject_rendered = _render_email_template_tokens(subject, sample_context).strip() or "InvoiceRunner Test Email"
                             html_rendered = _render_email_template_tokens(html_body, sample_context).strip()
                             text_rendered = _strip_html_to_text(html_rendered)
@@ -4021,23 +4042,7 @@ def create_app():
                     flash("Email template saved.", "success")
                     return redirect(url_for("email_template_edit", template_key=key))
 
-            sample_context = {
-                "customer_name": "Sample Customer",
-                "business_name": ((owner.business_name or "").strip() or owner.username or "Your Business"),
-                "document_number": f"{_user_local_now(owner).strftime('%Y')}-0001",
-                "invoice_amount": "129.60",
-                "estimate_amount": "129.60",
-                "amount_due": "129.60",
-                "due_date": (_user_local_now(owner) + timedelta(days=max(0, int(getattr(owner, "payment_due_days", 30) or 30)))).strftime("%B %d, %Y"),
-                "card_fee_line": "Paying by card online adds an additional $4.06 (card total: $133.66).",
-                "portal_validity_line": "This secure link is valid for 90 days from the time this email was sent.",
-                "timing_line": "This is a friendly reminder to complete payment for your invoice.",
-                "late_fee_policy_line": "After March 21, 2026, a late fee of 5% of the invoice amount will be charged every 30 day(s).",
-                "late_fee_line": "Late fees accrued so far: $6.48. Current amount due including late fees: $136.08.",
-                "action_label": "Open Document",
-                "action_button": "<a href=\"#\" style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;\">Open Document</a>",
-                "action_url": "#",
-            }
+            sample_context = _email_template_sample_context(owner, key)
             token_labels = {
                 "customer_name": "Customer Name",
                 "business_name": "Business Name",
@@ -4068,6 +4073,35 @@ def create_app():
                 preview_html=preview_html,
                 token_keys=sorted(sample_context.keys()),
                 token_labels=token_labels,
+                sample_context_json=sample_context,
+            )
+
+    @app.get("/settings/email-templates/<template_key>/mock-portal")
+    @login_required
+    @subscription_required
+    @owner_required
+    def email_template_mock_portal(template_key: str):
+        key = _normalize_email_template_key(template_key)
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            if not _has_pro_features(owner):
+                flash("Email editor is available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
+            action_label, can_pay = _email_template_preview_action(key)
+            return render_template(
+                "email_template_mock_portal.html",
+                template_key=key,
+                can_pay=can_pay,
+                action_label=action_label,
+                business_name=((owner.business_name or "").strip() or owner.username or "Your Business"),
+                customer_name="Sample Customer",
+                document_number=f"{_user_local_now(owner).strftime('%Y')}-0001",
+                invoice_amount=129.60,
+                convenience_fee=4.06,
+                total_with_fee=133.66,
+                due_date=(_user_local_now(owner) + timedelta(days=max(0, int(getattr(owner, "payment_due_days", 30) or 30)))).strftime("%B %d, %Y"),
             )
 
     @app.get("/api/invoice-builder/logo-preview")

@@ -76,7 +76,7 @@
         </div>
         {% if can_pay_online and convenience_fee and convenience_fee > 0 %}
           <div class="small-muted mb-2">
-            Convenience fee: ${{ "%.2f"|format(convenience_fee) }}
+            Credit Card Processing Fee: ${{ "%.2f"|format(convenience_fee) }}
           </div>
           <div class="small-muted mb-4">
             Online payment total: ${{ "%.2f"|format(pay_total) }}

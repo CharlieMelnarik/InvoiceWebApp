@@ -574,7 +574,7 @@
           ? `Mode: Auto (Stripe ${stripePct.toFixed(2)}% + ${money(stripeFixed)})`
           : `Mode: Manual (${manualPct.toFixed(2)}% + ${money(manualFixed)})`;
       }
-      if (feeLabel) feeLabel.textContent = `Convenience fee added: ${money(convenienceFee)}`;
+      if (feeLabel) feeLabel.textContent = `Credit Card Processing Fee added: ${money(convenienceFee)}`;
       if (totalLabel) totalLabel.textContent = `Customer checkout total: ${money(customerTotal)}`;
       if (stripeFeeLabel) stripeFeeLabel.textContent = `Estimated Stripe fee: ${money(stripeFee)}`;
       if (netLabel) netLabel.textContent = `Estimated net payout: ${money(netPayout)}`;

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set title = "Mock Customer Portal" %}
+
+{% block content %}
+<style>
+  .mock-wrap { max-width: 860px; margin: 0 auto; }
+  .mock-banner {
+    border: 1px solid #facc15;
+    background: #fffbeb;
+    color: #92400e;
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .mock-card {
+    border: 1px solid #c9d7ef;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #eef4ff 100%);
+    box-shadow: 0 12px 28px rgba(12, 34, 73, 0.12);
+    padding: 16px;
+  }
+  .mock-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 10px;
+  }
+  .metric {
+    border: 1px solid #d3dff3;
+    border-radius: 12px;
+    background: #fff;
+    padding: 10px 12px;
+  }
+  .metric .label { color: #64748b; font-size: 0.85rem; }
+  .metric .value { font-size: 1.25rem; font-weight: 800; color: #0f172a; }
+  @media (max-width: 800px) { .mock-grid { grid-template-columns: 1fr; } }
+</style>
+
+<div class="mock-wrap">
+  <div class="page-header">
+    <div>
+      <h1 class="h3 fw-bold mb-1">Mock Customer Portal</h1>
+      <div class="subtitle">Preview target used by the email editor action button.</div>
+    </div>
+    <div class="action-group">
+      <a class="btn btn-outline-secondary" href="{{ url_for('email_template_edit', template_key=template_key) }}">Back to Email Editor</a>
+    </div>
+  </div>
+
+  <div class="mock-banner">Preview only. No real customer data, charges, or invoice changes happen on this page.</div>
+
+  <section class="mock-card">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+      <div>
+        <div class="small text-muted">Business</div>
+        <div class="h5 m-0">{{ business_name }}</div>
+      </div>
+      <div class="text-end">
+        <div class="small text-muted">Document</div>
+        <div class="h5 m-0">{{ document_number }}</div>
+      </div>
+    </div>
+
+    <div class="mock-grid">
+      <div class="metric">
+        <div class="label">Customer</div>
+        <div class="value">{{ customer_name }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Due Date</div>
+        <div class="value">{{ due_date }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Invoice Amount</div>
+        <div class="value">${{ '%.2f'|format(invoice_amount) }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Amount Due</div>
+        <div class="value">${{ '%.2f'|format(total_with_fee if can_pay else invoice_amount) }}</div>
+      </div>
+      {% if can_pay %}
+      <div class="metric">
+        <div class="label">Credit Card Processing Fee</div>
+        <div class="value">${{ '%.2f'|format(convenience_fee) }}</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="mt-3 d-flex gap-2 flex-wrap">
+      {% if can_pay %}
+      <button type="button" class="btn btn-success" onclick="alert('Mock checkout: no payment processed.')">Pay Now (Mock)</button>
+      {% endif %}
+      <button type="button" class="btn btn-outline-primary" onclick="alert('Mock portal action complete.')">{{ action_label }}</button>
+    </div>
+  </section>
+</div>
+{% endblock %}

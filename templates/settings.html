@@ -400,11 +400,11 @@
           <div class="settings-help">Used for customer portal card payments and payout calculations.</div>
           <div class="row g-3">
             <div class="col-md-4">
-              <label class="form-label compact-label">Convenience Fee (%)</label>
+              <label class="form-label compact-label">Credit Card Processing Fee (%)</label>
               <input type="text" class="form-control" name="payment_fee_percent" inputmode="decimal" value="{{ u.payment_fee_percent if u.payment_fee_percent is not none else '0' }}" placeholder="e.g. 3.00">
             </div>
             <div class="col-md-4">
-              <label class="form-label compact-label">Convenience Fee (Fixed $)</label>
+              <label class="form-label compact-label">Credit Card Processing Fee (Fixed $)</label>
               <input type="text" class="form-control" name="payment_fee_fixed" inputmode="decimal" value="{{ u.payment_fee_fixed if u.payment_fee_fixed is not none else '0' }}" placeholder="e.g. 0.30">
             </div>
             <div class="col-md-4 d-flex align-items-end">

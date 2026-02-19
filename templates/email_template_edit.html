@@ -118,23 +118,7 @@
   const previewBody = document.getElementById("previewBody");
   const tokenLabels = {{ (token_labels or {})|tojson }};
 
-  const sample = {
-    customer_name: "Sample Customer",
-    business_name: "Sample Business",
-    document_number: "2026-0001",
-    invoice_amount: "129.60",
-    estimate_amount: "129.60",
-    amount_due: "129.60",
-    due_date: "March 21, 2026",
-    card_fee_line: "Paying by card online adds an additional $4.06 (card total: $133.66).",
-    portal_validity_line: "This secure link is valid for 90 days from the time this email was sent.",
-    timing_line: "This is a friendly reminder to complete payment for your invoice.",
-    late_fee_policy_line: "After March 21, 2026, a late fee of 5% of the invoice amount will be charged every 30 day(s).",
-    late_fee_line: "Late fees accrued so far: $6.48. Current amount due including late fees: $136.08.",
-    action_label: "Open Document",
-    action_url: "#",
-    action_button: '<a href="#" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;">Open Document</a>'
-  };
+  const sample = {{ (sample_context_json or {})|tojson }};
 
   function renderTokens(raw) {
     return String(raw || "").replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => (sample[key] ?? ""));
