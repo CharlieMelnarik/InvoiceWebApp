@@ -492,22 +492,103 @@ def _render_invoice_builder_pdf(
         return max(10.0, needed_h_page / max(0.001, scale_y))
 
     effective_h: dict[str, float] = {}
+    effective_y: dict[str, float] = {}
+    base_h: dict[str, float] = {}
+    base_y: dict[str, float] = {}
     for _el in elements:
         if not isinstance(_el, dict) or _el.get("id") is None:
             continue
         el_id = str(_el.get("id"))
-        base_h = max(10.0, float(_el.get("h") or 10.0))
+        h0 = max(10.0, float(_el.get("h") or 10.0))
+        y0 = float(_el.get("y") or 0.0)
+        base_h[el_id] = h0
+        base_y[el_id] = y0
+        effective_y[el_id] = y0
         text_raw = str(_el.get("text") or "")
         rich_raw = str(_el.get("richText") or "")
         if "{{labor_table}}" in text_raw or "{{labor_table}}" in rich_raw:
-            effective_h[el_id] = max(base_h, _table_needed_canvas_h("labor"))
+            effective_h[el_id] = max(h0, _table_needed_canvas_h("labor"))
         elif "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
-            effective_h[el_id] = max(base_h, _table_needed_canvas_h("parts"))
+            effective_h[el_id] = max(h0, _table_needed_canvas_h("parts"))
         else:
-            effective_h[el_id] = base_h
+            effective_h[el_id] = h0
 
-    for _ in range(3):
+    def _x_overlap(a_id: str, b_id: str) -> bool:
+        a = elements_by_id.get(a_id) or {}
+        b = elements_by_id.get(b_id) or {}
+        ax1 = float(a.get("x") or 0.0)
+        ax2 = ax1 + max(1.0, float(a.get("w") or 1.0))
+        bx1 = float(b.get("x") or 0.0)
+        bx2 = bx1 + max(1.0, float(b.get("w") or 1.0))
+        return ax1 < bx2 and bx1 < ax2
+
+    def _nearest_below_y(el_id: str) -> float | None:
+        y = float(effective_y.get(el_id, base_y.get(el_id, 0.0)))
+        best = None
+        for other_id in elements_by_id.keys():
+            if other_id == el_id:
+                continue
+            if not _x_overlap(el_id, other_id):
+                continue
+            oy = float(effective_y.get(other_id, base_y.get(other_id, 0.0)))
+            if oy <= y:
+                continue
+            if best is None or oy < best:
+                best = oy
+        return best
+
+    for _ in range(6):
         changed = False
+        # Lock-follow Y position first so growth caps can account for moved elements.
+        for _el in elements:
+            if not isinstance(_el, dict) or _el.get("id") is None:
+                continue
+            el_id = str(_el.get("id"))
+            lock_to = str(_el.get("lockToId") or "").strip()
+            if not lock_to or lock_to not in elements_by_id or lock_to == el_id:
+                continue
+            mode = str(_el.get("lockMode") or "below").strip().lower()
+            offset = float(_el.get("lockOffset") or 0.0)
+            anchor_y = float(effective_y.get(lock_to, base_y.get(lock_to, 0.0)))
+            anchor_h = float(effective_h.get(lock_to, base_h.get(lock_to, 10.0)))
+            self_h = float(effective_h.get(el_id, base_h.get(el_id, 10.0)))
+            if mode == "above":
+                new_y = anchor_y - self_h + offset
+            elif mode == "align_top":
+                new_y = anchor_y + offset
+            elif mode == "align_bottom":
+                new_y = anchor_y + anchor_h - self_h + offset
+            else:
+                new_y = anchor_y + anchor_h + offset
+            new_y = max(0.0, round(new_y))
+            if abs(float(effective_y.get(el_id, base_y.get(el_id, 0.0))) - new_y) > 0.1:
+                effective_y[el_id] = new_y
+                changed = True
+
+        # Cap table growth at collision to avoid creating large dead space.
+        for _el in elements:
+            if not isinstance(_el, dict) or _el.get("id") is None:
+                continue
+            el_id = str(_el.get("id"))
+            text_raw = str(_el.get("text") or "")
+            rich_raw = str(_el.get("richText") or "")
+            wanted = None
+            if "{{labor_table}}" in text_raw or "{{labor_table}}" in rich_raw:
+                wanted = max(base_h.get(el_id, 10.0), _table_needed_canvas_h("labor"))
+            elif "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
+                wanted = max(base_h.get(el_id, 10.0), _table_needed_canvas_h("parts"))
+            if wanted is None:
+                continue
+            min_h = max(10.0, float(_el.get("minH") or base_h.get(el_id, 10.0)))
+            below = _nearest_below_y(el_id)
+            if below is not None:
+                max_allowed = max(min_h, below - float(effective_y.get(el_id, base_y.get(el_id, 0.0))) - 4.0)
+                wanted = min(wanted, max_allowed)
+            if abs(float(effective_h.get(el_id, base_h.get(el_id, 10.0))) - wanted) > 0.1:
+                effective_h[el_id] = wanted
+                changed = True
+
+        # Box growth that follows a target element, collision-capped.
         for _el in elements:
             if not isinstance(_el, dict) or str(_el.get("type") or "").lower() != "box" or _el.get("id") is None:
                 continue
@@ -515,13 +596,18 @@ def _render_invoice_builder_pdf(
             target_id = str(_el.get("growWithId") or "").strip()
             if not target_id or target_id not in elements_by_id:
                 continue
-            target_h = effective_h.get(target_id, max(10.0, float(elements_by_id[target_id].get("h") or 10.0)))
+            target_h = float(effective_h.get(target_id, max(10.0, float(elements_by_id[target_id].get("h") or 10.0))))
             delta = _el.get("growDelta")
             if delta is None:
-                base_h = max(10.0, float(_el.get("h") or 10.0))
-                base_target_h = max(10.0, float(elements_by_id[target_id].get("h") or 10.0))
-                delta = base_h - base_target_h
-            desired = max(10.0, float(target_h) + float(delta))
+                h_box = max(10.0, float(_el.get("h") or 10.0))
+                h_target = max(10.0, float(elements_by_id[target_id].get("h") or 10.0))
+                delta = h_box - h_target
+            min_h = max(10.0, float(base_h.get(el_id, 10.0)))
+            desired = max(min_h, float(target_h) + float(delta))
+            below = _nearest_below_y(el_id)
+            if below is not None:
+                max_allowed = max(min_h, below - float(effective_y.get(el_id, base_y.get(el_id, 0.0))) - 4.0)
+                desired = min(desired, max_allowed)
             if abs(effective_h.get(el_id, 0.0) - desired) > 0.1:
                 effective_h[el_id] = desired
                 changed = True
@@ -532,7 +618,7 @@ def _render_invoice_builder_pdf(
         if not isinstance(el, dict):
             continue
         x = float(el.get("x") or 0.0)
-        y = float(el.get("y") or 0.0)
+        y = float(effective_y.get(str(el.get("id") or ""), float(el.get("y") or 0.0)))
         w = max(10.0, float(el.get("w") or 10.0))
         el_id = str(el.get("id") or "")
         h = max(10.0, float(effective_h.get(el_id, float(el.get("h") or 10.0))))

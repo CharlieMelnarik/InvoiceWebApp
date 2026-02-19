@@ -355,6 +355,32 @@
     return true;
   }
 
+  function hasDynamicTableToken(el) {
+    const raw = `${String(el?.text || "")} ${String(el?.richText || "")}`;
+    return /\{\{\s*(labor_table|parts_table|labor_lines|parts_lines)\s*\}\}/i.test(raw);
+  }
+
+  function xOverlap(a, b) {
+    const ax1 = Number(a?.x || 0);
+    const ax2 = ax1 + Math.max(1, Number(a?.w || 1));
+    const bx1 = Number(b?.x || 0);
+    const bx2 = bx1 + Math.max(1, Number(b?.w || 1));
+    return ax1 < bx2 && bx1 < ax2;
+  }
+
+  function nearestBelowY(el) {
+    const y = Number(el?.y || 0);
+    let best = null;
+    state.elements.forEach((other) => {
+      if (!other || String(other.id) === String(el.id)) return;
+      if (!xOverlap(el, other)) return;
+      const oy = Number(other.y || 0);
+      if (oy <= y) return;
+      if (best === null || oy < best) best = oy;
+    });
+    return best;
+  }
+
   function renderTemplateList() {
     templateList.innerHTML = "";
     templates.forEach(t => {
@@ -378,6 +404,7 @@
   function renderCanvas(pass = 0) {
     canvas.style.background = state.canvas.bg || "#fff";
     canvas.innerHTML = '<div class="canvas-guide"></div>';
+
     state.elements.forEach(el => {
       const node = document.createElement("div");
       node.className = "node " + (el.type === "box" ? "box " : "") + (String(el.id) === String(selectedId) ? "selected" : "");
@@ -405,15 +432,24 @@
       resize.className = "resize";
       node.appendChild(resize);
       canvas.appendChild(node);
-      if (el.type !== "box" && (el.autoGrow || /\{\{\s*(labor_table|parts_table|labor_lines|parts_lines)\s*\}\}/i.test(String(el.text || "") + " " + String(el.richText || "")))) {
+
+      if (el.type !== "box" && (el.autoGrow || hasDynamicTableToken(el))) {
         const baseMin = Math.max(24, Number(el.minH || 30));
         node.style.height = "auto";
-        const needed = Math.max(baseMin, Math.ceil(node.scrollHeight + 8));
+        let needed = Math.max(baseMin, Math.ceil(node.scrollHeight + 8));
+        const collisionY = nearestBelowY(el);
+        if (collisionY !== null) {
+          const maxAllowed = Math.max(baseMin, Math.floor(collisionY - Number(el.y || 0) - 4));
+          needed = Math.min(needed, maxAllowed);
+        }
         node.style.height = `${needed}px`;
         if (Number(el.h || 0) !== needed) el.h = needed;
       }
     });
-    let linkedChanged = false;
+
+    let layoutChanged = false;
+
+    // Linked growth for boxes that track another element's height.
     state.elements.forEach((box) => {
       if (!box || box.type !== "box" || !box.growWithId) return;
       const target = nodeById(box.growWithId);
@@ -421,13 +457,43 @@
       if (box.growDelta === null || box.growDelta === undefined || Number.isNaN(Number(box.growDelta))) {
         box.growDelta = Number(box.h || 0) - Number(target.h || 0);
       }
-      const desired = Math.max(24, Math.round(Number(target.h || 0) + Number(box.growDelta || 0)));
+      let desired = Math.max(24, Math.round(Number(target.h || 0) + Number(box.growDelta || 0)));
+      const collisionY = nearestBelowY(box);
+      if (collisionY !== null) {
+        const maxAllowed = Math.max(24, Math.floor(collisionY - Number(box.y || 0) - 4));
+        desired = Math.min(desired, maxAllowed);
+      }
       if (Number(box.h || 0) !== desired) {
         box.h = desired;
-        linkedChanged = true;
+        layoutChanged = true;
       }
     });
-    if (linkedChanged && pass < 2) {
+
+    // Lock-follow behavior (anchor to another element's position).
+    state.elements.forEach((el) => {
+      if (!el || !el.lockToId) return;
+      const anchor = nodeById(el.lockToId);
+      if (!anchor || String(anchor.id) === String(el.id)) return;
+      const offset = Number(el.lockOffset || 0);
+      const mode = String(el.lockMode || "below");
+      let newY = Number(el.y || 0);
+      if (mode === "above") {
+        newY = Number(anchor.y || 0) - Number(el.h || 0) + offset;
+      } else if (mode === "align_top") {
+        newY = Number(anchor.y || 0) + offset;
+      } else if (mode === "align_bottom") {
+        newY = Number(anchor.y || 0) + Number(anchor.h || 0) - Number(el.h || 0) + offset;
+      } else {
+        newY = Number(anchor.y || 0) + Number(anchor.h || 0) + offset;
+      }
+      newY = Math.max(0, Math.round(newY));
+      if (Number(el.y || 0) !== newY) {
+        el.y = newY;
+        layoutChanged = true;
+      }
+    });
+
+    if (layoutChanged && pass < 4) {
       renderCanvas(pass + 1);
       return;
     }
@@ -442,10 +508,19 @@
     }
     if (el.type === "box") {
       const textTargets = state.elements.filter((x) => x && x.type !== "box");
+      const allTargets = state.elements.filter((x) => x && String(x.id) !== String(el.id));
       const targetOptions = ['<option value="">None</option>'].concat(
         textTargets.map((t) => {
           const label = (String(t.text || t.richText || "Text Element").replace(/\s+/g, " ").trim() || "Text Element").slice(0, 42);
           const selected = String(el.growWithId || "") === String(t.id) ? "selected" : "";
+          return `<option value="${String(t.id)}" ${selected}>${label}</option>`;
+        })
+      ).join("");
+      const lockOptions = ['<option value="">None</option>'].concat(
+        allTargets.map((t) => {
+          const raw = String(t.text || t.richText || (t.type === "box" ? "Box Element" : "Element")).replace(/\s+/g, " ").trim();
+          const label = (raw || (t.type === "box" ? "Box Element" : "Element")).slice(0, 42);
+          const selected = String(el.lockToId || "") === String(t.id) ? "selected" : "";
           return `<option value="${String(t.id)}" ${selected}>${label}</option>`;
         })
       ).join("");
@@ -472,6 +547,23 @@
             <label class="form-label compact-label">Height Offset</label>
             <input id="propGrowDelta" class="form-control" type="number" value="${Number(el.growDelta || 0)}">
           </div>
+          <div class="col-12">
+            <label class="form-label compact-label">Lock To Element</label>
+            <select id="propLockTo" class="form-select">${lockOptions}</select>
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Lock Position</label>
+            <select id="propLockMode" class="form-select">
+              <option value="below" ${String(el.lockMode || "below") === "below" ? "selected" : ""}>Below Anchor</option>
+              <option value="above" ${String(el.lockMode || "below") === "above" ? "selected" : ""}>Above Anchor</option>
+              <option value="align_top" ${String(el.lockMode || "below") === "align_top" ? "selected" : ""}>Align Top</option>
+              <option value="align_bottom" ${String(el.lockMode || "below") === "align_bottom" ? "selected" : ""}>Align Bottom</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Lock Offset</label>
+            <input id="propLockOffset" class="form-control" type="number" value="${Number(el.lockOffset || 0)}">
+          </div>
         </div>
         <div class="d-grid gap-2 mt-2">
           <button id="duplicateBtn" class="btn btn-outline-primary btn-sm" type="button">Duplicate Element</button>
@@ -496,11 +588,33 @@
         el.growDelta = Number(e.target.value || 0);
         renderCanvas();
       });
+      document.getElementById("propLockTo").addEventListener("change", (e) => {
+        el.lockToId = (e.target.value || "").trim() || null;
+        if (!el.lockToId) el.lockOffset = 0;
+        renderCanvas();
+      });
+      document.getElementById("propLockMode").addEventListener("change", (e) => {
+        el.lockMode = (e.target.value || "below").trim();
+        renderCanvas();
+      });
+      document.getElementById("propLockOffset").addEventListener("input", (e) => {
+        el.lockOffset = Number(e.target.value || 0);
+        renderCanvas();
+      });
     } else {
       const isBold = Number(el.fontWeight || 500) >= 600;
       const isItalic = String(el.fontStyle || "normal").toLowerCase() === "italic";
       const isUnderline = !!el.underline;
       const textAlign = String(el.textAlign || "left").toLowerCase();
+      const allTargets = state.elements.filter((x) => x && String(x.id) !== String(el.id));
+      const lockOptions = ['<option value="">None</option>'].concat(
+        allTargets.map((t) => {
+          const raw = String(t.text || t.richText || (t.type === "box" ? "Box Element" : "Element")).replace(/\s+/g, " ").trim();
+          const label = (raw || (t.type === "box" ? "Box Element" : "Element")).slice(0, 42);
+          const selected = String(el.lockToId || "") === String(t.id) ? "selected" : "";
+          return `<option value="${String(t.id)}" ${selected}>${label}</option>`;
+        })
+      ).join("");
       propEditor.innerHTML = `
         <div class="mb-2">
           <label class="form-label compact-label">Text</label>
@@ -572,6 +686,23 @@
               <button id="propAlignRight" class="btn btn-sm ${textAlign === "right" ? "btn-primary" : "btn-outline-primary"}" type="button">Right</button>
             </div>
           </div>
+          <div class="col-12">
+            <label class="form-label compact-label">Lock To Element</label>
+            <select id="propLockTo" class="form-select">${lockOptions}</select>
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Lock Position</label>
+            <select id="propLockMode" class="form-select">
+              <option value="below" ${String(el.lockMode || "below") === "below" ? "selected" : ""}>Below Anchor</option>
+              <option value="above" ${String(el.lockMode || "below") === "above" ? "selected" : ""}>Above Anchor</option>
+              <option value="align_top" ${String(el.lockMode || "below") === "align_top" ? "selected" : ""}>Align Top</option>
+              <option value="align_bottom" ${String(el.lockMode || "below") === "align_bottom" ? "selected" : ""}>Align Bottom</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Lock Offset</label>
+            <input id="propLockOffset" class="form-control" type="number" value="${Number(el.lockOffset || 0)}">
+          </div>
         </div>
         <div class="d-grid gap-2 mt-2">
           <button id="duplicateBtn" class="btn btn-outline-primary btn-sm" type="button">Duplicate Element</button>
@@ -626,6 +757,19 @@
       });
       document.getElementById("propAlignRight").addEventListener("click", () => {
         el.textAlign = "right";
+        renderCanvas();
+      });
+      document.getElementById("propLockTo").addEventListener("change", (e) => {
+        el.lockToId = (e.target.value || "").trim() || null;
+        if (!el.lockToId) el.lockOffset = 0;
+        renderCanvas();
+      });
+      document.getElementById("propLockMode").addEventListener("change", (e) => {
+        el.lockMode = (e.target.value || "below").trim();
+        renderCanvas();
+      });
+      document.getElementById("propLockOffset").addEventListener("input", (e) => {
+        el.lockOffset = Number(e.target.value || 0);
         renderCanvas();
       });
       const inlineFontFamily = document.getElementById("inlineFontFamily");
@@ -724,6 +868,9 @@
       underline: !!opts.underline,
       autoGrow: !!opts.autoGrow,
       minH: opts.minH ?? (opts.h ?? 50),
+      lockToId: opts.lockToId ?? null,
+      lockMode: opts.lockMode ?? "below",
+      lockOffset: opts.lockOffset ?? 0,
       color: opts.color ?? "#111827",
       fillColor: "transparent",
       borderColor: "transparent",
@@ -740,6 +887,9 @@
       borderColor: opts.borderColor ?? "#111827",
       fillColor: opts.fillColor ?? "#ffffff",
       radius: opts.radius ?? 8,
+      lockToId: opts.lockToId ?? null,
+      lockMode: opts.lockMode ?? "below",
+      lockOffset: opts.lockOffset ?? 0,
     });
     const addSection = (x, y, w, h, text, textSize = 14) => {
       const box = createBox({ x, y, w, h, borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
