@@ -429,7 +429,8 @@ def _render_invoice_builder_pdf(
                 pdf.drawString(mid - (tw / 2.0), top - (row_h * 0.72), head)
         pdf.line(box_x + 1, top - row_h, box_x + box_w - 1, top - row_h)
 
-        fit_rows = max(1, int(((top - (box_y + 6)) - row_h) // row_h))
+        available_h = max(0.0, (top - (box_y + 4.0)) - row_h)
+        fit_rows = max(1, int((available_h / row_h) + 0.35))
         row_count = min(len(draw_rows), fit_rows)
         y_cursor = top - row_h
         pdf.setFont("Helvetica", body_font)
@@ -598,14 +599,7 @@ def _render_invoice_builder_pdf(
             if wanted is None:
                 continue
             min_h = max(10.0, float(_el.get("minH") or base_h.get(el_id, 10.0)))
-            ignored = set()
-            parent_id = grow_parent_by_target.get(el_id)
-            if parent_id:
-                ignored.add(parent_id)
-            below = _nearest_below_y(el_id, ignore_ids=ignored)
-            if below is not None:
-                max_allowed = max(min_h, below - float(effective_y.get(el_id, base_y.get(el_id, 0.0))) - 4.0)
-                wanted = min(wanted, max_allowed)
+            wanted = max(min_h, wanted)
             if abs(float(effective_h.get(el_id, base_h.get(el_id, 10.0))) - wanted) > 0.1:
                 effective_h[el_id] = wanted
                 changed = True
@@ -626,13 +620,32 @@ def _render_invoice_builder_pdf(
                 delta = h_box - h_target
             min_h = max(10.0, float(base_h.get(el_id, 10.0)))
             desired = max(min_h, float(target_h) + float(delta))
-            below = _nearest_below_y(el_id, ignore_ids={target_id})
-            if below is not None:
-                max_allowed = max(min_h, below - float(effective_y.get(el_id, base_y.get(el_id, 0.0))) - 4.0)
-                desired = min(desired, max_allowed)
             if abs(effective_h.get(el_id, 0.0) - desired) > 0.1:
                 effective_h[el_id] = desired
                 changed = True
+
+        # Flow layout: push lower overlapping elements down when upper elements grow.
+        ordered_ids = [
+            str(e.get("id"))
+            for e in sorted(
+                [e for e in elements if isinstance(e, dict) and e.get("id") is not None],
+                key=lambda e: float(effective_y.get(str(e.get("id")), base_y.get(str(e.get("id")), float(e.get("y") or 0.0))))
+            )
+        ]
+        for i, upper_id in enumerate(ordered_ids):
+            upper_y = float(effective_y.get(upper_id, base_y.get(upper_id, 0.0)))
+            upper_h = float(effective_h.get(upper_id, base_h.get(upper_id, 10.0)))
+            upper_bottom = upper_y + upper_h
+            for lower_id in ordered_ids[i + 1:]:
+                if not _x_overlap(upper_id, lower_id):
+                    continue
+                if _is_contained(lower_id, upper_id):
+                    continue
+                lower_y = float(effective_y.get(lower_id, base_y.get(lower_id, 0.0)))
+                needed_y = upper_bottom + 4.0
+                if lower_y < needed_y:
+                    effective_y[lower_id] = needed_y
+                    changed = True
         if not changed:
             break
 
