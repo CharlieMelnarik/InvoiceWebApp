@@ -3610,6 +3610,8 @@ def create_app():
                     InvoiceDesignTemplate.user_id == owner.id
                 ).update({"is_active": False})
                 template.is_active = True
+                owner.invoice_builder_enabled = True
+                owner.invoice_template = "custom"
             s.commit()
             return jsonify({"ok": True, "id": int(template.id), "name": template.name, "is_active": bool(template.is_active)})
 
@@ -3638,6 +3640,8 @@ def create_app():
                 InvoiceDesignTemplate.user_id == owner.id
             ).update({"is_active": False})
             template.is_active = True
+            owner.invoice_builder_enabled = True
+            owner.invoice_template = "custom"
             s.commit()
             return jsonify({"ok": True})
 

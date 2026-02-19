@@ -242,6 +242,21 @@
     return state.elements.find(e => String(e.id) === String(id));
   }
 
+  function normalizeDesign(design) {
+    const safe = JSON.parse(JSON.stringify(design || { canvas: { width: 816, height: 1056, bg: "#fff" }, elements: [] }));
+    if (!safe.canvas) safe.canvas = { width: 816, height: 1056, bg: "#fff" };
+    if (!Array.isArray(safe.elements)) safe.elements = [];
+    safe.elements = safe.elements.map((el) => {
+      if (!el || typeof el !== "object") return el;
+      const copy = { ...el };
+      if (typeof copy.text === "string") {
+        copy.text = copy.text.replace(/\\n/g, "\n");
+      }
+      return copy;
+    });
+    return safe;
+  }
+
   function renderTemplateList() {
     templateList.innerHTML = "";
     templates.forEach(t => {
@@ -279,7 +294,7 @@
       node.style.borderColor = el.borderColor || "transparent";
       node.style.backgroundColor = el.fillColor || "transparent";
       node.style.borderRadius = `${el.radius || 0}px`;
-      const rawText = String(el.text || "");
+      const rawText = String(el.text || "").replace(/\\n/g, "\n");
       const renderedText = (showSampleData && showSampleData.checked)
         ? rawText.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key))
         : rawText;
@@ -359,7 +374,7 @@
       const textArea = document.getElementById("propText");
       const samplePreview = document.getElementById("samplePreview");
       const renderSamplePreview = () => {
-        const raw = String(el.text || "");
+        const raw = String(el.text || "").replace(/\\n/g, "\n");
         samplePreview.textContent = raw.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key));
       };
       renderSamplePreview();
@@ -410,9 +425,7 @@
     if (!t) return;
     currentTemplateId = Number(t.id);
     templateName.value = t.name || "";
-    state = JSON.parse(JSON.stringify(t.design || { canvas: { width: 816, height: 1056, bg: "#fff" }, elements: [] }));
-    if (!state.canvas) state.canvas = { width: 816, height: 1056, bg: "#fff" };
-    if (!Array.isArray(state.elements)) state.elements = [];
+    state = normalizeDesign(t.design || { canvas: { width: 816, height: 1056, bg: "#fff" }, elements: [] });
     canvasBg.value = state.canvas.bg || "#ffffff";
     selectedId = null;
     renderTemplateList();
