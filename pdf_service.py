@@ -364,13 +364,7 @@ def _render_invoice_builder_pdf(
 
         return "".join(open_tags) + inner_html + "".join(close_tags)
 
-    def _draw_builder_table(kind: str, x0: float, y0: float, w0: float, h0: float, *, auto_grow: bool = True) -> None:
-        pad_x = 6 * scale_x
-        row_h = max(16.0, 18.0 * min(scale_x, scale_y))
-        body_font = max(8.0, 10.0 * min(scale_x, scale_y))
-        header_font = max(8.5, 10.5 * min(scale_x, scale_y))
-        bottom_margin = 36.0
-
+    def _builder_table_rows(kind: str) -> tuple[list[str], list[float], list[list[str]]]:
         if kind == "labor":
             headers = ["Service Description", "Time", "Line Total"]
             rows = []
@@ -398,61 +392,73 @@ def _render_invoice_builder_pdf(
 
         if not rows:
             rows = [["No items", ""]] if kind != "labor" else [["No labor items", "", ""]]
+        return headers, col_fracs, rows
 
-        def _draw_table_box(box_x: float, box_y: float, box_w: float, box_h: float, draw_rows: list[list[str]], *, cont: bool) -> int:
-            left = box_x + pad_x
-            right = box_x + box_w - pad_x
-            top = box_y + box_h - (8 * scale_y)
-            col_widths = [box_w * f for f in col_fracs]
-            col_x = [left]
-            for cw in col_widths[:-1]:
-                col_x.append(col_x[-1] + cw)
+    def _draw_table_box(kind: str, box_x: float, box_y: float, box_w: float, box_h: float, draw_rows: list[list[str]], *, cont: bool) -> int:
+        pad_x = 6 * scale_x
+        row_h = max(16.0, 18.0 * min(scale_x, scale_y))
+        body_font = max(8.0, 10.0 * min(scale_x, scale_y))
+        header_font = max(8.5, 10.5 * min(scale_x, scale_y))
+        headers, col_fracs, _rows = _builder_table_rows(kind)
 
-            header_label = f"{headers[0]} (cont.)" if cont else headers[0]
-            header_cells = [header_label] + headers[1:]
+        left = box_x + pad_x
+        right = box_x + box_w - pad_x
+        top = box_y + box_h - (8 * scale_y)
+        col_widths = [box_w * f for f in col_fracs]
+        col_x = [left]
+        for cw in col_widths[:-1]:
+            col_x.append(col_x[-1] + cw)
 
-            pdf.setFillColor(colors.HexColor("#f3f4f6"))
-            pdf.rect(box_x + 1, top - row_h + 1, box_w - 2, row_h, stroke=0, fill=1)
-            pdf.setFillColor(colors.black)
-            pdf.setStrokeColor(colors.HexColor("#d1d5db"))
-            pdf.setFont("Helvetica-Bold", header_font)
-            for idx, head in enumerate(header_cells):
-                if idx == 0:
-                    pdf.drawString(col_x[idx] + 4, top - (row_h * 0.72), head)
-                elif idx == len(header_cells) - 1:
-                    tw = stringWidth(head, "Helvetica-Bold", header_font)
-                    pdf.drawString(right - tw - 4, top - (row_h * 0.72), head)
-                else:
-                    mid = col_x[idx] + (col_widths[idx] / 2.0)
-                    tw = stringWidth(head, "Helvetica-Bold", header_font)
-                    pdf.drawString(mid - (tw / 2.0), top - (row_h * 0.72), head)
-            pdf.line(box_x + 1, top - row_h, box_x + box_w - 1, top - row_h)
+        header_label = f"{headers[0]} (cont.)" if cont else headers[0]
+        header_cells = [header_label] + headers[1:]
 
-            fit_rows = max(1, int(((top - (box_y + 6)) - row_h) // row_h))
-            row_count = min(len(draw_rows), fit_rows)
-            y_cursor = top - row_h
-            pdf.setFont("Helvetica", body_font)
-            for row in draw_rows[:row_count]:
-                row_top = y_cursor
-                row_bottom = y_cursor - row_h
-                text_y = row_top - (row_h * 0.68)
-                first = str(row[0] if len(row) > 0 else "")
-                second = str(row[1] if len(row) > 1 else "")
-                third = str(row[2] if len(row) > 2 else "")
-                pdf.drawString(col_x[0] + 4, text_y, first[:120])
-                if len(header_cells) == 3:
-                    mid = col_x[1] + (col_widths[1] / 2.0)
-                    tw2 = stringWidth(second, "Helvetica", body_font)
-                    pdf.drawString(mid - (tw2 / 2.0), text_y, second)
-                    tw3 = stringWidth(third, "Helvetica", body_font)
-                    pdf.drawString(right - tw3 - 4, text_y, third)
-                else:
-                    tw2 = stringWidth(second, "Helvetica", body_font)
-                    pdf.drawString(right - tw2 - 4, text_y, second)
-                # Draw separators below text baseline so they do not cross through text.
-                pdf.line(box_x + 1, row_bottom + 1.5, box_x + box_w - 1, row_bottom + 1.5)
-                y_cursor -= row_h
-            return row_count
+        pdf.setFillColor(colors.HexColor("#f3f4f6"))
+        pdf.rect(box_x + 1, top - row_h + 1, box_w - 2, row_h, stroke=0, fill=1)
+        pdf.setFillColor(colors.black)
+        pdf.setStrokeColor(colors.HexColor("#d1d5db"))
+        pdf.setFont("Helvetica-Bold", header_font)
+        for idx, head in enumerate(header_cells):
+            if idx == 0:
+                pdf.drawString(col_x[idx] + 4, top - (row_h * 0.72), head)
+            elif idx == len(header_cells) - 1:
+                tw = stringWidth(head, "Helvetica-Bold", header_font)
+                pdf.drawString(right - tw - 4, top - (row_h * 0.72), head)
+            else:
+                mid = col_x[idx] + (col_widths[idx] / 2.0)
+                tw = stringWidth(head, "Helvetica-Bold", header_font)
+                pdf.drawString(mid - (tw / 2.0), top - (row_h * 0.72), head)
+        pdf.line(box_x + 1, top - row_h, box_x + box_w - 1, top - row_h)
+
+        fit_rows = max(1, int(((top - (box_y + 6)) - row_h) // row_h))
+        row_count = min(len(draw_rows), fit_rows)
+        y_cursor = top - row_h
+        pdf.setFont("Helvetica", body_font)
+        for row in draw_rows[:row_count]:
+            row_top = y_cursor
+            row_bottom = y_cursor - row_h
+            text_y = row_top - (row_h * 0.68)
+            first = str(row[0] if len(row) > 0 else "")
+            second = str(row[1] if len(row) > 1 else "")
+            third = str(row[2] if len(row) > 2 else "")
+            pdf.drawString(col_x[0] + 4, text_y, first[:120])
+            if len(header_cells) == 3:
+                mid = col_x[1] + (col_widths[1] / 2.0)
+                tw2 = stringWidth(second, "Helvetica", body_font)
+                pdf.drawString(mid - (tw2 / 2.0), text_y, second)
+                tw3 = stringWidth(third, "Helvetica", body_font)
+                pdf.drawString(right - tw3 - 4, text_y, third)
+            else:
+                tw2 = stringWidth(second, "Helvetica", body_font)
+                pdf.drawString(right - tw2 - 4, text_y, second)
+            # Draw separators below text baseline so they do not cross through text.
+            pdf.line(box_x + 1, row_bottom + 1.5, box_x + box_w - 1, row_bottom + 1.5)
+            y_cursor -= row_h
+        return row_count
+
+    def _draw_builder_table(kind: str, x0: float, y0: float, w0: float, h0: float, *, auto_grow: bool = True) -> list[list[str]]:
+        row_h = max(16.0, 18.0 * min(scale_x, scale_y))
+        bottom_margin = 36.0
+        _headers, _col_fracs, rows = _builder_table_rows(kind)
 
         # Grow within page when possible.
         if auto_grow:
@@ -462,19 +468,8 @@ def _render_invoice_builder_pdf(
                 y0 = max(bottom_margin, y0 - growth)
                 h0 = needed_h
 
-        consumed = _draw_table_box(x0, y0, w0, h0, rows, cont=False)
-        remaining = rows[consumed:]
-        # Continuation pages for overflow rows.
-        while remaining:
-            pdf.showPage()
-            pdf.setFillColor(colors.HexColor(canvas_bg))
-            pdf.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
-            cont_x = max(24.0, min(x0, PAGE_W - w0 - 24.0))
-            cont_w = min(w0, PAGE_W - 48.0)
-            cont_y = bottom_margin + 12.0
-            cont_h = PAGE_H - (cont_y + 42.0)
-            used = _draw_table_box(cont_x, cont_y, cont_w, cont_h, remaining, cont=True)
-            remaining = remaining[used:]
+        consumed = _draw_table_box(kind, x0, y0, w0, h0, rows, cont=False)
+        return rows[consumed:]
 
     def _table_row_count(kind: str) -> int:
         if kind == "labor":
@@ -495,10 +490,15 @@ def _render_invoice_builder_pdf(
     effective_y: dict[str, float] = {}
     base_h: dict[str, float] = {}
     base_y: dict[str, float] = {}
+    grow_parent_by_target: dict[str, str] = {}
     for _el in elements:
         if not isinstance(_el, dict) or _el.get("id") is None:
             continue
         el_id = str(_el.get("id"))
+        if str(_el.get("type") or "").lower() == "box":
+            target_id = str(_el.get("growWithId") or "").strip()
+            if target_id:
+                grow_parent_by_target[target_id] = el_id
         h0 = max(10.0, float(_el.get("h") or 10.0))
         y0 = float(_el.get("y") or 0.0)
         base_h[el_id] = h0
@@ -522,11 +522,29 @@ def _render_invoice_builder_pdf(
         bx2 = bx1 + max(1.0, float(b.get("w") or 1.0))
         return ax1 < bx2 and bx1 < ax2
 
-    def _nearest_below_y(el_id: str) -> float | None:
+    def _is_contained(inner_id: str, outer_id: str) -> bool:
+        inner = elements_by_id.get(inner_id) or {}
+        outer = elements_by_id.get(outer_id) or {}
+        ix = float(inner.get("x") or 0.0)
+        iy = float(effective_y.get(inner_id, base_y.get(inner_id, float(inner.get("y") or 0.0))))
+        iw = max(1.0, float(inner.get("w") or 1.0))
+        ih = max(1.0, float(effective_h.get(inner_id, base_h.get(inner_id, float(inner.get("h") or 1.0)))))
+        ox = float(outer.get("x") or 0.0)
+        oy = float(effective_y.get(outer_id, base_y.get(outer_id, float(outer.get("y") or 0.0))))
+        ow = max(1.0, float(outer.get("w") or 1.0))
+        oh = max(1.0, float(effective_h.get(outer_id, base_h.get(outer_id, float(outer.get("h") or 1.0)))))
+        return ix >= ox and iy >= oy and (ix + iw) <= (ox + ow) and (iy + ih) <= (oy + oh)
+
+    def _nearest_below_y(el_id: str, *, ignore_ids: set[str] | None = None) -> float | None:
         y = float(effective_y.get(el_id, base_y.get(el_id, 0.0)))
         best = None
+        ignored = set(ignore_ids or set())
         for other_id in elements_by_id.keys():
             if other_id == el_id:
+                continue
+            if other_id in ignored:
+                continue
+            if _is_contained(other_id, el_id):
                 continue
             if not _x_overlap(el_id, other_id):
                 continue
@@ -580,7 +598,11 @@ def _render_invoice_builder_pdf(
             if wanted is None:
                 continue
             min_h = max(10.0, float(_el.get("minH") or base_h.get(el_id, 10.0)))
-            below = _nearest_below_y(el_id)
+            ignored = set()
+            parent_id = grow_parent_by_target.get(el_id)
+            if parent_id:
+                ignored.add(parent_id)
+            below = _nearest_below_y(el_id, ignore_ids=ignored)
             if below is not None:
                 max_allowed = max(min_h, below - float(effective_y.get(el_id, base_y.get(el_id, 0.0))) - 4.0)
                 wanted = min(wanted, max_allowed)
@@ -604,7 +626,7 @@ def _render_invoice_builder_pdf(
                 delta = h_box - h_target
             min_h = max(10.0, float(base_h.get(el_id, 10.0)))
             desired = max(min_h, float(target_h) + float(delta))
-            below = _nearest_below_y(el_id)
+            below = _nearest_below_y(el_id, ignore_ids={target_id})
             if below is not None:
                 max_allowed = max(min_h, below - float(effective_y.get(el_id, base_y.get(el_id, 0.0))) - 4.0)
                 desired = min(desired, max_allowed)
@@ -614,6 +636,7 @@ def _render_invoice_builder_pdf(
         if not changed:
             break
 
+    table_overflow_jobs: list[dict] = []
     for el in elements:
         if not isinstance(el, dict):
             continue
@@ -644,10 +667,14 @@ def _render_invoice_builder_pdf(
         text_raw = str(el.get("text") or "")
         rich_raw = str(el.get("richText") or "")
         if "{{labor_table}}" in text_raw or "{{labor_table}}" in rich_raw:
-            _draw_builder_table("labor", rx, ry, rw, rh, auto_grow=True)
+            remaining = _draw_builder_table("labor", rx, ry, rw, rh, auto_grow=True)
+            if remaining:
+                table_overflow_jobs.append({"kind": "labor", "rows": remaining, "x": rx, "w": rw})
             continue
         if "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
-            _draw_builder_table("parts", rx, ry, rw, rh, auto_grow=True)
+            remaining = _draw_builder_table("parts", rx, ry, rw, rh, auto_grow=True)
+            if remaining:
+                table_overflow_jobs.append({"kind": "parts", "rows": remaining, "x": rx, "w": rw})
             continue
         # Backward compatibility for older starter templates that hardcoded sample lines.
         text_raw = text_raw.replace(
@@ -749,6 +776,23 @@ def _render_invoice_builder_pdf(
                     underline_y = ty - max(1.0, font_size * 0.08)
                     pdf.line(draw_x, underline_y, draw_x + text_w, underline_y)
                 ty -= line_h
+
+    # Keep first-page layout stable; render table overflow on continuation pages after all elements.
+    for job in table_overflow_jobs:
+        kind = str(job.get("kind") or "parts")
+        remaining = list(job.get("rows") or [])
+        box_x = float(job.get("x") or 24.0)
+        box_w = float(job.get("w") or (PAGE_W - 48.0))
+        while remaining:
+            pdf.showPage()
+            pdf.setFillColor(colors.HexColor(canvas_bg))
+            pdf.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
+            cont_x = max(24.0, min(box_x, PAGE_W - box_w - 24.0))
+            cont_w = min(box_w, PAGE_W - 48.0)
+            cont_y = 48.0
+            cont_h = PAGE_H - (cont_y + 42.0)
+            used = _draw_table_box(kind, cont_x, cont_y, cont_w, cont_h, remaining, cont=True)
+            remaining = remaining[used:]
 
     pdf.save()
     inv.pdf_path = pdf_path
