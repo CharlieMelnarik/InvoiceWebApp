@@ -136,6 +136,9 @@ class User(Base):
 
     payment_reminders_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     payment_due_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    payment_reminder_before_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    payment_reminder_due_today_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    payment_reminder_after_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     payment_reminder_days_before: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     payment_reminder_days_after: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     payment_reminder_last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -404,6 +407,7 @@ class Invoice(Base):
     pdf_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     pdf_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     payment_reminder_before_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    payment_reminder_due_today_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     payment_reminder_after_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     payment_reminder_last_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

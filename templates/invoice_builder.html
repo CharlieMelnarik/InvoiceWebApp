@@ -100,14 +100,6 @@
     text-decoration: none !important;
     background: transparent !important;
     border-color: transparent !important;
-  }
-  .builder-canvas.exact-mode .node:not(.box) {
-    pointer-events: none;
-  }
-  .builder-canvas.exact-mode .node.selected:not(.box) {
-    pointer-events: auto;
-  }
-  .builder-canvas.exact-mode .node.box {
     pointer-events: auto;
   }
   .builder-canvas.exact-mode {
@@ -300,6 +292,11 @@
       <button class="btn btn-outline-primary tool-btn" data-quick="standard">Use Standard Starter</button>
       <button class="btn btn-outline-primary tool-btn" data-quick="minimal">Use Minimal Starter</button>
       <button class="btn btn-outline-primary tool-btn" data-quick="service">Use Service Starter</button>
+      <div class="tool-group-title">Load InvoiceRunner Layout</div>
+      <button class="btn btn-outline-success tool-btn" data-layout="classic">Load Classic Layout</button>
+      <button class="btn btn-outline-success tool-btn" data-layout="modern">Load Modern Layout</button>
+      <button class="btn btn-outline-success tool-btn" data-layout="split_panel">Load Split Panel Layout</button>
+      <button class="btn btn-outline-success tool-btn" data-layout="strip">Load Invoice Strip Layout</button>
       <div class="tool-group-title">Add Sections</div>
       <button class="btn btn-outline-primary tool-btn" data-add="header">+ Header (Title + Date + Number)</button>
       <button class="btn btn-outline-primary tool-btn" data-add="logo">+ Business Logo</button>
@@ -331,6 +328,7 @@
           <input id="templateName" class="form-control" type="text" placeholder="My Custom Layout">
         </div>
         <div class="d-grid gap-2 mb-3">
+          <button id="newBlankBtn" class="btn btn-outline-secondary" type="button">New Blank Template</button>
           <button id="saveAsNewBtn" class="btn btn-outline-primary" type="button">Save As New Template</button>
           <button id="setActiveBtn" class="btn btn-outline-success" type="button">Set Selected Active</button>
         </div>
@@ -375,6 +373,7 @@
   const templateList = document.getElementById("templateList");
   const propEditor = document.getElementById("propEditor");
   const saveAsNewBtn = document.getElementById("saveAsNewBtn");
+  const newBlankBtn = document.getElementById("newBlankBtn");
   const saveActiveBtn = document.getElementById("saveActiveBtn");
   const setActiveBtn = document.getElementById("setActiveBtn");
   const saveStatus = document.getElementById("saveStatus");
@@ -1419,6 +1418,18 @@
     renderCanvas();
   }
 
+  function resetToBlank(name = "Untitled Template") {
+    currentTemplateId = null;
+    templateName.value = name;
+    state = normalizeDesign({ canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] });
+    canvasBg.value = state.canvas.bg || "#ffffff";
+    selectedId = null;
+    history = [cloneState()];
+    historyIndex = 0;
+    renderTemplateList();
+    renderCanvas();
+  }
+
   function addPreset(type, recordHistory = true) {
     const createText = (opts = {}) => ({
       id: `el_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
@@ -1586,6 +1597,263 @@
     renderCanvas();
   }
 
+  function loadExistingLayout(layoutKey) {
+    const key = String(layoutKey || "").toLowerCase();
+    const PT_TO_CANVAS = 4 / 3;
+    const p = (v) => Math.round(Number(v || 0) * PT_TO_CANVAS * 10) / 10;
+    const elId = (suffix = "el") => `el_${Date.now()}_${Math.random().toString(16).slice(2, 7)}_${suffix}`;
+    const mkText = (opts = {}) => ({
+      id: elId("txt"),
+      type: "text",
+      x: opts.x ?? 60,
+      y: opts.y ?? 60,
+      w: opts.w ?? 260,
+      h: opts.h ?? 40,
+      text: opts.text ?? "",
+      fontSize: opts.fontSize ?? 12,
+      fontWeight: opts.fontWeight ?? 500,
+      fontFamily: opts.fontFamily ?? "Helvetica",
+      fontStyle: opts.fontStyle ?? "normal",
+      lineSpacing: Number(opts.lineSpacing ?? 1.2),
+      textAlign: opts.textAlign ?? "left",
+      underline: !!opts.underline,
+      autoGrow: !!opts.autoGrow,
+      minH: opts.minH ?? (opts.h ?? 40),
+      lockToId: opts.lockToId ?? null,
+      lockMode: opts.lockMode ?? "below",
+      lockOffset: opts.lockOffset ?? 0,
+      color: opts.color ?? "#111827",
+      fillColor: "transparent",
+      borderColor: "transparent",
+      radius: 0,
+    });
+    const mkBox = (opts = {}) => ({
+      id: elId("box"),
+      type: "box",
+      x: opts.x ?? 60,
+      y: opts.y ?? 60,
+      w: opts.w ?? 260,
+      h: opts.h ?? 120,
+      text: "",
+      borderColor: opts.borderColor ?? "#111827",
+      fillColor: opts.fillColor ?? "#ffffff",
+      radius: opts.radius ?? 8,
+      lockToId: opts.lockToId ?? null,
+      lockMode: opts.lockMode ?? "below",
+      lockOffset: opts.lockOffset ?? 0,
+    });
+    const mkImage = (opts = {}) => ({
+      id: elId("img"),
+      type: "image",
+      x: opts.x ?? 60,
+      y: opts.y ?? 40,
+      w: opts.w ?? 100,
+      h: opts.h ?? 60,
+      src: opts.src ?? "{{business_logo}}",
+      borderColor: opts.borderColor ?? "#111827",
+      fillColor: opts.fillColor ?? "#ffffff",
+      radius: opts.radius ?? 4,
+      lockToId: opts.lockToId ?? null,
+      lockMode: opts.lockMode ?? "below",
+      lockOffset: opts.lockOffset ?? 0,
+    });
+    const billTextBlock = `BILL TO\n${tok("customer_name")}\nEmail: ${tok("customer_email")}\nPhone: ${tok("customer_phone")}`;
+    const jobTextBlock = `JOB DETAILS\nJob: ${tok("job")}\nRate/Hour: ${tok("rate")}\nTotal Hours: ${tok("hours")}`;
+    const metaTextBlock = `Invoice #: ${tok("invoice_number")}\nDate: ${tok("date")}\nDue: ${tok("due_date")}`;
+    const summaryTextBlock =
+      `SUMMARY\nLabor: ${tok("labor_total")}\nParts: ${tok("parts_total")}\nTax: ${tok("tax")}\nTotal: ${tok("total")}\nAmount Due: ${tok("amount_due")}`;
+    const businessTextBlock = `${tok("business_name")}\n${tok("business_address")}\n${tok("business_phone")}`;
+    const lightBorder = "#e2e8f0";
+    const softBg = "#f8fafc";
+    const dark = "#0f172a";
+
+    resetToBlank("Untitled Template");
+    state.canvas.bg = "#ffffff";
+    state.elements = [];
+
+    if (key === "classic") {
+      const m = p(46.8);
+      const gap = p(25.2);
+      const boxW = p((612 - (46.8 * 2) - 25.2) / 2);
+      const topY = p(122.4);
+      const infoY = topY;
+      const bodyTop = p(255.6);
+      const billBox = mkBox({ x: m, y: infoY, w: boxW, h: p(97.2), borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
+      const jobBox = mkBox({ x: m + boxW + gap, y: infoY, w: boxW, h: p(97.2), borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
+      const laborText = mkText({
+        x: m, y: bodyTop, w: p(612 - (46.8 * 2)), h: p(94), minH: p(94),
+        text: tok("labor_table"), fontSize: 12, fontWeight: 500, autoGrow: true, color: "#111827"
+      });
+      const partsY = bodyTop + p(131);
+      const partsText = mkText({
+        x: m, y: partsY, w: p(612 - (46.8 * 2)), h: p(94), minH: p(94),
+        text: tok("parts_table"), fontSize: 12, fontWeight: 500, autoGrow: true, color: "#111827"
+      });
+
+      state.elements.push(
+        mkBox({ x: 0, y: p(73.9), w: 816, h: 1, borderColor: "#cccccc", fillColor: "#cccccc", radius: 0 }),
+        billBox,
+        jobBox,
+        mkBox({ x: m, y: p(555), w: p(270), h: p(150), borderColor: "#111827", fillColor: "#ffffff", radius: 8 }),
+        mkBox({ x: p(612 - 46.8 - 180), y: p(555), w: p(180), h: p(160), borderColor: "#111827", fillColor: "#ffffff", radius: 8 }),
+        mkText({ x: ownerHasLogo ? p(130) : m, y: p(40), w: p(240), h: p(60), text: businessTextBlock, fontSize: 12, fontWeight: 700, color: "#111827" }),
+        mkText({ x: p(612 - 46.8 - 170), y: p(38), w: p(170), h: p(22), text: tok("doc_label"), fontSize: 32, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        mkText({ x: p(612 - 46.8 - 220), y: p(82), w: p(220), h: p(60), text: metaTextBlock, fontSize: 13, fontWeight: 500, textAlign: "right", color: "#111827" }),
+        mkText({ x: billBox.x + 12, y: billBox.y + 12, w: billBox.w - 24, h: billBox.h - 24, text: billTextBlock, fontSize: 13, fontWeight: 600, color: "#111827" }),
+        mkText({ x: jobBox.x + 12, y: jobBox.y + 12, w: jobBox.w - 24, h: jobBox.h - 24, text: jobTextBlock, fontSize: 13, fontWeight: 600, color: "#111827" }),
+        laborText,
+        mkText({ x: p(612 - 46.8 - 170), y: bodyTop + p(102), w: p(170), h: p(22), text: `Total Labor: ${tok("labor_total")}`, fontSize: 12, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        partsText,
+        mkText({ x: p(612 - 46.8 - 170), y: partsY + p(102), w: p(170), h: p(22), text: `Total Parts: ${tok("parts_total")}`, fontSize: 12, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        mkText({ x: m + 12, y: p(567), w: p(246), h: p(128), text: `NOTES\n${tok("notes_text")}`, fontSize: 13, fontWeight: 600, color: "#111827" }),
+        mkText({ x: p(612 - 46.8 - 180) + 12, y: p(567), w: p(156), h: p(136), text: summaryTextBlock, fontSize: 13, fontWeight: 600, color: "#111827" })
+      );
+      if (ownerHasLogo) {
+        state.elements.push(mkImage({ x: m, y: p(40), w: p(72), h: p(36), src: "{{business_logo}}", borderColor: "#111827", fillColor: "#ffffff" }));
+      }
+      templateName.value = "Classic Layout Starter";
+    } else if (key === "modern") {
+      const m = p(46.8);
+      const boxW = p((612 - (46.8 * 2) - 25.2) / 2);
+      const cardH = p(115.2);
+      const topY = p(122.4);
+      const tableW = p(612 - (46.8 * 2));
+      const laborY = p(270);
+      const partsY = p(405);
+      state.elements.push(
+        mkBox({ x: 0, y: 0, w: 816, h: p(97.2), borderColor: dark, fillColor: dark, radius: 0 }),
+        mkBox({ x: m, y: topY, w: boxW, h: cardH, borderColor: lightBorder, fillColor: softBg, radius: 10 }),
+        mkBox({ x: m + boxW + p(25.2), y: topY, w: boxW, h: cardH, borderColor: lightBorder, fillColor: softBg, radius: 10 }),
+        mkBox({ x: m, y: p(525), w: p(612 - (46.8 * 2) - 190), h: p(150), borderColor: lightBorder, fillColor: softBg, radius: 10 }),
+        mkBox({ x: p(612 - 46.8 - 180), y: p(525), w: p(180), h: p(160), borderColor: lightBorder, fillColor: softBg, radius: 10 }),
+        mkText({ x: ownerHasLogo ? p(130) : m, y: p(44), w: p(250), h: p(60), text: businessTextBlock, fontSize: 11, fontWeight: 600, color: "#ffffff" }),
+        mkText({ x: p(612 - 46.8 - 160), y: p(36), w: p(160), h: p(24), text: tok("doc_label"), fontSize: 24, fontWeight: 700, textAlign: "right", color: "#ffffff" }),
+        mkText({ x: p(612 - 46.8 - 240), y: p(68), w: p(240), h: p(66), text: metaTextBlock, fontSize: 12, fontWeight: 500, textAlign: "right", color: "#ffffff" }),
+        mkText({ x: m + 14, y: topY + 12, w: boxW - 28, h: cardH - 24, text: billTextBlock, fontSize: 12, fontWeight: 600, color: "#111827" }),
+        mkText({ x: m + boxW + p(25.2) + 14, y: topY + 12, w: boxW - 28, h: cardH - 24, text: jobTextBlock, fontSize: 12, fontWeight: 600, color: "#111827" })
+      );
+      const laborText = mkText({
+        x: m + 12, y: laborY + 12, w: tableW - 24, h: p(98), minH: p(98),
+        text: tok("labor_table"), fontSize: 12, fontWeight: 500, autoGrow: true, color: "#111827"
+      });
+      const partsText = mkText({
+        x: m + 12, y: partsY + 12, w: tableW - 24, h: p(98), minH: p(98),
+        text: tok("parts_table"), fontSize: 12, fontWeight: 500, autoGrow: true, color: "#111827"
+      });
+      state.elements.push(
+        laborText,
+        mkText({ x: p(612 - 46.8 - 180), y: laborY + p(106), w: p(170), h: p(22), text: `Total Labor: ${tok("labor_total")}`, fontSize: 12, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        partsText,
+        mkText({ x: p(612 - 46.8 - 180), y: partsY + p(106), w: p(170), h: p(22), text: `Total Parts: ${tok("parts_total")}`, fontSize: 12, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        mkText({ x: m + 12, y: p(537), w: p(612 - (46.8 * 2) - 214), h: p(124), text: `NOTES\n${tok("notes_text")}`, fontSize: 12, fontWeight: 600, color: "#111827" }),
+        mkText({ x: p(612 - 46.8 - 180) + 12, y: p(537), w: p(156), h: p(136), text: summaryTextBlock, fontSize: 12, fontWeight: 600, color: "#111827" })
+      );
+      if (ownerHasLogo) {
+        state.elements.push(mkImage({ x: m, y: p(34), w: p(78), h: p(38), src: "{{business_logo}}", borderColor: "#ffffff", fillColor: "#ffffff" }));
+      }
+      templateName.value = "Modern Layout Starter";
+    } else if (key === "split_panel") {
+      state.canvas.bg = softBg;
+      const m = p(39.6);
+      const railW = p(111.6);
+      const railH = p(792 - (39.6 * 2));
+      const contentX = p(39.6 + 111.6 + 32.4);
+      const contentW = p(612 - (39.6 + 111.6 + 32.4 + 39.6));
+      const cardY = p(136.8);
+      const cardH = p(111.6);
+      const cardW = p((313.2 - 25.2) / 2);
+      const laborY = p(278);
+      const partsY = p(413);
+      state.elements.push(
+        mkBox({ x: m, y: m, w: railW, h: railH, borderColor: dark, fillColor: dark, radius: 14 }),
+        mkBox({ x: contentX, y: p(39.6), w: contentW, h: p(72), borderColor: lightBorder, fillColor: softBg, radius: 12 }),
+        mkBox({ x: contentX, y: cardY, w: cardW, h: cardH, borderColor: lightBorder, fillColor: "#ffffff", radius: 12 }),
+        mkBox({ x: contentX + cardW + p(25.2), y: cardY, w: cardW, h: cardH, borderColor: lightBorder, fillColor: "#ffffff", radius: 12 }),
+        mkBox({ x: contentX, y: p(525), w: contentW, h: p(160), borderColor: lightBorder, fillColor: softBg, radius: 12 }),
+        mkText({ x: m + 10, y: ownerHasLogo ? p(118) : p(78), w: railW - 20, h: p(120), text: businessTextBlock, fontSize: 10, fontWeight: 700, color: "#e2e8f0" }),
+        mkText({ x: m + 10, y: p(525), w: railW - 20, h: p(150), text: summaryTextBlock, fontSize: 10, fontWeight: 600, color: "#e2e8f0" }),
+        mkText({ x: contentX + 12, y: p(54), w: p(140), h: p(22), text: tok("doc_label"), fontSize: 18, fontWeight: 700, color: "#111827" }),
+        mkText({ x: contentX + contentW - p(220), y: p(52), w: p(208), h: p(52), text: metaTextBlock, fontSize: 10, fontWeight: 500, textAlign: "right", color: "#111827" }),
+        mkText({ x: contentX + 12, y: cardY + 10, w: cardW - 24, h: cardH - 20, text: billTextBlock, fontSize: 11, fontWeight: 600, color: "#111827" }),
+        mkText({ x: contentX + cardW + p(25.2) + 12, y: cardY + 10, w: cardW - 24, h: cardH - 20, text: jobTextBlock, fontSize: 11, fontWeight: 600, color: "#111827" })
+      );
+      const laborText = mkText({
+        x: contentX + 10, y: laborY + 10, w: contentW - 20, h: p(88), minH: p(88),
+        text: tok("labor_table"), fontSize: 11, fontWeight: 500, autoGrow: true, color: "#111827"
+      });
+      const partsText = mkText({
+        x: contentX + 10, y: partsY + 10, w: contentW - 20, h: p(88), minH: p(88),
+        text: tok("parts_table"), fontSize: 11, fontWeight: 500, autoGrow: true, color: "#111827"
+      });
+      state.elements.push(
+        laborText,
+        mkText({ x: contentX + contentW - p(170), y: laborY + p(96), w: p(160), h: p(20), text: `Total Labor: ${tok("labor_total")}`, fontSize: 11, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        partsText,
+        mkText({ x: contentX + contentW - p(170), y: partsY + p(96), w: p(160), h: p(20), text: `Total Parts: ${tok("parts_total")}`, fontSize: 11, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        mkText({ x: contentX + 12, y: p(537), w: contentW - 24, h: p(136), text: `NOTES\n${tok("notes_text")}`, fontSize: 11, fontWeight: 600, color: "#111827" })
+      );
+      if (ownerHasLogo) {
+        state.elements.push(mkImage({ x: m + 10, y: p(52), w: railW - 20, h: p(48), src: "{{business_logo}}", borderColor: "#ffffff", fillColor: "#ffffff" }));
+      }
+      templateName.value = "Split Panel Layout Starter";
+    } else if (key === "strip") {
+      state.canvas.bg = "#ffffff";
+      const m = p(50.4);
+      const topY = p(139.2);
+      const stripY = p(233);
+      const stripH = p(39.6);
+      const stripW = p(612 - (50.4 * 2));
+      const boxW = stripW / 4;
+      const laborY = p(319);
+      const partsY = p(450);
+      state.elements.push(
+        mkBox({ x: 0, y: 0, w: 816, h: p(79.2), borderColor: "#ffffff", fillColor: "#ffffff", radius: 0 }),
+        mkBox({ x: m, y: p(107), w: p(612 - (50.4 * 2)), h: 1, borderColor: "#e5e7eb", fillColor: "#e5e7eb", radius: 0 }),
+        mkBox({ x: m, y: stripY, w: stripW, h: stripH, borderColor: "#0ea5a4", fillColor: "#0ea5a4", radius: 0 }),
+        mkBox({ x: m + (2 * boxW), y: stripY, w: boxW * 2, h: stripH, borderColor: dark, fillColor: dark, radius: 0 }),
+        mkText({ x: ownerHasLogo ? p(135) : m, y: p(56), w: p(250), h: p(45), text: businessTextBlock, fontSize: 10, fontWeight: 600, color: "#111827" }),
+        mkText({ x: p(612 - 50.4 - 210), y: p(56), w: p(210), h: p(22), text: `${tok("doc_label")} ${tok("invoice_number")}`, fontSize: 13, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        mkText({ x: p(612 - 50.4 - 190), y: topY, w: p(190), h: p(52), text: `Issue date: ${tok("date")}\nDue: ${tok("due_date")}`, fontSize: 10, fontWeight: 500, color: "#111827" }),
+        mkText({ x: m + 6, y: topY, w: p(240), h: p(80), text: billTextBlock, fontSize: 10, fontWeight: 600, color: "#111827" }),
+        mkText({ x: m + 10, y: stripY + 8, w: boxW - 12, h: stripH - 16, text: `Invoice No.\n${tok("invoice_number")}`, fontSize: 10, fontWeight: 700, color: "#ffffff" }),
+        mkText({ x: m + boxW + 10, y: stripY + 8, w: boxW - 12, h: stripH - 16, text: `Issue date\n${tok("date")}`, fontSize: 10, fontWeight: 700, color: "#ffffff" }),
+        mkText({ x: m + (2 * boxW) + 10, y: stripY + 8, w: (boxW * 2) - 14, h: stripH - 16, text: `Total due\n${tok("total")}`, fontSize: 12, fontWeight: 700, color: "#ffffff" })
+      );
+      const laborText = mkText({
+        x: m + 6, y: laborY + 10, w: p(612 - (50.4 * 2)) - 12, h: p(98), minH: p(98),
+        text: tok("labor_table"), fontSize: 11, fontWeight: 500, autoGrow: true, color: "#111827"
+      });
+      const partsText = mkText({
+        x: m + 6, y: partsY + 10, w: p(612 - (50.4 * 2)) - 12, h: p(98), minH: p(98),
+        text: tok("parts_table"), fontSize: 11, fontWeight: 500, autoGrow: true, color: "#111827"
+      });
+      state.elements.push(
+        laborText,
+        mkText({ x: p(612 - 50.4 - 170), y: laborY + p(98), w: p(170), h: p(18), text: `Total Labor: ${tok("labor_total")}`, fontSize: 11, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        partsText,
+        mkText({ x: p(612 - 50.4 - 170), y: partsY + p(98), w: p(170), h: p(18), text: `Total Parts: ${tok("parts_total")}`, fontSize: 11, fontWeight: 700, textAlign: "right", color: "#111827" }),
+        mkBox({ x: m, y: p(560), w: p(240), h: p(120), borderColor: "#e5e7eb", fillColor: "#ffffff", radius: 8 }),
+        mkText({ x: m + 10, y: p(572), w: p(220), h: p(96), text: `NOTES\n${tok("notes_text")}`, fontSize: 10, fontWeight: 600, color: "#111827" }),
+        mkBox({ x: p(612 - 50.4 - 180), y: p(560), w: p(180), h: p(130), borderColor: "#e5e7eb", fillColor: "#ffffff", radius: 8 }),
+        mkText({ x: p(612 - 50.4 - 180) + 10, y: p(572), w: p(160), h: p(110), text: summaryTextBlock, fontSize: 10, fontWeight: 600, color: "#111827" })
+      );
+      if (ownerHasLogo) {
+        state.elements.push(mkImage({ x: m, y: p(50), w: p(70), h: p(32), src: "{{business_logo}}", borderColor: "#111827", fillColor: "#ffffff" }));
+      }
+      templateName.value = "Invoice Strip Layout Starter";
+    } else {
+      quickStart("pdf_like");
+      templateName.value = "PDF-Like Starter";
+    }
+
+    selectedId = state.elements.find((el) => el && el.type === "text")?.id || null;
+    history = [cloneState()];
+    historyIndex = 0;
+    pushHistory("Loaded InvoiceRunner layout starter");
+    renderCanvas();
+    setStatus("Starter layout loaded. Edit and save when ready.", "ok");
+  }
+
   async function saveTemplate({ asNew = false, activate = false } = {}) {
     const payload = {
       template_id: asNew ? null : currentTemplateId,
@@ -1668,8 +1936,15 @@
     if (!res.ok || !data.ok) return alert(data.error || "Failed to delete template.");
     const idx = templates.findIndex(t => Number(t.id) === Number(id));
     if (idx >= 0) templates.splice(idx, 1);
-    if (!templates.length) return location.reload();
-    if (Number(currentTemplateId) === Number(id)) loadTemplate(templates[0].id);
+    if (Number(currentTemplateId) === Number(id)) {
+      resetToBlank("Untitled Template");
+    } else {
+      renderTemplateList();
+    }
+    if (!templates.length) {
+      setStatus("Template deleted. Blank canvas ready.", "ok");
+      return;
+    }
     renderTemplateList();
   }
 
@@ -1684,38 +1959,37 @@
       const z = Math.max(0.01, Number(zoomPct || 100) / 100);
       const px = (e.clientX - rect.left) / z;
       const py = (e.clientY - rect.top) / z;
-      if (e.altKey || isResizeHandle) {
-        // Explicit text selection in exact mode.
-        const textHits = state.elements
-          .filter((elx) => String(elx.type || "").toLowerCase() !== "box")
-          .filter((tx) => {
-            const x = Number(tx.x || 0);
-            const y = Number(tx.y || 0);
-            const w = Number(tx.w || 0);
-            const h = Number(tx.h || 0);
-            return px >= x && px <= (x + w) && py >= y && py <= (y + h);
-          });
-        if (textHits.length) {
-          id = String(textHits[textHits.length - 1].id);
-        } else if (isResizeHandle && selectedId) {
-          const selectedEl = nodeById(selectedId);
-          if (selectedEl && String(selectedEl.type || "").toLowerCase() !== "box") {
-            id = String(selectedId);
-          }
-        }
+      const textHits = state.elements
+        .filter((elx) => String(elx.type || "").toLowerCase() !== "box")
+        .filter((tx) => {
+          const x = Number(tx.x || 0);
+          const y = Number(tx.y || 0);
+          const w = Number(tx.w || 0);
+          const h = Number(tx.h || 0);
+          return px >= x && px <= (x + w) && py >= y && py <= (y + h);
+        });
+      const boxHits = state.elements
+        .filter((elx) => String(elx.type || "").toLowerCase() === "box")
+        .filter((bx) => {
+          const x = Number(bx.x || 0);
+          const y = Number(bx.y || 0);
+          const w = Number(bx.w || 0);
+          const h = Number(bx.h || 0);
+          return px >= x && px <= (x + w) && py >= y && py <= (y + h);
+        })
+        .sort((a, b) => (Number(a.w || 0) * Number(a.h || 0)) - (Number(b.w || 0) * Number(b.h || 0)));
+
+      if (isResizeHandle && selectedId) {
+        id = String(selectedId);
+      } else if (e.altKey) {
+        if (textHits.length) id = String(textHits[textHits.length - 1].id);
+        else if (boxHits.length) id = String(boxHits[0].id);
+      } else if (clickedType !== "box") {
+        if (textHits.length) id = String(textHits[textHits.length - 1].id);
+        else if (boxHits.length) id = String(boxHits[0].id);
       } else {
-        // Default: select outer box by hit-test.
-        const candidates = state.elements
-          .filter((elx) => String(elx.type || "").toLowerCase() === "box")
-          .filter((bx) => {
-            const x = Number(bx.x || 0);
-            const y = Number(bx.y || 0);
-            const w = Number(bx.w || 0);
-            const h = Number(bx.h || 0);
-            return px >= x && px <= (x + w) && py >= y && py <= (y + h);
-          })
-          .sort((a, b) => (Number(a.w || 0) * Number(a.h || 0)) - (Number(b.w || 0) * Number(b.h || 0)));
-        if (candidates.length) id = String(candidates[0].id);
+        if (boxHits.length) id = String(boxHits[0].id);
+        else if (textHits.length) id = String(textHits[textHits.length - 1].id);
       }
     }
     selectedId = id;
@@ -1845,6 +2119,9 @@
   document.querySelectorAll("[data-quick]").forEach(btn => {
     btn.addEventListener("click", () => quickStart(btn.dataset.quick));
   });
+  document.querySelectorAll("[data-layout]").forEach(btn => {
+    btn.addEventListener("click", () => loadExistingLayout(btn.dataset.layout));
+  });
 
   templateList.addEventListener("click", (e) => {
     const load = e.target.getAttribute("data-load");
@@ -1859,6 +2136,12 @@
     setStatus("Saving as new template...");
     await saveTemplate({ asNew: true, activate: false });
   });
+  if (newBlankBtn) {
+    newBlankBtn.addEventListener("click", () => {
+      resetToBlank("Untitled Template");
+      setStatus("Blank template ready. Build and save when ready.", "ok");
+    });
+  }
   saveActiveBtn.addEventListener("click", async () => {
     setStatus("Saving current template...");
     await saveTemplate({ asNew: false, activate: false });

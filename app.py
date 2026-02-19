@@ -699,6 +699,23 @@ EMAIL_TEMPLATE_DEFS = {
             "</div>"
         ),
     },
+    "reminder_due_today": {
+        "name": "Payment Reminder (Due Today)",
+        "description": "Automatic reminder sent on due date at 6:00 AM local time.",
+        "default_subject": "Due Today: Invoice {{document_number}}",
+        "default_html": (
+            "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
+            "<p>Hello {{customer_name}},</p>"
+            "<p>{{timing_line}}</p>"
+            "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
+            "Invoice amount due: <strong>${{amount_due}}</strong><br>"
+            "{{late_fee_policy_line}}"
+            "Due date: <strong>{{due_date}}</strong></p>"
+            "<p>{{action_button}}</p>"
+            "<p>Thank you.</p>"
+            "</div>"
+        ),
+    },
     "reminder_after_due": {
         "name": "Payment Reminder (Past Due)",
         "description": "Automatic reminder sent after due date.",
@@ -1532,6 +1549,10 @@ def _send_payment_reminder_for_invoice(
         timing_line = f"This is a friendly reminder that payment is due in {max(0, days_until_due)} day(s)."
         subject = f"Friendly Reminder: Invoice {display_no} due in {max(0, lead)} day(s)"
         email_template_key = "reminder_before_due"
+    elif reminder_kind == "due_today":
+        timing_line = "Friendly reminder: this invoice is due today."
+        subject = f"Due Today: Invoice {display_no}"
+        email_template_key = "reminder_due_today"
     elif reminder_kind == "after_due":
         timing_line = f"This invoice is past due by {max(0, -days_until_due)} day(s)."
         subject = f"Past Due Reminder: Invoice {display_no}"
@@ -1616,6 +1637,8 @@ def _send_payment_reminder_for_invoice(
     inv.payment_reminder_last_sent_at = now_val
     if reminder_kind == "before_due":
         inv.payment_reminder_before_sent_at = now_val
+    elif reminder_kind == "due_today":
+        inv.payment_reminder_due_today_sent_at = now_val
     elif reminder_kind == "after_due":
         inv.payment_reminder_after_sent_at = now_val
     session.add(inv)
@@ -1647,10 +1670,14 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
         )
         return
 
+    before_enabled = bool(getattr(owner, "payment_reminder_before_enabled", True))
+    due_today_enabled = bool(getattr(owner, "payment_reminder_due_today_enabled", True))
+    after_enabled = bool(getattr(owner, "payment_reminder_after_enabled", True))
     before_days = int(getattr(owner, "payment_reminder_days_before", 0) or 0)
     after_days = int(getattr(owner, "payment_reminder_days_after", 0) or 0)
+    tz_offset = int(getattr(owner, "schedule_summary_tz_offset_minutes", 0) or 0)
     print(
-        f"[PAYMENT REMINDER] user={owner.id} running (before_days={before_days}, after_days={after_days})",
+        f"[PAYMENT REMINDER] user={owner.id} running (before={before_enabled}/{before_days}, due_today={due_today_enabled}, after={after_enabled}/{after_days}, tz_offset={tz_offset})",
         flush=True,
     )
 
@@ -1663,11 +1690,14 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
     print(f"[PAYMENT REMINDER] user={owner.id} invoice_count={len(invoices)}", flush=True)
 
     sent_before = 0
+    sent_due_today = 0
     sent_after = 0
     skipped_paid = 0
     skipped_not_due_before = 0
+    skipped_not_due_today = 0
     skipped_not_due_after = 0
     skipped_already_before = 0
+    skipped_already_due_today = 0
     skipped_already_after = 0
 
     for inv in invoices:
@@ -1678,9 +1708,13 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
         due_dt = _invoice_due_date_utc(inv, owner)
         before_target = due_dt - timedelta(days=max(0, before_days))
         after_target = due_dt + timedelta(days=max(0, after_days))
+        now_local = now_utc + timedelta(minutes=tz_offset)
+        due_local = due_dt + timedelta(minutes=tz_offset)
+        due_today_start_local = datetime(due_local.year, due_local.month, due_local.day, 6, 0, 0)
+        due_tomorrow_local = datetime(due_local.year, due_local.month, due_local.day) + timedelta(days=1)
 
         try:
-            if before_days >= 0 and now_utc >= before_target and now_utc < due_dt:
+            if before_enabled and before_days >= 0 and now_utc >= before_target and now_utc < due_dt:
                 if getattr(inv, "payment_reminder_before_sent_at", None) is None:
                     _send_payment_reminder_for_invoice(
                         session,
@@ -1699,7 +1733,28 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
                     skipped_already_before += 1
             else:
                 skipped_not_due_before += 1
-            if now_utc >= after_target:
+
+            if due_today_enabled and now_local >= due_today_start_local and now_local < due_tomorrow_local:
+                if getattr(inv, "payment_reminder_due_today_sent_at", None) is None:
+                    _send_payment_reminder_for_invoice(
+                        session,
+                        inv=inv,
+                        owner=owner,
+                        customer=inv.customer,
+                        reminder_kind="due_today",
+                        now_utc=now_utc,
+                    )
+                    sent_due_today += 1
+                    print(
+                        f"[PAYMENT REMINDER] user={owner.id} invoice={inv.id} sent kind=due_today due={due_dt.isoformat()}",
+                        flush=True,
+                    )
+                else:
+                    skipped_already_due_today += 1
+            else:
+                skipped_not_due_today += 1
+
+            if after_enabled and now_utc >= after_target:
                 if getattr(inv, "payment_reminder_after_sent_at", None) is None:
                     _send_payment_reminder_for_invoice(
                         session,
@@ -1725,9 +1780,10 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
     session.add(owner)
     print(
         "[PAYMENT REMINDER] "
-        f"user={owner.id} done sent_before={sent_before} sent_after={sent_after} "
+        f"user={owner.id} done sent_before={sent_before} sent_due_today={sent_due_today} sent_after={sent_after} "
         f"skipped_paid={skipped_paid} skipped_not_due_before={skipped_not_due_before} "
-        f"skipped_not_due_after={skipped_not_due_after} skipped_already_before={skipped_already_before} "
+        f"skipped_not_due_today={skipped_not_due_today} skipped_not_due_after={skipped_not_due_after} "
+        f"skipped_already_before={skipped_already_before} skipped_already_due_today={skipped_already_due_today} "
         f"skipped_already_after={skipped_already_after}",
         flush=True,
     )
@@ -1895,6 +1951,12 @@ def _migrate_user_payment_reminder_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN payment_reminders_enabled BOOLEAN")
     if not _column_exists(engine, "users", "payment_due_days"):
         stmts.append("ALTER TABLE users ADD COLUMN payment_due_days INTEGER")
+    if not _column_exists(engine, "users", "payment_reminder_before_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_before_enabled BOOLEAN")
+    if not _column_exists(engine, "users", "payment_reminder_due_today_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_due_today_enabled BOOLEAN")
+    if not _column_exists(engine, "users", "payment_reminder_after_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_after_enabled BOOLEAN")
     if not _column_exists(engine, "users", "payment_reminder_days_before"):
         stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_days_before INTEGER")
     if not _column_exists(engine, "users", "payment_reminder_days_after"):
@@ -1921,6 +1983,9 @@ def _migrate_user_payment_reminder_fields(engine):
         with engine.begin() as conn:
             conn.execute(text("UPDATE users SET payment_reminders_enabled = FALSE WHERE payment_reminders_enabled IS NULL"))
             conn.execute(text("UPDATE users SET payment_due_days = 30 WHERE payment_due_days IS NULL"))
+            conn.execute(text("UPDATE users SET payment_reminder_before_enabled = TRUE WHERE payment_reminder_before_enabled IS NULL"))
+            conn.execute(text("UPDATE users SET payment_reminder_due_today_enabled = TRUE WHERE payment_reminder_due_today_enabled IS NULL"))
+            conn.execute(text("UPDATE users SET payment_reminder_after_enabled = TRUE WHERE payment_reminder_after_enabled IS NULL"))
             conn.execute(text("UPDATE users SET payment_reminder_days_before = 3 WHERE payment_reminder_days_before IS NULL"))
             conn.execute(text("UPDATE users SET payment_reminder_days_after = 3 WHERE payment_reminder_days_after IS NULL"))
             conn.execute(text("UPDATE users SET late_fee_enabled = FALSE WHERE late_fee_enabled IS NULL"))
@@ -1955,6 +2020,8 @@ def _migrate_invoice_payment_reminder_fields(engine):
     stmts = []
     if not _column_exists(engine, "invoices", "payment_reminder_before_sent_at"):
         stmts.append("ALTER TABLE invoices ADD COLUMN payment_reminder_before_sent_at TIMESTAMP NULL")
+    if not _column_exists(engine, "invoices", "payment_reminder_due_today_sent_at"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN payment_reminder_due_today_sent_at TIMESTAMP NULL")
     if not _column_exists(engine, "invoices", "payment_reminder_after_sent_at"):
         stmts.append("ALTER TABLE invoices ADD COLUMN payment_reminder_after_sent_at TIMESTAMP NULL")
     if not _column_exists(engine, "invoices", "payment_reminder_last_sent_at"):
@@ -3556,6 +3623,15 @@ def create_app():
                     stripe_fee_percent = _to_float(request.form.get("stripe_fee_percent"), 2.9)
                     stripe_fee_fixed = _to_float(request.form.get("stripe_fee_fixed"), 0.30)
                     payment_reminders_enabled = (request.form.get("payment_reminders_enabled") == "1")
+                    payment_reminder_before_enabled = (request.form.get("payment_reminder_before_enabled") == "1")
+                    # If dedicated due-today toggle is not present in the form,
+                    # use the main payment reminders switch as the due-today control.
+                    payment_reminder_due_today_enabled = (
+                        (request.form.get("payment_reminder_due_today_enabled") == "1")
+                        if ("payment_reminder_due_today_enabled" in request.form)
+                        else payment_reminders_enabled
+                    )
+                    payment_reminder_after_enabled = (request.form.get("payment_reminder_after_enabled") == "1")
                     payment_due_days = int(_to_float(request.form.get("payment_due_days"), 30))
                     payment_reminder_days_before = int(_to_float(request.form.get("payment_reminder_days_before"), 3))
                     payment_reminder_days_after = int(_to_float(request.form.get("payment_reminder_days_after"), 3))
@@ -3603,6 +3679,9 @@ def create_app():
                     u.stripe_fee_percent = stripe_fee_percent
                     u.stripe_fee_fixed = stripe_fee_fixed
                     u.payment_reminders_enabled = payment_reminders_enabled
+                    u.payment_reminder_before_enabled = payment_reminder_before_enabled
+                    u.payment_reminder_due_today_enabled = payment_reminder_due_today_enabled
+                    u.payment_reminder_after_enabled = payment_reminder_after_enabled
                     u.payment_due_days = payment_due_days
                     u.payment_reminder_days_before = payment_reminder_days_before
                     u.payment_reminder_days_after = payment_reminder_days_after

@@ -435,35 +435,42 @@
           <div class="settings-help">Automated reminder timing and late-fee accrual for unpaid invoices.</div>
 
           <div class="row g-3">
-            <div class="col-md-4 d-flex align-items-end">
-              <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" id="paymentRemindersEnabled" name="payment_reminders_enabled" value="1" {% if u.payment_reminders_enabled %}checked{% endif %}>
-                <label class="form-check-label" for="paymentRemindersEnabled">Enable payment reminders</label>
-              </div>
-            </div>
             <div class="col-md-4">
-              <label class="form-label compact-label">Default Due Date (days)</label>
+              <label class="form-label compact-label mb-0">Default Due Date (days)</label>
+              <div class="form-check form-switch m-0 mb-1">
+                <input class="form-check-input" type="checkbox" id="paymentRemindersEnabled" name="payment_reminders_enabled" value="1" {% if u.payment_reminders_enabled %}checked{% endif %}>
+                <label class="form-check-label small text-muted" for="paymentRemindersEnabled">Will auto send payment reminders on the due date</label>
+              </div>
               <input type="text" class="form-control" name="payment_due_days" inputmode="numeric" value="{{ u.payment_due_days if u.payment_due_days is not none else '30' }}" placeholder="30">
             </div>
             <div class="col-md-4">
-              <label class="form-label compact-label">Reminder Days Before Due</label>
+              <label class="form-label compact-label mb-0">Reminder Days Before Due</label>
+              <div class="form-check form-switch m-0 mb-1">
+                <input class="form-check-input" type="checkbox" id="paymentReminderBeforeEnabled" name="payment_reminder_before_enabled" value="1" {% if u.payment_reminder_before_enabled is not defined or u.payment_reminder_before_enabled %}checked{% endif %}>
+                <label class="form-check-label small text-muted" for="paymentReminderBeforeEnabled">Will auto-send Reminder Days Before Due</label>
+              </div>
               <input type="text" class="form-control" name="payment_reminder_days_before" inputmode="numeric" value="{{ u.payment_reminder_days_before if u.payment_reminder_days_before is not none else '3' }}" placeholder="3">
             </div>
             <div class="col-md-4">
-              <label class="form-label compact-label">Reminder Days After Due</label>
+              <label class="form-label compact-label mb-0">Reminder Days After Due</label>
+              <div class="form-check form-switch m-0 mb-1">
+                <input class="form-check-input" type="checkbox" id="paymentReminderAfterEnabled" name="payment_reminder_after_enabled" value="1" {% if u.payment_reminder_after_enabled is not defined or u.payment_reminder_after_enabled %}checked{% endif %}>
+                <label class="form-check-label small text-muted" for="paymentReminderAfterEnabled">Will auto-send Reminder Days After Due</label>
+              </div>
               <input type="text" class="form-control" name="payment_reminder_days_after" inputmode="numeric" value="{{ u.payment_reminder_days_after if u.payment_reminder_days_after is not none else '3' }}" placeholder="3">
             </div>
           </div>
 
           <hr class="my-3">
 
-          <div class="row g-3">
-            <div class="col-md-4 d-flex align-items-end">
-              <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" id="lateFeeEnabled" name="late_fee_enabled" value="1" {% if u.late_fee_enabled %}checked{% endif %}>
-                <label class="form-check-label" for="lateFeeEnabled">Enable late fee rule</label>
-              </div>
+          <div class="d-flex justify-content-start mb-2">
+            <div class="form-check mb-0">
+              <input class="form-check-input" type="checkbox" id="lateFeeEnabled" name="late_fee_enabled" value="1" {% if u.late_fee_enabled %}checked{% endif %}>
+              <label class="form-check-label" for="lateFeeEnabled">Enable late fee rule</label>
             </div>
+          </div>
+
+          <div class="row g-3">
             <div class="col-md-4">
               <label class="form-label compact-label">Late Fee Type</label>
               <select class="form-select" id="lateFeeMode" name="late_fee_mode">
