@@ -139,6 +139,56 @@ def _wrap_text(text, font, size, max_width):
     return lines or [""]
 
 
+def _wrap_text_preserve_spaces(text, font, size, max_width):
+    raw = str(text or "")
+    if raw == "":
+        return [""]
+    if max_width <= 0:
+        return [raw]
+
+    lines: list[str] = []
+    current = ""
+
+    def _append_token(token: str):
+        nonlocal current
+        if token == "":
+            return
+        if stringWidth(token, font, size) > max_width:
+            if current:
+                lines.append(current)
+                current = ""
+            remaining = token
+            while remaining:
+                lo, hi = 1, len(remaining)
+                fit = 1
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    piece = remaining[:mid]
+                    if stringWidth(piece, font, size) <= max_width:
+                        fit = mid
+                        lo = mid + 1
+                    else:
+                        hi = mid - 1
+                lines.append(remaining[:fit])
+                remaining = remaining[fit:]
+            return
+
+        test = current + token
+        if current and stringWidth(test, font, size) > max_width:
+            lines.append(current)
+            current = token
+        else:
+            current = test
+
+    # Keep runs of spaces as real tokens so user spacing is preserved.
+    for token in re.findall(r"\s+|\S+", raw):
+        _append_token(token)
+
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
 def _split_notes_into_lines(notes_text: str, max_width, font="Helvetica", size=10):
     """
     Notes are stored as plain text in DB. We:
@@ -265,6 +315,22 @@ def _render_invoice_builder_pdf(
     pdf.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
 
     vars_map = _builder_template_vars(inv, owner, customer, is_estimate=is_estimate)
+    owner_logo_blob = getattr(owner, "logo_blob", None) if owner else None
+    owner_logo_abs = ""
+    owner_logo_rel = (getattr(owner, "logo_path", None) or "").strip() if owner else ""
+    if owner_logo_rel:
+        owner_logo_abs = str((Path("instance") / owner_logo_rel).resolve())
+    logo_reader = None
+    if owner_logo_blob:
+        try:
+            logo_reader = ImageReader(io.BytesIO(owner_logo_blob))
+        except Exception:
+            logo_reader = None
+    if logo_reader is None and owner_logo_abs and os.path.exists(owner_logo_abs):
+        try:
+            logo_reader = ImageReader(owner_logo_abs)
+        except Exception:
+            logo_reader = None
     elements = design_obj.get("elements") if isinstance(design_obj, dict) else []
     if not isinstance(elements, list):
         elements = []
@@ -647,28 +713,10 @@ def _render_invoice_builder_pdf(
                 effective_h[el_id] = desired
                 changed = True
 
-        # Flow layout: push lower overlapping elements down when upper elements grow.
-        ordered_ids = [
-            str(e.get("id"))
-            for e in sorted(
-                [e for e in elements if isinstance(e, dict) and e.get("id") is not None and str(e.get("id")) not in anchored_targets],
-                key=lambda e: float(effective_y.get(str(e.get("id")), base_y.get(str(e.get("id")), float(e.get("y") or 0.0))))
-            )
-        ]
-        for i, upper_id in enumerate(ordered_ids):
-            upper_y = float(effective_y.get(upper_id, base_y.get(upper_id, 0.0)))
-            upper_h = float(effective_h.get(upper_id, base_h.get(upper_id, 10.0)))
-            upper_bottom = upper_y + upper_h
-            for lower_id in ordered_ids[i + 1:]:
-                if not _x_overlap(upper_id, lower_id):
-                    continue
-                if _is_contained(lower_id, upper_id):
-                    continue
-                lower_y = float(effective_y.get(lower_id, base_y.get(lower_id, 0.0)))
-                needed_y = upper_bottom + 4.0
-                if lower_y < needed_y:
-                    effective_y[lower_id] = needed_y
-                    changed = True
+        # IMPORTANT: Keep custom-template element Y positions faithful to editor state.
+        # The builder UI is drag-and-place; auto-flowing lower elements here causes
+        # rendered output to drift from what the user positioned in the editor.
+        # Dynamic growth/locks still apply, but no implicit cascading reflow.
 
         if not changed:
             break
@@ -699,6 +747,40 @@ def _render_invoice_builder_pdf(
             pdf.setFillColor(colors.HexColor(fill_color if has_fill else "#ffffff"))
             pdf.setStrokeColor(colors.HexColor(border_color if has_stroke else "#111827"))
             pdf.roundRect(rx, ry, rw, rh, max(0.0, radius), stroke=1 if has_stroke else 0, fill=1 if has_fill else 0)
+            continue
+        if etype == "image":
+            has_fill = re.fullmatch(r"#[0-9a-fA-F]{6}", fill_color or "") is not None
+            has_stroke = re.fullmatch(r"#[0-9a-fA-F]{6}", border_color or "") is not None
+            if has_fill:
+                pdf.setFillColor(colors.HexColor(fill_color))
+                pdf.roundRect(rx, ry, rw, rh, max(0.0, radius), stroke=0, fill=1)
+            if has_stroke:
+                pdf.setStrokeColor(colors.HexColor(border_color))
+                pdf.roundRect(rx, ry, rw, rh, max(0.0, radius), stroke=1, fill=0)
+
+            src_raw = str(el.get("src") or el.get("text") or "").strip()
+            is_business_logo = bool(re.search(r"\{\{\s*business_logo\s*\}\}", src_raw, flags=re.I))
+            img_reader = logo_reader if is_business_logo else None
+            if img_reader is None and src_raw:
+                try:
+                    if src_raw.lower().startswith(("http://", "https://")):
+                        img_reader = ImageReader(src_raw)
+                    elif os.path.exists(src_raw):
+                        img_reader = ImageReader(src_raw)
+                except Exception:
+                    img_reader = None
+            if img_reader is not None:
+                pad = 3.0
+                pdf.drawImage(
+                    img_reader,
+                    rx + pad,
+                    ry + pad,
+                    width=max(1.0, rw - (2 * pad)),
+                    height=max(1.0, rh - (2 * pad)),
+                    preserveAspectRatio=True,
+                    anchor="c",
+                    mask="auto",
+                )
             continue
 
         text_raw = str(el.get("text") or "")
@@ -756,7 +838,9 @@ def _render_invoice_builder_pdf(
         else:
             pdf.setStrokeColor(colors.black)
         pdf.setFont(font_name, font_size)
-        line_h = max(8.0, font_size * 1.2)
+        line_spacing = float(el.get("lineSpacing") or 1.2)
+        line_spacing = max(0.8, min(3.0, line_spacing))
+        line_h = max(8.0, font_size * line_spacing)
         left_x = rx + (6 * scale_x)
         right_x = rx + rw - (6 * scale_x)
         center_x = rx + (rw / 2.0)
@@ -783,7 +867,9 @@ def _render_invoice_builder_pdf(
                 rich = new_rich
             rich = re.sub(r"<span[^>]*>", "", rich, flags=re.I)
             rich = re.sub(r"</span>", "", rich, flags=re.I)
-            rich = rich.replace("&nbsp;", " ")
+            # Preserve user-entered spacing in rich text.
+            rich = rich.replace("&nbsp;", "&#160;")
+            rich = re.sub(r" {2,}", lambda m: (" " + ("&#160;" * (len(m.group(0)) - 1))), rich)
             rich = re.sub(r"<font\s+face=['\"]?([^'\">]+)['\"]?>", lambda m: f"<font name='{_inline_font_name_from_face(m.group(1))}'>", rich, flags=re.I)
             rich = re.sub(r"<br\s*>", "<br/>", rich, flags=re.I)
             if underline and "<u>" not in rich.lower():
@@ -806,7 +892,7 @@ def _render_invoice_builder_pdf(
             except Exception:
                 pass
         for ln in str(text_raw).splitlines():
-            for wrapped in _wrap_text(ln, font_name, font_size, max_w):
+            for wrapped in _wrap_text_preserve_spaces(ln, font_name, font_size, max_w):
                 if ty < ry + 2:
                     break
                 if text_align == "right":
@@ -2234,6 +2320,7 @@ def generate_and_store_pdf(
     custom_cfg_override: dict | None = None,
     pdf_template_override: str | None = None,
     builder_cfg_override: dict | None = None,
+    invoice_builder_design_override: dict | None = None,
 ) -> str:
     """
     Generates (or regenerates) a PDF for the given invoice_id.
@@ -2501,18 +2588,26 @@ def generate_and_store_pdf(
 
     # Advanced drag/drop invoice builder output (active template).
     if builder_cfg.get("enabled", False) and owner is not None:
-        active_design = (
-            session.query(InvoiceDesignTemplate)
-            .filter(
-                InvoiceDesignTemplate.user_id == owner.id,
-                InvoiceDesignTemplate.is_active.is_(True),
+        design_obj = None
+        if isinstance(invoice_builder_design_override, dict):
+            design_obj = invoice_builder_design_override
+        else:
+            active_design = (
+                session.query(InvoiceDesignTemplate)
+                .filter(
+                    InvoiceDesignTemplate.user_id == owner.id,
+                    InvoiceDesignTemplate.is_active.is_(True),
+                )
+                .order_by(InvoiceDesignTemplate.updated_at.desc(), InvoiceDesignTemplate.id.desc())
+                .first()
             )
-            .order_by(InvoiceDesignTemplate.updated_at.desc(), InvoiceDesignTemplate.id.desc())
-            .first()
-        )
-        if active_design and (active_design.design_json or "").strip():
+            if active_design and (active_design.design_json or "").strip():
+                try:
+                    design_obj = json.loads(active_design.design_json)
+                except Exception:
+                    design_obj = None
+        if isinstance(design_obj, dict):
             try:
-                design_obj = json.loads(active_design.design_json)
                 return _render_invoice_builder_pdf(
                     session=session,
                     inv=inv,

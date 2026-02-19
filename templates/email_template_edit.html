@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% set title = "Edit Email Template" %}
+
+{% block content %}
+<style>
+  .email-editor-shell { max-width: 1260px; margin: 0 auto; }
+  .email-editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .email-editor-card {
+    border: 1px solid #a8bfe2;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #ffffff 0%, #eaf2ff 100%);
+    padding: 14px;
+    box-shadow: 0 10px 28px rgba(12, 34, 73, 0.12);
+  }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .editor-box {
+    min-height: 420px;
+    border: 1px solid #9fb8de;
+    border-radius: 10px;
+    background: #fff;
+    padding: 12px;
+    overflow: auto;
+  }
+  .token-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .token-btn {
+    border: 1px solid #b7cbe9;
+    border-radius: 999px;
+    background: #f4f8ff;
+    color: #1e4f96;
+    font-size: 0.78rem;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  .placeholder-token {
+    color: #1f5fb5;
+    font-weight: 700;
+    background: #e8f1ff;
+    border: 1px solid #bfd4f5;
+    border-radius: 6px;
+    padding: 0 4px;
+    white-space: nowrap;
+  }
+  .preview-box {
+    min-height: 520px;
+    border: 1px solid #9fb8de;
+    border-radius: 10px;
+    background: #fff;
+    padding: 14px;
+  }
+  @media (max-width: 1100px) { .email-editor-grid { grid-template-columns: 1fr; } }
+</style>
+
+<div class="email-editor-shell">
+  <div class="page-header">
+    <div>
+      <h1 class="h3 fw-bold mb-1">{{ template_name }}</h1>
+      <div class="subtitle">{{ template_description }}</div>
+    </div>
+    <div class="action-group">
+      <a class="btn btn-outline-secondary" href="{{ url_for('email_templates') }}">Back to Email List</a>
+    </div>
+  </div>
+
+  <form method="post">
+    <div class="email-editor-grid">
+      <section class="email-editor-card">
+        <div class="mb-2">
+          <label class="form-label compact-label">Subject</label>
+          <input id="subjectInput" class="form-control" name="subject" value="{{ subject_value }}">
+        </div>
+
+        <div class="toolbar">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="undo">Undo</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="redo">Redo</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="bold"><strong>B</strong></button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="italic"><em>I</em></button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="underline"><span style="text-decoration:underline;">U</span></button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="insertUnorderedList">List</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="justifyLeft">Left</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="justifyCenter">Center</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-cmd="justifyRight">Right</button>
+        </div>
+
+        <div id="htmlEditor" class="editor-box" contenteditable="true"></div>
+        <textarea id="htmlBodyInput" name="html_body" class="d-none"></textarea>
+
+        <div class="small-muted mt-2 mb-1">Insert placeholders:</div>
+        <div class="token-list mb-3">
+          {% for token in token_keys %}
+            <button type="button" class="token-btn" data-token="{{ token }}">{{ token_labels.get(token, token.replace('_', ' ').title()) }}</button>
+          {% endfor %}
+        </div>
+
+        <div class="d-flex gap-2">
+          <button type="submit" name="action" value="save" class="btn btn-primary">Save Template</button>
+          <button type="submit" name="action" value="test" class="btn btn-outline-primary">Send Test Email</button>
+          <button type="submit" name="action" value="reset" class="btn btn-outline-danger" onclick="return confirm('Reset this email template to default?');">Reset to Default</button>
+        </div>
+      </section>
+
+      <section class="email-editor-card">
+        <div class="small-muted mb-2"><strong>Live Preview</strong> (sample data)</div>
+        <div class="small mb-2"><strong>Subject:</strong> <span id="previewSubject">{{ preview_subject }}</span></div>
+        <div id="previewBody" class="preview-box">{{ preview_html|safe }}</div>
+      </section>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const subjectInput = document.getElementById("subjectInput");
+  const htmlEditor = document.getElementById("htmlEditor");
+  const htmlBodyInput = document.getElementById("htmlBodyInput");
+  const previewSubject = document.getElementById("previewSubject");
+  const previewBody = document.getElementById("previewBody");
+  const tokenLabels = {{ (token_labels or {})|tojson }};
+
+  const sample = {
+    customer_name: "Sample Customer",
+    business_name: "Sample Business",
+    document_number: "2026-0001",
+    invoice_amount: "129.60",
+    estimate_amount: "129.60",
+    amount_due: "129.60",
+    due_date: "March 21, 2026",
+    card_fee_line: "Paying by card online adds an additional $4.06 (card total: $133.66).",
+    portal_validity_line: "This secure link is valid for 90 days from the time this email was sent.",
+    timing_line: "This is a friendly reminder to complete payment for your invoice.",
+    late_fee_policy_line: "After March 21, 2026, a late fee of 5% of the invoice amount will be charged every 30 day(s).",
+    late_fee_line: "Late fees accrued so far: $6.48. Current amount due including late fees: $136.08.",
+    action_label: "Open Document",
+    action_url: "#",
+    action_button: '<a href="#" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;">Open Document</a>'
+  };
+
+  function renderTokens(raw) {
+    return String(raw || "").replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => (sample[key] ?? ""));
+  }
+
+  function tokenLabel(key) {
+    const k = String(key || "");
+    return tokenLabels[k] || k.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+  }
+
+  function tokenizedToDisplayHtml(rawHtml) {
+    return String(rawHtml || "").replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => {
+      const safeLabel = tokenLabel(key).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return `<span class="placeholder-token" contenteditable="false" data-token="${key}">${safeLabel}</span> `;
+    });
+  }
+
+  function displayHtmlToTokenized(rawHtml) {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = String(rawHtml || "");
+    wrap.querySelectorAll("[data-token]").forEach((node) => {
+      const key = (node.getAttribute("data-token") || "").trim();
+      const repl = document.createTextNode("\u007b\u007b" + key + "\u007d\u007d");
+      node.replaceWith(repl);
+    });
+    return wrap.innerHTML;
+  }
+
+  function insertTokenChip(editor, token, label) {
+    const span = document.createElement("span");
+    span.className = "placeholder-token";
+    span.setAttribute("contenteditable", "false");
+    span.setAttribute("data-token", token);
+    span.textContent = label;
+    const tailSpace = document.createTextNode(" ");
+
+    editor.focus();
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) {
+      editor.appendChild(span);
+      editor.appendChild(tailSpace);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) {
+      editor.appendChild(span);
+      editor.appendChild(tailSpace);
+      return;
+    }
+    range.deleteContents();
+    const frag = document.createDocumentFragment();
+    frag.appendChild(span);
+    frag.appendChild(tailSpace);
+    range.insertNode(frag);
+
+    // Move caret after token chip so following typing is normal text.
+    const after = document.createRange();
+    after.setStart(tailSpace, tailSpace.textContent.length);
+    after.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(after);
+  }
+
+  function setCaretFromPoint(editor, clientX, clientY) {
+    let range = null;
+    if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(clientX, clientY);
+      if (pos && pos.offsetNode) {
+        range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+      }
+    } else if (document.caretRangeFromPoint) {
+      range = document.caretRangeFromPoint(clientX, clientY);
+    }
+    if (!range) return;
+    if (!editor.contains(range.startContainer)) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function sync() {
+    const tokenized = displayHtmlToTokenized(htmlEditor.innerHTML || "");
+    htmlBodyInput.value = tokenized;
+    previewSubject.textContent = renderTokens(subjectInput.value || "");
+    previewBody.innerHTML = renderTokens(tokenized || "");
+  }
+
+  htmlEditor.innerHTML = tokenizedToDisplayHtml({{ html_body_value|tojson }});
+  sync();
+
+  document.querySelectorAll("[data-cmd]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const cmd = btn.getAttribute("data-cmd");
+      htmlEditor.focus();
+      document.execCommand(cmd, false, null);
+      sync();
+    });
+  });
+
+  document.querySelectorAll(".token-btn[data-token]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const token = (btn.getAttribute("data-token") || "").trim();
+      const label = tokenLabel(token);
+      insertTokenChip(htmlEditor, token, label);
+      sync();
+    });
+  });
+
+  htmlEditor.addEventListener("input", sync);
+  htmlEditor.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    const tokenNode = e.target.closest?.(".placeholder-token");
+    if (tokenNode && htmlEditor.contains(tokenNode)) {
+      e.preventDefault();
+      htmlEditor.focus();
+      const sel = window.getSelection();
+      const r = document.createRange();
+      let next = tokenNode.nextSibling;
+      if (!next || next.nodeType !== Node.TEXT_NODE) {
+        next = document.createTextNode(" ");
+        tokenNode.parentNode.insertBefore(next, tokenNode.nextSibling);
+      }
+      r.setStart(next, Math.min(1, (next.textContent || "").length));
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      return;
+    }
+    // Let native focus happen, then correct caret to exact click point.
+    setTimeout(() => {
+      htmlEditor.focus();
+      setCaretFromPoint(htmlEditor, e.clientX, e.clientY);
+    }, 0);
+  });
+  subjectInput.addEventListener("input", sync);
+})();
+</script>
+{% endblock %}

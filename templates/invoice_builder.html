@@ -4,7 +4,23 @@
 {% block content %}
 <style>
   .builder-shell { max-width: 1820px; margin: 0 auto; }
-  .builder-layout { display: grid; grid-template-columns: 175px 1fr 210px; gap: 10px; }
+  .builder-layout { display: grid; grid-template-columns: 175px 1fr; gap: 10px; }
+  .builder-v3-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid #b6cae8;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
+    box-shadow: 0 6px 16px rgba(12, 34, 73, 0.10);
+    margin-bottom: 10px;
+  }
+  .toolbar-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .toolbar-label { font-size: 0.76rem; color: #395a88; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
+  .toolbar-sep { width: 1px; height: 24px; background: #c8d7ed; margin: 0 2px; }
   .builder-panel {
     border: 1px solid #b6cae8;
     border-radius: 14px;
@@ -13,6 +29,16 @@
     padding: 8px;
   }
   .builder-panel h5 { margin: 0 0 6px; color: #123a71; font-weight: 800; font-size: 1rem; }
+  .builder-workspace {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  .builder-panel-right {
+    max-height: 330px;
+    overflow: auto;
+  }
   .builder-canvas-wrap {
     border: 1px solid #a7bfdf;
     border-radius: 14px;
@@ -20,14 +46,38 @@
     background: linear-gradient(180deg, #d8e4f7 0%, #cad8ee 100%);
     overflow: auto;
   }
-  .builder-canvas {
+  .builder-canvas-stage {
     position: relative;
     width: 816px;
     height: 1056px;
     margin: 0 auto;
+    transform-origin: top left;
+  }
+  .builder-live-preview {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: calc(100% + 64px);
+    height: calc(100% + 96px);
+    border: 0;
+    background: #fff;
+    z-index: 0;
+    pointer-events: none;
+    display: block;
+    transform-origin: top left;
+    transform: translate(var(--preview-offset-x, 0px), var(--preview-offset-y, 0px)) scale(var(--preview-scale, 1));
+  }
+  .builder-canvas {
+    position: relative;
+    width: 816px;
+    height: 1056px;
+    margin: 0;
     background: #fff;
     border: 1px solid #a9bedd;
     box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+    transform-origin: top left;
+    z-index: 1;
+    box-sizing: border-box;
   }
   .canvas-guide {
     position: absolute;
@@ -35,6 +85,49 @@
     border: 1px dashed rgba(30, 99, 198, 0.22);
     pointer-events: none;
   }
+  .builder-canvas.grid-on::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(30,99,198,0.10) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(30,99,198,0.10) 1px, transparent 1px);
+    background-size: 12px 12px;
+  }
+  .builder-canvas.exact-mode .node {
+    color: transparent !important;
+    text-decoration: none !important;
+    background: transparent !important;
+    border-color: transparent !important;
+  }
+  .builder-canvas.exact-mode .node:not(.box) {
+    pointer-events: none;
+  }
+  .builder-canvas.exact-mode .node.selected:not(.box) {
+    pointer-events: auto;
+  }
+  .builder-canvas.exact-mode .node.box {
+    pointer-events: auto;
+  }
+  .builder-canvas.exact-mode {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+  .builder-canvas.exact-mode .canvas-guide {
+    border-color: transparent !important;
+  }
+  .builder-canvas.exact-mode .node.selected {
+    border-color: #1e63c6 !important;
+    background: transparent !important;
+  }
+  .builder-canvas.exact-mode .node img,
+  .builder-canvas.exact-mode .node .image-placeholder {
+    opacity: 0;
+  }
+  .builder-canvas.exact-mode .node .resize { display: none; }
+  .builder-canvas.exact-mode .node.selected .resize { display: block; }
   .node {
     position: absolute;
     cursor: move;
@@ -45,6 +138,26 @@
   }
   .node.selected { border-color: #1e63c6; background: rgba(30, 99, 198, 0.06); }
   .node.box { background: #fff; }
+  .node.image { background: #fff; border-style: solid; }
+  .node.image img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    pointer-events: none;
+  }
+  .node.image .image-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #3f5f8f;
+    font-size: 0.72rem;
+    text-align: center;
+    padding: 6px;
+    pointer-events: none;
+  }
   .node .resize {
     position: absolute;
     width: 10px;
@@ -86,6 +199,15 @@
     color: #1f4f94;
     cursor: pointer;
   }
+  .builder-token-pill {
+    color: #1f5fb5;
+    font-weight: 700;
+    background: #e8f1ff;
+    border: 1px solid #bfd4f5;
+    border-radius: 6px;
+    padding: 0 4px;
+    white-space: nowrap;
+  }
   .token-btn:hover { background: #e7f0ff; }
   .template-list { max-height: 240px; overflow: auto; }
   .template-row {
@@ -96,6 +218,9 @@
     margin-bottom: 6px;
   }
   .template-row.active { border-color: #1f58ab; box-shadow: 0 0 0 2px rgba(31, 88, 171, 0.15); }
+  .builder-shell.left-collapsed .builder-layout { grid-template-columns: 1fr; }
+  .builder-shell.right-collapsed .builder-panel-right { display: none; }
+  .builder-shell.left-collapsed .builder-panel-left { display: none; }
   @media (max-width: 1300px) { .builder-layout { grid-template-columns: 1fr; } }
 </style>
 
@@ -107,13 +232,62 @@
     </div>
     <div class="action-group">
       <a class="btn btn-outline-secondary" href="{{ url_for('settings') }}">Back to Settings</a>
+      <button id="undoBtnTop" class="btn btn-outline-secondary" type="button">Undo</button>
+      <button id="redoBtnTop" class="btn btn-outline-secondary" type="button">Redo</button>
       <button id="saveActiveBtn" class="btn btn-primary" type="button">Save Active Template</button>
       <span id="saveStatus" class="badge text-bg-light border align-self-center"></span>
     </div>
   </div>
 
+  <div class="builder-v3-toolbar">
+    <div class="toolbar-group">
+      <span class="toolbar-label">Edit</span>
+      <button id="undoBtn" type="button" class="btn btn-outline-secondary btn-sm">Undo</button>
+      <button id="redoBtn" type="button" class="btn btn-outline-secondary btn-sm">Redo</button>
+      <button id="duplicateSelectedBtn" type="button" class="btn btn-outline-secondary btn-sm">Duplicate</button>
+      <button id="deleteSelectedBtn" type="button" class="btn btn-outline-danger btn-sm">Delete</button>
+      <span class="toolbar-sep"></span>
+      <button id="alignLeftBtn" type="button" class="btn btn-outline-primary btn-sm">Align L</button>
+      <button id="alignCenterBtn" type="button" class="btn btn-outline-primary btn-sm">Align C</button>
+      <button id="alignRightBtn" type="button" class="btn btn-outline-primary btn-sm">Align R</button>
+      <button id="alignTopBtn" type="button" class="btn btn-outline-primary btn-sm">Top</button>
+      <button id="alignMiddleBtn" type="button" class="btn btn-outline-primary btn-sm">Middle</button>
+      <button id="alignBottomBtn" type="button" class="btn btn-outline-primary btn-sm">Bottom</button>
+    </div>
+    <div class="toolbar-group">
+      <span class="toolbar-label">View</span>
+      <button id="fitWidthBtn" type="button" class="btn btn-outline-secondary btn-sm">Fit Width</button>
+      <button id="fitPageBtn" type="button" class="btn btn-outline-secondary btn-sm">Fit Page</button>
+      <button id="zoom100Btn" type="button" class="btn btn-outline-secondary btn-sm">100%</button>
+      <input id="zoomRange" type="range" class="form-range" min="50" max="175" step="5" value="100" style="width:120px;">
+      <span id="zoomLabel" class="small text-muted" style="min-width:42px;">100%</span>
+      <span class="toolbar-sep"></span>
+      <div class="form-check form-switch m-0">
+        <input class="form-check-input" type="checkbox" id="snapToggle" checked>
+        <label class="form-check-label small" for="snapToggle">Snap</label>
+      </div>
+      <div class="form-check form-switch m-0">
+        <input class="form-check-input" type="checkbox" id="gridToggle">
+        <label class="form-check-label small" for="gridToggle">Grid</label>
+      </div>
+      <div class="form-check form-switch m-0">
+        <input class="form-check-input" type="checkbox" id="exactPreviewToggle" checked>
+        <label class="form-check-label small" for="exactPreviewToggle">Exact PDF</label>
+      </div>
+      <label class="small text-muted m-0" for="previewOffsetX">X</label>
+      <input id="previewOffsetX" type="number" class="form-control form-control-sm" style="width:64px;" value="0" step="1">
+      <label class="small text-muted m-0" for="previewOffsetY">Y</label>
+      <input id="previewOffsetY" type="number" class="form-control form-control-sm" style="width:64px;" value="0" step="1">
+      <label class="small text-muted m-0" for="previewScale">Scale</label>
+      <input id="previewScale" type="number" class="form-control form-control-sm" style="width:78px;" value="1.000" step="0.005" min="0.900" max="1.100">
+      <button id="autoAlignPreviewBtn" type="button" class="btn btn-outline-secondary btn-sm">Auto Align</button>
+      <button id="toggleLeftPanelBtn" type="button" class="btn btn-outline-secondary btn-sm">Tools</button>
+      <button id="toggleRightPanelBtn" type="button" class="btn btn-outline-secondary btn-sm">Properties</button>
+    </div>
+  </div>
+
   <div class="builder-layout">
-    <section class="builder-panel">
+    <section class="builder-panel builder-panel-left">
       <h5>Easy Builder</h5>
       <div class="helper-callout">
         1) Pick a quick-start layout<br>
@@ -128,6 +302,7 @@
       <button class="btn btn-outline-primary tool-btn" data-quick="service">Use Service Starter</button>
       <div class="tool-group-title">Add Sections</div>
       <button class="btn btn-outline-primary tool-btn" data-add="header">+ Header (Title + Date + Number)</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="logo">+ Business Logo</button>
       <button class="btn btn-outline-primary tool-btn" data-add="business">+ Business Details Section</button>
       <button class="btn btn-outline-primary tool-btn" data-add="bill">+ Bill To Section</button>
       <button class="btn btn-outline-primary tool-btn" data-add="job">+ Job Details Section</button>
@@ -145,31 +320,37 @@
         <label class="form-check-label" for="showSampleData">Show sample data in builder preview</label>
       </div>
       <div class="small text-muted mt-2">Tip: click a section, then edit text on the right. Drag to move. Pull corner to resize.</div>
+      <div class="small text-muted">Exact mode tip: click selects outer box by default; use <strong>Alt+Click</strong> to select inner text.</div>
     </section>
 
-    <section class="builder-canvas-wrap">
-      <div id="canvas" class="builder-canvas">
-        <div class="canvas-guide"></div>
-      </div>
-    </section>
+    <section class="builder-workspace">
+      <section class="builder-panel builder-panel-right">
+        <h5>Properties</h5>
+        <div class="mb-2">
+          <label class="form-label compact-label">Template Name</label>
+          <input id="templateName" class="form-control" type="text" placeholder="My Custom Layout">
+        </div>
+        <div class="d-grid gap-2 mb-3">
+          <button id="saveAsNewBtn" class="btn btn-outline-primary" type="button">Save As New Template</button>
+          <button id="setActiveBtn" class="btn btn-outline-success" type="button">Set Selected Active</button>
+        </div>
+        <hr>
+        <div id="propEditor">
+          <div class="small text-muted">Select an element to edit.</div>
+        </div>
+        <hr>
+        <h5>Templates</h5>
+        <div id="templateList" class="template-list"></div>
+      </section>
 
-    <section class="builder-panel">
-      <h5>Properties</h5>
-      <div class="mb-2">
-        <label class="form-label compact-label">Template Name</label>
-        <input id="templateName" class="form-control" type="text" placeholder="My Custom Layout">
-      </div>
-      <div class="d-grid gap-2 mb-3">
-        <button id="saveAsNewBtn" class="btn btn-outline-primary" type="button">Save As New Template</button>
-        <button id="setActiveBtn" class="btn btn-outline-success" type="button">Set Selected Active</button>
-      </div>
-      <hr>
-      <div id="propEditor">
-        <div class="small text-muted">Select an element to edit.</div>
-      </div>
-      <hr>
-      <h5>Templates</h5>
-      <div id="templateList" class="template-list"></div>
+      <section id="canvasWrap" class="builder-canvas-wrap">
+        <div id="canvasStage" class="builder-canvas-stage">
+          <iframe id="livePreviewFrame" class="builder-live-preview" title="Exact PDF Preview"></iframe>
+          <div id="canvas" class="builder-canvas">
+            <div class="canvas-guide"></div>
+          </div>
+        </div>
+      </section>
     </section>
   </div>
 </div>
@@ -181,9 +362,14 @@
   const saveUrl = "{{ url_for('api_invoice_builder_save') }}";
   const activateBase = "/api/invoice-builder/template/";
   const templates = {{ templates_payload|tojson }};
+  const logoPreviewUrl = {{ (logo_preview_url or '')|tojson }};
+  const livePreviewUrl = {{ (live_preview_url or '')|tojson }};
+  const ownerHasLogo = {{ (owner_has_logo or False)|tojson }};
   let currentTemplateId = {{ active_template_id|tojson }};
 
   const canvas = document.getElementById("canvas");
+  const canvasStage = document.getElementById("canvasStage");
+  const canvasWrap = document.getElementById("canvasWrap");
   const canvasBg = document.getElementById("canvasBg");
   const templateName = document.getElementById("templateName");
   const templateList = document.getElementById("templateList");
@@ -193,17 +379,88 @@
   const setActiveBtn = document.getElementById("setActiveBtn");
   const saveStatus = document.getElementById("saveStatus");
   const showSampleData = document.getElementById("showSampleData");
+  const zoomRange = document.getElementById("zoomRange");
+  const zoomLabel = document.getElementById("zoomLabel");
+  const snapToggle = document.getElementById("snapToggle");
+  const gridToggle = document.getElementById("gridToggle");
+  const exactPreviewToggle = document.getElementById("exactPreviewToggle");
+  const previewOffsetXInput = document.getElementById("previewOffsetX");
+  const previewOffsetYInput = document.getElementById("previewOffsetY");
+  const previewScaleInput = document.getElementById("previewScale");
+  const autoAlignPreviewBtn = document.getElementById("autoAlignPreviewBtn");
+  const livePreviewFrame = document.getElementById("livePreviewFrame");
+  const undoBtn = document.getElementById("undoBtn");
+  const redoBtn = document.getElementById("redoBtn");
+  const undoBtnTop = document.getElementById("undoBtnTop");
+  const redoBtnTop = document.getElementById("redoBtnTop");
+  const duplicateSelectedBtn = document.getElementById("duplicateSelectedBtn");
+  const deleteSelectedBtn = document.getElementById("deleteSelectedBtn");
+  const alignLeftBtn = document.getElementById("alignLeftBtn");
+  const alignCenterBtn = document.getElementById("alignCenterBtn");
+  const alignRightBtn = document.getElementById("alignRightBtn");
+  const alignTopBtn = document.getElementById("alignTopBtn");
+  const alignMiddleBtn = document.getElementById("alignMiddleBtn");
+  const alignBottomBtn = document.getElementById("alignBottomBtn");
+  const fitWidthBtn = document.getElementById("fitWidthBtn");
+  const fitPageBtn = document.getElementById("fitPageBtn");
+  const zoom100Btn = document.getElementById("zoom100Btn");
+  const toggleLeftPanelBtn = document.getElementById("toggleLeftPanelBtn");
+  const toggleRightPanelBtn = document.getElementById("toggleRightPanelBtn");
+  const builderShell = document.querySelector(".builder-shell");
 
   let state = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
   let selectedId = null;
   let drag = null;
+  let zoomPct = 100;
   const SNAP = 4;
+  let snapEnabled = true;
+  let showGridEnabled = false;
+  let history = [];
+  let historyIndex = -1;
+  let restoringHistory = false;
+  let exactPreviewEnabled = true;
+  let previewTimer = null;
+  let previewObjectUrl = "";
+  let previewInFlight = false;
+  let previewQueued = false;
+  let previewReqSeq = 0;
+  let previewAppliedSeq = 0;
+  let previewOffsetX = 0;
+  let previewOffsetY = 0;
+  let previewScale = 1;
   const TOKENS = [
-    "doc_label","invoice_number","date","due_date","business_name","business_phone","business_address",
+    "doc_label","invoice_number","date","due_date","business_name","business_phone","business_address","business_logo",
     "customer_name","customer_email","customer_phone","job","rate","hours",
     "labor_lines","parts_lines","notes_text","labor_table","parts_table",
     "parts_total","labor_total","tax","total","paid","amount_due"
   ];
+  const TOKEN_LABELS = {
+    doc_label: "Document Label",
+    invoice_number: "Document Number",
+    date: "Date",
+    due_date: "Due Date",
+    business_name: "Business Name",
+    business_phone: "Business Phone",
+    business_address: "Business Address",
+    business_logo: "Business Logo",
+    customer_name: "Customer Name",
+    customer_email: "Customer Email",
+    customer_phone: "Customer Phone",
+    job: "Job",
+    rate: "Rate",
+    hours: "Hours",
+    labor_lines: "Labor Lines",
+    parts_lines: "Parts Lines",
+    notes_text: "Notes Text",
+    labor_table: "Labor Table",
+    parts_table: "Parts Table",
+    parts_total: "Parts Total",
+    labor_total: "Labor Total",
+    tax: "Tax",
+    total: "Total",
+    paid: "Paid",
+    amount_due: "Amount Due",
+  };
   const tok = (name) => "{" + "{" + name + "}" + "}";
   function setStatus(msg, kind = "info") {
     if (!saveStatus) return;
@@ -217,32 +474,234 @@
       saveStatus.classList.add("text-bg-light");
     }
   }
-  const SAMPLE_VALUES = {
-    doc_label: "INVOICE",
-    invoice_number: "2026-0001",
-    date: "February 18, 2026",
-    due_date: "March 20, 2026",
-    business_name: "Summit Auto Repair",
-    business_phone: "(406) 555-0147",
-    business_address: "123 Work St\nSomewhere, MT 59840",
-    customer_name: "John Sample",
-    customer_email: "john.sample@email.com",
-    customer_phone: "(406) 555-1234",
-    job: "2018 Ford F-150",
-    rate: "$100.00",
-    hours: "2.5",
-    labor_lines: "Oil change service - 1.0 hr - $100.00\nBrake inspection - 1.5 hr - $150.00",
-    parts_lines: "Oil Filter - $18.99\nEngine Oil - $37.95\nAir Filter - $27.99",
-    notes_text: "Thank you for your business.\nRecommended: tire rotation in 5,000 miles.",
-    labor_table: "Service Description            Time        Line Total\nSample labor item             1.5 hrs     $150.00",
-    parts_table: "Part / Material                Price\nSample part                   $18.99",
-    parts_total: "$182.00",
-    labor_total: "$250.00",
-    tax: "$34.56",
-    total: "$466.56",
-    paid: "$100.00",
-    amount_due: "$366.56",
-  };
+
+  function cloneState() {
+    return JSON.parse(JSON.stringify(state || { canvas: { width: 816, height: 1056, bg: "#fff" }, elements: [] }));
+  }
+
+  function pushHistory(label = "") {
+    if (restoringHistory) return;
+    const snap = cloneState();
+    const prev = history[historyIndex];
+    if (prev && JSON.stringify(prev) === JSON.stringify(snap)) return;
+    history = history.slice(0, historyIndex + 1);
+    history.push(snap);
+    historyIndex = history.length - 1;
+    if (history.length > 80) {
+      history.shift();
+      historyIndex = history.length - 1;
+    }
+    if (label) setStatus(label, "info");
+  }
+
+  function applyHistory(index) {
+    if (index < 0 || index >= history.length) return;
+    restoringHistory = true;
+    state = normalizeDesign(history[index]);
+    historyIndex = index;
+    selectedId = null;
+    restoringHistory = false;
+    renderCanvas();
+  }
+
+  function undo() {
+    if (historyIndex <= 0) return;
+    applyHistory(historyIndex - 1);
+    setStatus("Undo", "info");
+  }
+
+  function redo() {
+    if (historyIndex >= history.length - 1) return;
+    applyHistory(historyIndex + 1);
+    setStatus("Redo", "info");
+  }
+
+  function updateZoom() {
+    zoomPct = Math.max(50, Math.min(175, Number(zoomPct || 100)));
+    const z = zoomPct / 100;
+    if (canvas) canvas.style.transform = `scale(${z})`;
+    const w = Number(state?.canvas?.width || 816);
+    const h = Number(state?.canvas?.height || 1056);
+    if (canvasStage) {
+      canvasStage.style.width = `${Math.round(w * z)}px`;
+      canvasStage.style.height = `${Math.round(h * z)}px`;
+    }
+    if (zoomRange) zoomRange.value = String(zoomPct);
+    if (zoomLabel) zoomLabel.textContent = `${zoomPct}%`;
+  }
+
+  function applyPreviewOffset() {
+    if (!canvasStage) return;
+    canvasStage.style.setProperty("--preview-offset-x", `${Math.round(previewOffsetX)}px`);
+    canvasStage.style.setProperty("--preview-offset-y", `${Math.round(previewOffsetY)}px`);
+    const clampedScale = Math.max(0.9, Math.min(1.1, Number(previewScale || 1)));
+    previewScale = clampedScale;
+    canvasStage.style.setProperty("--preview-scale", `${clampedScale}`);
+    if (previewOffsetXInput) previewOffsetXInput.value = String(Math.round(previewOffsetX));
+    if (previewOffsetYInput) previewOffsetYInput.value = String(Math.round(previewOffsetY));
+    if (previewScaleInput) previewScaleInput.value = clampedScale.toFixed(3);
+    try {
+      localStorage.setItem("invoice_builder_preview_offset_x", String(Math.round(previewOffsetX)));
+      localStorage.setItem("invoice_builder_preview_offset_y", String(Math.round(previewOffsetY)));
+      localStorage.setItem("invoice_builder_preview_scale", clampedScale.toFixed(3));
+    } catch (_e) {}
+  }
+
+  function loadPreviewOffsetDefaults() {
+    let x = 0;
+    let y = 0;
+    let s = 1;
+    try {
+      const sx = localStorage.getItem("invoice_builder_preview_offset_x");
+      const sy = localStorage.getItem("invoice_builder_preview_offset_y");
+      const ss = localStorage.getItem("invoice_builder_preview_scale");
+      if (sx !== null && sx !== "") x = Number(sx) || 0;
+      if (sy !== null && sy !== "") y = Number(sy) || 0;
+      if (ss !== null && ss !== "") s = Number(ss) || 1;
+    } catch (_e) {}
+    if (x === 0 && y === 0) {
+      const ua = navigator.userAgent || "";
+      const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|Edg|CriOS/i.test(ua);
+      if (isSafari) {
+        x = -56;
+        y = -36;
+        s = 1.018;
+      }
+    }
+    previewOffsetX = x;
+    previewOffsetY = y;
+    previewScale = s;
+    applyPreviewOffset();
+  }
+
+  function autoAlignPreview() {
+    const ua = navigator.userAgent || "";
+    const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|Edg|CriOS/i.test(ua);
+    const isFirefox = /Firefox/i.test(ua);
+    if (isSafari) {
+      previewOffsetX = -56;
+      previewOffsetY = -36;
+      previewScale = 1.018;
+    } else if (isFirefox) {
+      previewOffsetX = -8;
+      previewOffsetY = -8;
+      previewScale = 1.002;
+    } else {
+      previewOffsetX = 0;
+      previewOffsetY = 0;
+      previewScale = 1;
+    }
+    applyPreviewOffset();
+    setStatus("Auto alignment applied.", "ok");
+    refreshExactPreviewNow();
+  }
+
+  async function refreshExactPreviewNow() {
+    if (!exactPreviewEnabled || !livePreviewUrl || !livePreviewFrame) return;
+    if (previewInFlight) {
+      previewQueued = true;
+      return;
+    }
+    previewInFlight = true;
+    const reqSeq = ++previewReqSeq;
+    try {
+      const res = await fetch(livePreviewUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ design: state }),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+      previewObjectUrl = URL.createObjectURL(blob);
+      if (reqSeq >= previewAppliedSeq) {
+        previewAppliedSeq = reqSeq;
+        livePreviewFrame.src = `${previewObjectUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=page-width`;
+      }
+    } catch (_e) {
+      // best effort only
+    } finally {
+      previewInFlight = false;
+      if (previewQueued) {
+        previewQueued = false;
+        refreshExactPreviewNow();
+      }
+    }
+  }
+
+  function scheduleExactPreview() {
+    if (!exactPreviewEnabled || !livePreviewUrl) return;
+    if (previewTimer) clearTimeout(previewTimer);
+    const delayMs = drag ? 60 : 220;
+    previewTimer = setTimeout(() => {
+      previewTimer = null;
+      refreshExactPreviewNow();
+    }, delayMs);
+  }
+
+  function fitWidth() {
+    if (!canvasWrap) return;
+    const targetW = Math.max(180, canvasWrap.clientWidth - 24);
+    const baseW = Number(state?.canvas?.width || 816);
+    zoomPct = Math.max(50, Math.min(175, Math.round((targetW / baseW) * 100)));
+    updateZoom();
+  }
+
+  function fitPage() {
+    if (!canvasWrap) return;
+    const targetW = Math.max(180, canvasWrap.clientWidth - 24);
+    const targetH = Math.max(240, canvasWrap.clientHeight - 24);
+    const baseW = Number(state?.canvas?.width || 816);
+    const baseH = Number(state?.canvas?.height || 1056);
+    const z = Math.min(targetW / baseW, targetH / baseH);
+    zoomPct = Math.max(50, Math.min(175, Math.round(z * 100)));
+    updateZoom();
+  }
+
+  function isTypingContext() {
+    const a = document.activeElement;
+    if (!a) return false;
+    if (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT") return true;
+    return !!a.closest?.("[contenteditable='true']");
+  }
+
+  function deleteSelected() {
+    const el = nodeById(selectedId);
+    if (!el) return;
+    state.elements = state.elements.filter(x => String(x.id) !== String(el.id));
+    selectedId = null;
+    pushHistory("Element deleted");
+    renderCanvas();
+  }
+
+  function duplicateSelected() {
+    const el = nodeById(selectedId);
+    if (!el) return;
+    const copy = JSON.parse(JSON.stringify(el));
+    copy.id = `el_${Date.now()}`;
+    copy.x = (copy.x || 0) + 16;
+    copy.y = (copy.y || 0) + 16;
+    state.elements.push(copy);
+    selectedId = copy.id;
+    pushHistory("Element duplicated");
+    renderCanvas();
+  }
+
+  function alignSelected(mode) {
+    const el = nodeById(selectedId);
+    if (!el) return;
+    const cw = Number(state?.canvas?.width || 816);
+    const ch = Number(state?.canvas?.height || 1056);
+    if (mode === "left") el.x = 0;
+    if (mode === "center") el.x = Math.round((cw - Number(el.w || 0)) / 2);
+    if (mode === "right") el.x = Math.max(0, cw - Number(el.w || 0));
+    if (mode === "top") el.y = 0;
+    if (mode === "middle") el.y = Math.round((ch - Number(el.h || 0)) / 2);
+    if (mode === "bottom") el.y = Math.max(0, ch - Number(el.h || 0));
+    pushHistory("Aligned");
+    renderCanvas();
+  }
+  const SAMPLE_VALUES = {{ (builder_sample_values or {})|tojson }};
 
   function activeTemplate() {
     return templates.find(t => Number(t.id) === Number(currentTemplateId)) || templates[0];
@@ -299,10 +758,55 @@
     return (tmp.textContent || tmp.innerText || "").replace(/\r/g, "");
   }
 
+  function tokenLabel(key) {
+    const k = String(key || "");
+    return TOKEN_LABELS[k] || k.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+  }
+
+  function tokenizedToDisplayHtml(rawHtml) {
+    return String(rawHtml || "").replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => {
+      const label = tokenLabel(key).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return `<span class="builder-token-pill" contenteditable="false" data-token="${key}">${label}</span>`;
+    });
+  }
+
+  function displayHtmlToTokenized(rawHtml) {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = String(rawHtml || "");
+    wrap.querySelectorAll("span.builder-token-pill[data-token]").forEach((node) => {
+      const key = (node.getAttribute("data-token") || "").trim();
+      const repl = document.createTextNode("\u007b\u007b" + key + "\u007d\u007d");
+      node.replaceWith(repl);
+    });
+    return wrap.innerHTML;
+  }
+
+  function stripInlineFontSizeStyles(html) {
+    let out = String(html || "");
+    // Remove font-size from inline style attrs but keep other style rules.
+    out = out.replace(/style=(['"])(.*?)\1/gi, (_m, q, styleBody) => {
+      const cleaned = String(styleBody || "")
+        .replace(/(?:^|;)\s*font-size\s*:\s*[^;]+/gi, "")
+        .replace(/^\s*;\s*|\s*;\s*$/g, "")
+        .trim();
+      return cleaned ? `style=${q}${cleaned}${q}` : "";
+    });
+    // Legacy <font size="..."> tags can also override element-level font size.
+    out = out.replace(/\s+size=(['"]).*?\1/gi, "");
+    return out;
+  }
+
   function renderedNodeHtml(el) {
     const rawHtml = String(el.richText || plainTextToHtml(el.text || ""));
     if (!(showSampleData && showSampleData.checked)) return rawHtml;
     return rawHtml.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key));
+  }
+
+  function resolveImageSrc(el) {
+    const raw = String(el?.src || el?.text || "").trim();
+    if (!raw) return "";
+    if (/\{\{\s*business_logo\s*\}\}/i.test(raw)) return logoPreviewUrl || "";
+    return raw;
   }
 
   function updateSelectedNodeText() {
@@ -314,6 +818,7 @@
     const resize = node.querySelector(".resize");
     node.innerHTML = renderedNodeHtml(el);
     if (resize) node.appendChild(resize);
+    scheduleExactPreview();
   }
 
   function insertTokenAtCaret(editor, token) {
@@ -403,12 +908,15 @@
 
   function renderCanvas(pass = 0) {
     canvas.style.background = state.canvas.bg || "#fff";
+    canvas.classList.toggle("grid-on", !!showGridEnabled);
+    canvas.classList.toggle("exact-mode", !!exactPreviewEnabled);
     canvas.innerHTML = '<div class="canvas-guide"></div>';
 
     state.elements.forEach(el => {
       const node = document.createElement("div");
       node.className = "node " + (el.type === "box" ? "box " : "") + (String(el.id) === String(selectedId) ? "selected" : "");
       node.dataset.id = String(el.id);
+      node.dataset.type = String(el.type || "text").toLowerCase();
       node.style.left = `${el.x || 0}px`;
       node.style.top = `${el.y || 0}px`;
       node.style.width = `${Math.max(30, el.w || 80)}px`;
@@ -424,10 +932,21 @@
       node.style.fontStyle = (String(el.fontStyle || "normal").toLowerCase() === "italic") ? "italic" : "normal";
       node.style.textAlign = String(el.textAlign || "left").toLowerCase();
       node.style.textDecoration = (el.underline ? "underline" : "none");
+      node.style.lineHeight = String(Math.max(0.8, Math.min(3.0, Number(el.lineSpacing || 1.2))));
       node.style.borderColor = el.borderColor || "transparent";
       node.style.backgroundColor = el.fillColor || "transparent";
       node.style.borderRadius = `${el.radius || 0}px`;
-      node.innerHTML = renderedNodeHtml(el);
+      if (String(el.type || "").toLowerCase() === "image") {
+        node.classList.add("image");
+        const src = resolveImageSrc(el);
+        if (src) {
+          node.innerHTML = `<img src="${src}" alt="Logo">`;
+        } else {
+          node.innerHTML = `<div class="image-placeholder">Business Logo</div>`;
+        }
+      } else {
+        node.innerHTML = renderedNodeHtml(el);
+      }
       const resize = document.createElement("div");
       resize.className = "resize";
       node.appendChild(resize);
@@ -497,6 +1016,8 @@
       renderCanvas(pass + 1);
       return;
     }
+    updateZoom();
+    scheduleExactPreview();
     renderPropertyEditor();
   }
 
@@ -601,6 +1122,39 @@
         el.lockOffset = Number(e.target.value || 0);
         renderCanvas();
       });
+    } else if (el.type === "image") {
+      propEditor.innerHTML = `
+        <div class="mb-2 small text-muted">Logo/image element selected.</div>
+        <div class="row g-2">
+          <div class="col-12">
+            <label class="form-label compact-label">Image Source</label>
+            <input id="propImgSrc" class="form-control" type="text" value="${String(el.src || "{{business_logo}}")}" placeholder="{{business_logo}}">
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Border Color</label>
+            <input id="propBorder" class="form-control form-control-color" type="color" value="${(el.borderColor && el.borderColor.startsWith("#")) ? el.borderColor : "#111827"}">
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Fill Color</label>
+            <input id="propFill" class="form-control form-control-color" type="color" value="${(el.fillColor && el.fillColor.startsWith("#")) ? el.fillColor : "#ffffff"}">
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Corner Radius</label>
+            <input id="propRadius" class="form-control" type="number" min="0" max="40" value="${el.radius || 0}">
+          </div>
+        </div>
+        <div class="d-grid gap-2 mt-2">
+          <button id="duplicateBtn" class="btn btn-outline-primary btn-sm" type="button">Duplicate Element</button>
+          <button id="removeBtn" class="btn btn-outline-danger btn-sm" type="button">Delete Element</button>
+        </div>
+      `;
+      document.getElementById("propImgSrc").addEventListener("input", (e) => {
+        el.src = String(e.target.value || "").trim() || "{{business_logo}}";
+        renderCanvas();
+      });
+      document.getElementById("propBorder").addEventListener("input", (e) => { el.borderColor = e.target.value; renderCanvas(); });
+      document.getElementById("propFill").addEventListener("input", (e) => { el.fillColor = e.target.value; renderCanvas(); });
+      document.getElementById("propRadius").addEventListener("input", (e) => { el.radius = Number(e.target.value || 0); renderCanvas(); });
     } else {
       const isBold = Number(el.fontWeight || 500) >= 600;
       const isItalic = String(el.fontStyle || "normal").toLowerCase() === "italic";
@@ -659,6 +1213,10 @@
             <input id="propFontSize" class="form-control" type="number" min="8" max="80" value="${el.fontSize || 14}">
           </div>
           <div class="col-6">
+            <label class="form-label compact-label">Line Spacing</label>
+            <input id="propLineSpacing" class="form-control" type="number" min="0.8" max="3" step="0.05" value="${Number(el.lineSpacing || 1.2)}">
+          </div>
+          <div class="col-6">
             <label class="form-label compact-label">Font Family</label>
             <select id="propFontFamily" class="form-select">
               <option value="Helvetica" ${String(el.fontFamily || "Helvetica") === "Helvetica" ? "selected" : ""}>Sans Serif (Helvetica)</option>
@@ -711,11 +1269,12 @@
       `;
       const textEditor = document.getElementById("propTextRich");
       const samplePreview = document.getElementById("samplePreview");
-      textEditor.innerHTML = String(el.richText || plainTextToHtml(el.text || ""));
+      textEditor.innerHTML = tokenizedToDisplayHtml(String(el.richText || plainTextToHtml(el.text || "")));
+      textEditor.style.lineHeight = String(Math.max(0.8, Math.min(3.0, Number(el.lineSpacing || 1.2))));
       try { document.execCommand("styleWithCSS", false, false); } catch (_e) {}
 
       const syncEditorToElement = () => {
-        el.richText = textEditor.innerHTML || "";
+        el.richText = displayHtmlToTokenized(textEditor.innerHTML || "");
         el.text = richHtmlToPlain(el.richText);
       };
       const renderSamplePreview = () => {
@@ -730,7 +1289,21 @@
       });
       textEditor.addEventListener("keyup", syncEditorToElement);
       textEditor.addEventListener("blur", syncEditorToElement);
-      document.getElementById("propFontSize").addEventListener("input", (e) => { el.fontSize = Number(e.target.value || 14); renderCanvas(); });
+      document.getElementById("propFontSize").addEventListener("input", (e) => {
+        el.fontSize = Number(e.target.value || 14);
+        if (typeof el.richText === "string" && el.richText.trim()) {
+          el.richText = stripInlineFontSizeStyles(el.richText);
+          textEditor.innerHTML = el.richText;
+          el.text = richHtmlToPlain(el.richText);
+        }
+        renderSamplePreview();
+        renderCanvas();
+      });
+      document.getElementById("propLineSpacing").addEventListener("input", (e) => {
+        el.lineSpacing = Math.max(0.8, Math.min(3, Number(e.target.value || 1.2)));
+        textEditor.style.lineHeight = String(el.lineSpacing);
+        renderCanvas();
+      });
       document.getElementById("propFontFamily").addEventListener("change", (e) => { el.fontFamily = e.target.value || "Helvetica"; renderCanvas(); });
       document.getElementById("propColor").addEventListener("input", (e) => { el.color = e.target.value; renderCanvas(); });
       document.getElementById("propBold").addEventListener("click", () => {
@@ -812,10 +1385,11 @@
         const b = document.createElement("button");
         b.type = "button";
         b.className = "token-btn";
-        b.textContent = tok(t);
+        b.textContent = tokenLabel(t);
         b.addEventListener("click", () => {
-          const token = tok(t);
-          insertTokenAtCaret(textEditor, token);
+          const tokenHtml = `<span class="builder-token-pill" contenteditable="false" data-token="${t}">${tokenLabel(t)}</span>`;
+          textEditor.focus();
+          document.execCommand("insertHTML", false, tokenHtml);
           syncEditorToElement();
           renderSamplePreview();
           updateSelectedNodeText();
@@ -824,18 +1398,10 @@
       });
     }
     document.getElementById("duplicateBtn").addEventListener("click", () => {
-      const copy = JSON.parse(JSON.stringify(el));
-      copy.id = `el_${Date.now()}`;
-      copy.x = (copy.x || 0) + 18;
-      copy.y = (copy.y || 0) + 18;
-      state.elements.push(copy);
-      selectedId = copy.id;
-      renderCanvas();
+      duplicateSelected();
     });
     document.getElementById("removeBtn").addEventListener("click", () => {
-      state.elements = state.elements.filter(x => String(x.id) !== String(el.id));
-      selectedId = null;
-      renderCanvas();
+      deleteSelected();
     });
   }
 
@@ -848,10 +1414,12 @@
     canvasBg.value = state.canvas.bg || "#ffffff";
     selectedId = null;
     renderTemplateList();
+    history = [cloneState()];
+    historyIndex = 0;
     renderCanvas();
   }
 
-  function addPreset(type) {
+  function addPreset(type, recordHistory = true) {
     const createText = (opts = {}) => ({
       id: `el_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
       type: "text",
@@ -864,6 +1432,7 @@
       fontWeight: opts.fontWeight ?? 600,
       fontFamily: opts.fontFamily ?? "Helvetica",
       fontStyle: opts.fontStyle ?? "normal",
+      lineSpacing: Number(opts.lineSpacing ?? 1.2),
       textAlign: opts.textAlign ?? "left",
       underline: !!opts.underline,
       autoGrow: !!opts.autoGrow,
@@ -887,6 +1456,21 @@
       borderColor: opts.borderColor ?? "#111827",
       fillColor: opts.fillColor ?? "#ffffff",
       radius: opts.radius ?? 8,
+      lockToId: opts.lockToId ?? null,
+      lockMode: opts.lockMode ?? "below",
+      lockOffset: opts.lockOffset ?? 0,
+    });
+    const createImage = (opts = {}) => ({
+      id: `el_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+      type: "image",
+      x: opts.x ?? 48,
+      y: opts.y ?? 40,
+      w: opts.w ?? 120,
+      h: opts.h ?? 72,
+      src: opts.src ?? "{{business_logo}}",
+      borderColor: opts.borderColor ?? "#111827",
+      fillColor: opts.fillColor ?? "#ffffff",
+      radius: opts.radius ?? 4,
       lockToId: opts.lockToId ?? null,
       lockMode: opts.lockMode ?? "below",
       lockOffset: opts.lockOffset ?? 0,
@@ -918,6 +1502,10 @@
       });
       state.elements.push(t1, t2);
       selectedId = t1.id;
+    } else if (type === "logo") {
+      const img = createImage({ x: 48, y: 40, w: 120, h: 72, src: "{{business_logo}}" });
+      state.elements.push(img);
+      selectedId = img.id;
     } else if (type === "business") {
       addSection(320, 36, 220, 76, `${tok("business_name")}\n${tok("business_address")}\n${tok("business_phone")}`, 11);
     } else if (type === "bill") {
@@ -950,43 +1538,52 @@
         14
       );
     }
-    renderCanvas();
+    if (recordHistory) {
+      pushHistory("Element added");
+      renderCanvas();
+    }
   }
 
   function quickStart(kind) {
     const base = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
     state = base;
     if (kind === "pdf_like") {
-      addPreset("header");
-      addPreset("business");
-      addPreset("bill");
-      addPreset("job");
-      addPreset("labor");
-      addPreset("parts");
-      addPreset("notes");
-      addPreset("summary");
+      addPreset("header", false);
+      if (ownerHasLogo) addPreset("logo", false);
+      addPreset("business", false);
+      addPreset("bill", false);
+      addPreset("job", false);
+      addPreset("labor", false);
+      addPreset("parts", false);
+      addPreset("notes", false);
+      addPreset("summary", false);
     } else if (kind === "minimal") {
-      addPreset("header");
-      addPreset("business");
-      addPreset("bill");
-      addPreset("summary");
+      addPreset("header", false);
+      if (ownerHasLogo) addPreset("logo", false);
+      addPreset("business", false);
+      addPreset("bill", false);
+      addPreset("summary", false);
     } else if (kind === "service") {
-      addPreset("header");
-      addPreset("business");
-      addPreset("bill");
-      addPreset("job");
-      addPreset("labor");
-      addPreset("parts");
-      addPreset("notes");
-      addPreset("summary");
+      addPreset("header", false);
+      if (ownerHasLogo) addPreset("logo", false);
+      addPreset("business", false);
+      addPreset("bill", false);
+      addPreset("job", false);
+      addPreset("labor", false);
+      addPreset("parts", false);
+      addPreset("notes", false);
+      addPreset("summary", false);
     } else {
-      addPreset("header");
-      addPreset("business");
-      addPreset("bill");
-      addPreset("job");
-      addPreset("parts");
-      addPreset("summary");
+      addPreset("header", false);
+      if (ownerHasLogo) addPreset("logo", false);
+      addPreset("business", false);
+      addPreset("bill", false);
+      addPreset("job", false);
+      addPreset("parts", false);
+      addPreset("summary", false);
     }
+    pushHistory("Quick start loaded");
+    renderCanvas();
   }
 
   async function saveTemplate({ asNew = false, activate = false } = {}) {
@@ -1079,7 +1676,48 @@
   canvas.addEventListener("mousedown", (e) => {
     const node = e.target.closest(".node");
     if (!node) { selectedId = null; renderCanvas(); return; }
-    const id = node.dataset.id;
+    const isResizeHandle = !!e.target.classList?.contains("resize");
+    let id = node.dataset.id;
+    const clickedType = String(node.dataset.type || "text").toLowerCase();
+    if (exactPreviewEnabled) {
+      const rect = canvas.getBoundingClientRect();
+      const z = Math.max(0.01, Number(zoomPct || 100) / 100);
+      const px = (e.clientX - rect.left) / z;
+      const py = (e.clientY - rect.top) / z;
+      if (e.altKey || isResizeHandle) {
+        // Explicit text selection in exact mode.
+        const textHits = state.elements
+          .filter((elx) => String(elx.type || "").toLowerCase() !== "box")
+          .filter((tx) => {
+            const x = Number(tx.x || 0);
+            const y = Number(tx.y || 0);
+            const w = Number(tx.w || 0);
+            const h = Number(tx.h || 0);
+            return px >= x && px <= (x + w) && py >= y && py <= (y + h);
+          });
+        if (textHits.length) {
+          id = String(textHits[textHits.length - 1].id);
+        } else if (isResizeHandle && selectedId) {
+          const selectedEl = nodeById(selectedId);
+          if (selectedEl && String(selectedEl.type || "").toLowerCase() !== "box") {
+            id = String(selectedId);
+          }
+        }
+      } else {
+        // Default: select outer box by hit-test.
+        const candidates = state.elements
+          .filter((elx) => String(elx.type || "").toLowerCase() === "box")
+          .filter((bx) => {
+            const x = Number(bx.x || 0);
+            const y = Number(bx.y || 0);
+            const w = Number(bx.w || 0);
+            const h = Number(bx.h || 0);
+            return px >= x && px <= (x + w) && py >= y && py <= (y + h);
+          })
+          .sort((a, b) => (Number(a.w || 0) * Number(a.h || 0)) - (Number(b.w || 0) * Number(b.h || 0)));
+        if (candidates.length) id = String(candidates[0].id);
+      }
+    }
     selectedId = id;
     const el = nodeById(id);
     if (!el) return;
@@ -1100,23 +1738,105 @@
     if (!el) return;
     const dx = e.clientX - drag.startX;
     const dy = e.clientY - drag.startY;
+    const roundSnap = (val) => snapEnabled ? Math.round(val / SNAP) * SNAP : Math.round(val);
     if (drag.isResize) {
-      el.w = Math.max(30, Math.round((drag.originW + dx) / SNAP) * SNAP);
-      el.h = Math.max(24, Math.round((drag.originH + dy) / SNAP) * SNAP);
+      el.w = Math.max(30, roundSnap(drag.originW + dx));
+      el.h = Math.max(24, roundSnap(drag.originH + dy));
     } else {
-      el.x = Math.max(0, Math.min((state.canvas.width || 816) - 20, Math.round((drag.originX + dx) / SNAP) * SNAP));
-      el.y = Math.max(0, Math.min((state.canvas.height || 1056) - 20, Math.round((drag.originY + dy) / SNAP) * SNAP));
+      el.x = Math.max(0, Math.min((state.canvas.width || 816) - 20, roundSnap(drag.originX + dx)));
+      el.y = Math.max(0, Math.min((state.canvas.height || 1056) - 20, roundSnap(drag.originY + dy)));
     }
     renderCanvas();
   });
-  window.addEventListener("mouseup", () => { drag = null; });
+  window.addEventListener("mouseup", () => {
+    if (drag) pushHistory("Element moved");
+    drag = null;
+  });
 
   canvasBg.addEventListener("input", () => {
     state.canvas.bg = canvasBg.value;
+    pushHistory("Canvas updated");
     renderCanvas();
   });
   if (showSampleData) {
     showSampleData.addEventListener("change", renderCanvas);
+  }
+  if (snapToggle) {
+    snapToggle.addEventListener("change", () => {
+      snapEnabled = !!snapToggle.checked;
+      setStatus(snapEnabled ? "Snap enabled" : "Snap disabled", "info");
+    });
+  }
+  if (gridToggle) {
+    gridToggle.addEventListener("change", () => {
+      showGridEnabled = !!gridToggle.checked;
+      renderCanvas();
+    });
+  }
+  if (exactPreviewToggle) {
+    exactPreviewToggle.addEventListener("change", () => {
+      exactPreviewEnabled = !!exactPreviewToggle.checked;
+      if (livePreviewFrame) livePreviewFrame.style.display = exactPreviewEnabled ? "block" : "none";
+      renderCanvas();
+      if (exactPreviewEnabled) refreshExactPreviewNow();
+    });
+  }
+  if (zoomRange) {
+    zoomRange.addEventListener("input", () => {
+      zoomPct = Number(zoomRange.value || 100);
+      updateZoom();
+    });
+  }
+  if (fitWidthBtn) fitWidthBtn.addEventListener("click", fitWidth);
+  if (fitPageBtn) fitPageBtn.addEventListener("click", fitPage);
+  if (zoom100Btn) zoom100Btn.addEventListener("click", () => {
+    zoomPct = 100;
+    updateZoom();
+  });
+  if (undoBtn) undoBtn.addEventListener("click", undo);
+  if (redoBtn) redoBtn.addEventListener("click", redo);
+  if (undoBtnTop) undoBtnTop.addEventListener("click", undo);
+  if (redoBtnTop) redoBtnTop.addEventListener("click", redo);
+  if (duplicateSelectedBtn) duplicateSelectedBtn.addEventListener("click", duplicateSelected);
+  if (deleteSelectedBtn) deleteSelectedBtn.addEventListener("click", deleteSelected);
+  if (alignLeftBtn) alignLeftBtn.addEventListener("click", () => alignSelected("left"));
+  if (alignCenterBtn) alignCenterBtn.addEventListener("click", () => alignSelected("center"));
+  if (alignRightBtn) alignRightBtn.addEventListener("click", () => alignSelected("right"));
+  if (alignTopBtn) alignTopBtn.addEventListener("click", () => alignSelected("top"));
+  if (alignMiddleBtn) alignMiddleBtn.addEventListener("click", () => alignSelected("middle"));
+  if (alignBottomBtn) alignBottomBtn.addEventListener("click", () => alignSelected("bottom"));
+  if (toggleLeftPanelBtn) {
+    toggleLeftPanelBtn.addEventListener("click", () => {
+      builderShell?.classList.toggle("left-collapsed");
+      setTimeout(fitWidth, 0);
+    });
+  }
+  if (toggleRightPanelBtn) {
+    toggleRightPanelBtn.addEventListener("click", () => {
+      builderShell?.classList.toggle("right-collapsed");
+      setTimeout(fitWidth, 0);
+    });
+  }
+  if (previewOffsetXInput) {
+    previewOffsetXInput.addEventListener("input", () => {
+      previewOffsetX = Number(previewOffsetXInput.value || 0);
+      applyPreviewOffset();
+    });
+  }
+  if (previewOffsetYInput) {
+    previewOffsetYInput.addEventListener("input", () => {
+      previewOffsetY = Number(previewOffsetYInput.value || 0);
+      applyPreviewOffset();
+    });
+  }
+  if (previewScaleInput) {
+    previewScaleInput.addEventListener("input", () => {
+      previewScale = Number(previewScaleInput.value || 1);
+      applyPreviewOffset();
+    });
+  }
+  if (autoAlignPreviewBtn) {
+    autoAlignPreviewBtn.addEventListener("click", autoAlignPreview);
   }
 
   document.querySelectorAll("[data-add]").forEach(btn => {
@@ -1153,8 +1873,39 @@
     await activateTemplate(Number(currentTemplateId));
   });
 
+  window.addEventListener("keydown", (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return;
+    }
+    if (mod && e.key.toLowerCase() === "d") {
+      if (isTypingContext()) return;
+      e.preventDefault();
+      duplicateSelected();
+      return;
+    }
+    if (isTypingContext()) return;
+    const el = nodeById(selectedId);
+    if (!el) return;
+    const step = e.shiftKey ? 10 : 1;
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      deleteSelected();
+      return;
+    }
+    if (e.key === "ArrowLeft") { e.preventDefault(); el.x = Math.max(0, Number(el.x || 0) - step); renderCanvas(); pushHistory("Nudge"); }
+    if (e.key === "ArrowRight") { e.preventDefault(); el.x = Math.min((state.canvas.width || 816) - 20, Number(el.x || 0) + step); renderCanvas(); pushHistory("Nudge"); }
+    if (e.key === "ArrowUp") { e.preventDefault(); el.y = Math.max(0, Number(el.y || 0) - step); renderCanvas(); pushHistory("Nudge"); }
+    if (e.key === "ArrowDown") { e.preventDefault(); el.y = Math.min((state.canvas.height || 1056) - 20, Number(el.y || 0) + step); renderCanvas(); pushHistory("Nudge"); }
+  });
+
   renderTemplateList();
+  loadPreviewOffsetDefaults();
   loadTemplate(currentTemplateId);
+  fitPage();
+  refreshExactPreviewNow();
   if (!templates || !templates.length) {
     quickStart("pdf_like");
   }

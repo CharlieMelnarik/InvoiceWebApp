@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% set title = "Email Editor" %}
+
+{% block content %}
+<style>
+  .tpl-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 12px;
+  }
+  .tpl-card {
+    border: 1px solid #a8bfe2;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #ffffff 0%, #eaf2ff 100%);
+    padding: 14px;
+    box-shadow: 0 10px 28px rgba(12, 34, 73, 0.12);
+  }
+  .tpl-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+</style>
+
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Customer Email Editor</h1>
+    <div class="subtitle">Pro feature. Edit how customer emails look and read before they are sent.</div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ url_for('settings') }}">Back to Settings</a>
+  </div>
+</div>
+
+<div class="tpl-grid">
+  {% for t in templates_payload %}
+    <section class="tpl-card">
+      <div class="tpl-head">
+        <h5 class="m-0">{{ t.name }}</h5>
+        {% if t.updated_at %}
+          <span class="badge text-bg-light border">Updated {{ t.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        {% endif %}
+      </div>
+      <div class="small-muted mb-2">{{ t.description }}</div>
+      <div class="small mb-2"><strong>Subject:</strong> {{ t.subject }}</div>
+      <a class="btn btn-primary btn-sm" href="{{ url_for('email_template_edit', template_key=t.key) }}">Open Editor</a>
+    </section>
+  {% endfor %}
+</div>
+{% endblock %}

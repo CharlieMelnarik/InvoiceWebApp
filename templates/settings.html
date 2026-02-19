@@ -205,6 +205,7 @@
     <a class="settings-jump-link" href="#section-invoice">Invoice Defaults</a>
     {% if pro_features_enabled and not is_employee_account %}
       <a class="settings-jump-link" href="#customProfessionCard">Invoice Builder</a>
+      <a class="settings-jump-link" href="#section-email-editor">Email Editor</a>
     {% endif %}
     <a class="settings-jump-link" href="#section-preview">PDF Preview</a>
     {% if pro_features_enabled %}
@@ -267,7 +268,7 @@
       {% if pro_features_enabled and not is_employee_account %}
         <section class="settings-card span-2" id="customProfessionCard">
           <div class="settings-card-head">
-            <h5>Invoice Builder (V1)</h5>
+            <h5>Invoice Builder</h5>
           </div>
           <div class="settings-help">Build your own invoice/estimate structure with custom labels, section visibility, and style controls.</div>
           <div class="mb-2">
@@ -349,6 +350,14 @@
             </div>
           </div>
           </div>
+        </section>
+
+        <section class="settings-card" id="section-email-editor">
+          <div class="settings-card-head">
+            <h5>Email Editor</h5>
+          </div>
+          <div class="settings-help">Customize customer-facing email messages for invoice, estimate, and payment reminder sends.</div>
+          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('email_templates') }}">Open Customer Email Editor</a>
         </section>
       {% endif %}
 

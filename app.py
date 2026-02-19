@@ -40,7 +40,7 @@ from models import (
     Base, make_engine, make_session_factory,
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
     ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
-    InvoiceDesignTemplate,
+    InvoiceDesignTemplate, EmailTemplate,
 )
 from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
 
@@ -636,6 +636,114 @@ PDF_TEMPLATES = {
 }
 
 
+EMAIL_TEMPLATE_DEFS = {
+    "invoice_ready": {
+        "name": "Invoice Email",
+        "description": "Sent when user emails an invoice to customer.",
+        "default_subject": "Invoice {{document_number}}",
+        "default_html": (
+            "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
+            "<p>Hello {{customer_name}},</p>"
+            "<p>Your invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong> is ready.</p>"
+            "<p>Invoice amount: <strong>${{invoice_amount}}</strong><br>{{card_fee_line}}{{portal_validity_line}}</p>"
+            "<p>{{action_button}}</p>"
+            "<p>Thank you.</p>"
+            "</div>"
+        ),
+    },
+    "estimate_ready": {
+        "name": "Estimate Email",
+        "description": "Sent when user emails an estimate to customer.",
+        "default_subject": "Estimate {{document_number}}",
+        "default_html": (
+            "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
+            "<p>Hello {{customer_name}},</p>"
+            "<p>Your estimate <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong> is ready.</p>"
+            "<p>Estimate amount: <strong>${{estimate_amount}}</strong><br>{{portal_validity_line}}</p>"
+            "<p>{{action_button}}</p>"
+            "<p>Thank you.</p>"
+            "</div>"
+        ),
+    },
+    "reminder_manual": {
+        "name": "Payment Reminder (Manual)",
+        "description": "Sent when user manually sends a payment reminder.",
+        "default_subject": "Payment Reminder: Invoice {{document_number}}",
+        "default_html": (
+            "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
+            "<p>Hello {{customer_name}},</p>"
+            "<p>{{timing_line}}</p>"
+            "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
+            "Invoice amount due: <strong>${{amount_due}}</strong><br>"
+            "{{late_fee_policy_line}}{{late_fee_line}}"
+            "Due date: <strong>{{due_date}}</strong></p>"
+            "<p>{{action_button}}</p>"
+            "<p>Thank you.</p>"
+            "</div>"
+        ),
+    },
+    "reminder_before_due": {
+        "name": "Payment Reminder (Before Due)",
+        "description": "Automatic reminder sent before due date.",
+        "default_subject": "Friendly Reminder: Invoice {{document_number}} due soon",
+        "default_html": (
+            "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
+            "<p>Hello {{customer_name}},</p>"
+            "<p>{{timing_line}}</p>"
+            "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
+            "Invoice amount due: <strong>${{amount_due}}</strong><br>"
+            "{{late_fee_policy_line}}"
+            "Due date: <strong>{{due_date}}</strong></p>"
+            "<p>{{action_button}}</p>"
+            "<p>Thank you.</p>"
+            "</div>"
+        ),
+    },
+    "reminder_after_due": {
+        "name": "Payment Reminder (Past Due)",
+        "description": "Automatic reminder sent after due date.",
+        "default_subject": "Past Due Reminder: Invoice {{document_number}}",
+        "default_html": (
+            "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
+            "<p>Hello {{customer_name}},</p>"
+            "<p>{{timing_line}}</p>"
+            "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
+            "Invoice amount due: <strong>${{amount_due}}</strong><br>"
+            "{{late_fee_policy_line}}{{late_fee_line}}"
+            "Due date: <strong>{{due_date}}</strong></p>"
+            "<p>{{action_button}}</p>"
+            "<p>Thank you.</p>"
+            "</div>"
+        ),
+    },
+}
+
+
+def _normalize_email_template_key(key: str | None) -> str:
+    key_clean = (key or "").strip()
+    return key_clean if key_clean in EMAIL_TEMPLATE_DEFS else "invoice_ready"
+
+
+def _strip_html_to_text(raw_html: str) -> str:
+    html_text = str(raw_html or "")
+    html_text = re.sub(r"(?i)<br\s*/?>", "\n", html_text)
+    html_text = re.sub(r"(?i)</p>", "\n\n", html_text)
+    html_text = re.sub(r"(?i)<p[^>]*>", "", html_text)
+    html_text = re.sub(r"<[^>]+>", "", html_text)
+    html_text = html.unescape(html_text)
+    html_text = html_text.replace("\r", "")
+    html_text = re.sub(r"\n{3,}", "\n\n", html_text)
+    return html_text.strip()
+
+
+def _render_email_template_tokens(raw: str, context: dict[str, str]) -> str:
+    def _rep(m):
+        key = (m.group(1) or "").strip().lower()
+        return str(context.get(key, ""))
+
+    return re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", _rep, str(raw or ""))
+
+
 def _default_invoice_builder_design() -> dict:
     return {
         "canvas": {"width": 816, "height": 1056, "bg": "#ffffff"},
@@ -1145,6 +1253,7 @@ def _send_invoice_pdf_email(
     pdf_path: str | None = None,
     action_url: str | None = None,
     action_label: str | None = None,
+    html_body: str | None = None,
 ) -> None:
     host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
@@ -1159,10 +1268,16 @@ def _send_invoice_pdf_email(
     msg["Subject"] = subject
     msg["From"] = mail_from
     msg["To"] = to_email
-    msg.set_content(body_text)
+    body_text_clean = (body_text or "").strip()
+    if not body_text_clean and html_body:
+        body_text_clean = _strip_html_to_text(html_body)
+    msg.set_content(body_text_clean or "Please open this message in an HTML-capable email client.")
 
+    html_body_clean = (html_body or "").strip()
     action_url_clean = (action_url or "").strip()
-    if action_url_clean:
+    if html_body_clean:
+        msg.add_alternative(html_body_clean, subtype="html")
+    elif action_url_clean:
         safe_label = html.escape((action_label or "Open Document").strip() or "Open Document")
         safe_url = html.escape(action_url_clean, quote=True)
         paragraphs = []
@@ -1258,6 +1373,86 @@ def _send_schedule_summary_email(to_email: str, subject: str, body_text: str) ->
     print(f"[SCHEDULE SUMMARY] Sent email to {to_email}", flush=True)
 
 
+def _ensure_customer_email_templates(session, owner: User | None) -> bool:
+    if not owner:
+        return False
+    existing = {
+        (t.template_key or "").strip(): t
+        for t in session.query(EmailTemplate).filter(EmailTemplate.user_id == owner.id).all()
+    }
+    added = False
+    for key, cfg in EMAIL_TEMPLATE_DEFS.items():
+        if key in existing:
+            continue
+        session.add(
+            EmailTemplate(
+                user_id=owner.id,
+                template_key=key,
+                name=str(cfg.get("name") or key),
+                subject=str(cfg.get("default_subject") or ""),
+                html_body=str(cfg.get("default_html") or ""),
+            )
+        )
+        added = True
+    if added:
+        session.flush()
+    return added
+
+
+def _customer_email_template_payload(
+    session,
+    *,
+    owner: User | None,
+    template_key: str,
+    context: dict[str, str],
+    fallback_subject: str,
+    fallback_body_text: str,
+    fallback_action_label: str | None,
+    action_url: str | None,
+) -> tuple[str, str, str | None]:
+    subject = fallback_subject
+    body_text = fallback_body_text
+    html_body = None
+    if not owner:
+        return subject, body_text, html_body
+    owner_status = (getattr(owner, "subscription_status", None) or "").strip().lower()
+    owner_tier = _normalize_plan_tier(getattr(owner, "subscription_tier", None))
+    if owner_status not in ("trialing", "active") or owner_tier != "pro":
+        return subject, body_text, html_body
+
+    template = (
+        session.query(EmailTemplate)
+        .filter(
+            EmailTemplate.user_id == owner.id,
+            EmailTemplate.template_key == _normalize_email_template_key(template_key),
+        )
+        .first()
+    )
+    if not template:
+        return subject, body_text, html_body
+
+    action_label = (context.get("action_label") or fallback_action_label or "Open Document").strip()
+    action_url_clean = (action_url or "").strip()
+    action_button_html = ""
+    if action_url_clean:
+        action_button_html = (
+            f"<a href=\"{html.escape(action_url_clean, quote=True)}\" "
+            "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;"
+            "padding:10px 16px;border-radius:8px;font-weight:600;\">"
+            f"{html.escape(action_label)}</a>"
+        )
+
+    render_ctx = dict(context)
+    render_ctx["action_button"] = action_button_html
+    render_ctx["action_url"] = action_url_clean
+    render_ctx["action_label"] = action_label
+
+    subject = _render_email_template_tokens(template.subject or fallback_subject, render_ctx).strip() or fallback_subject
+    html_body = _render_email_template_tokens(template.html_body or "", render_ctx).strip()
+    body_text = _strip_html_to_text(html_body) if html_body else fallback_body_text
+    return subject, body_text, (html_body or None)
+
+
 def _send_payment_reminder_for_invoice(
     session,
     *,
@@ -1299,12 +1494,15 @@ def _send_payment_reminder_for_invoice(
         lead = int(getattr(owner, "payment_reminder_days_before", 0) or 0)
         timing_line = f"This is a friendly reminder that payment is due in {max(0, days_until_due)} day(s)."
         subject = f"Friendly Reminder: Invoice {display_no} due in {max(0, lead)} day(s)"
+        email_template_key = "reminder_before_due"
     elif reminder_kind == "after_due":
         timing_line = f"This invoice is past due by {max(0, -days_until_due)} day(s)."
         subject = f"Past Due Reminder: Invoice {display_no}"
+        email_template_key = "reminder_after_due"
     else:
         timing_line = "This is a friendly reminder to complete payment for your invoice."
         subject = f"Payment Reminder: Invoice {display_no}"
+        email_template_key = "reminder_manual"
 
     late_fee_line = ""
     if late_fee > 0:
@@ -1339,6 +1537,27 @@ def _send_payment_reminder_for_invoice(
         f"Due date: {due_dt.strftime('%B %d, %Y')}\n\n"
         "Thank you."
     )
+    tmpl_context = {
+        "customer_name": ((customer.name if customer else "there") or "there"),
+        "business_name": business_name,
+        "document_number": display_no,
+        "amount_due": f"{float(inv.amount_due() or 0.0):,.2f}",
+        "due_date": due_dt.strftime("%B %d, %Y"),
+        "timing_line": timing_line,
+        "late_fee_policy_line": late_fee_policy_line.strip(),
+        "late_fee_line": late_fee_line.strip(),
+        "action_label": ("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
+    }
+    subject, body, html_body = _customer_email_template_payload(
+        session,
+        owner=owner,
+        template_key=email_template_key,
+        context=tmpl_context,
+        fallback_subject=subject,
+        fallback_body_text=body,
+        fallback_action_label=("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
+        action_url=portal_url,
+    )
 
     pdf_path = (inv.pdf_path or "").strip()
     if include_pdf and (not pdf_path or not os.path.exists(pdf_path)):
@@ -1355,6 +1574,7 @@ def _send_payment_reminder_for_invoice(
         pdf_path=pdf_path,
         action_url=portal_url,
         action_label=("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
+        html_body=html_body,
     )
     inv.payment_reminder_last_sent_at = now_val
     if reminder_kind == "before_due":
@@ -3576,10 +3796,404 @@ def create_app():
                     }
                 )
 
+            now_local = _user_local_now(owner)
+            due_days = int(getattr(owner, "payment_due_days", 30) or 30)
+            due_days = max(0, min(3650, due_days))
+            due_local = now_local + timedelta(days=due_days)
+            owner_name = (getattr(owner, "business_name", None) or getattr(owner, "username", None) or "InvoiceRunner").strip()
+            owner_phone = (getattr(owner, "phone", None) or "").strip()
+            owner_addr_lines = []
+            line1 = (getattr(owner, "address_line1", None) or "").strip()
+            line2 = (getattr(owner, "address_line2", None) or "").strip()
+            city_state_zip = _format_city_state_postal(
+                getattr(owner, "city", None),
+                getattr(owner, "state", None),
+                getattr(owner, "postal_code", None),
+            )
+            if line1:
+                owner_addr_lines.append(line1)
+            if line2:
+                owner_addr_lines.append(line2)
+            if city_state_zip:
+                owner_addr_lines.append(city_state_zip)
+            owner_addr = "\n".join(owner_addr_lines)
+            builder_sample_values = {
+                "doc_label": "INVOICE",
+                "invoice_number": f"{now_local.strftime('%Y')}PREVIEW",
+                "date": now_local.strftime("%B %d, %Y"),
+                "due_date": due_local.strftime("%B %d, %Y"),
+                "business_name": owner_name,
+                "business_phone": owner_phone,
+                "business_address": owner_addr,
+                "business_logo": "{{business_logo}}",
+                "customer_name": "Sample Customer",
+                "customer_email": "customer@example.com",
+                "customer_phone": "(406) 555-1234",
+                "job": "Sample Job",
+                "rate": "$100.00",
+                "hours": "2.5",
+                "labor_lines": (
+                    "Oil change service - 1.0 hr - $100.00\n"
+                    "Brake inspection - 0.75 hr - $75.00\n"
+                    "Battery test - 0.5 hr - $50.00\n"
+                    "Alignment check - 0.25 hr - $25.00"
+                ),
+                "parts_lines": (
+                    "Oil Filter - $18.99\n"
+                    "Engine Oil - $37.95\n"
+                    "Air Filter - $27.99\n"
+                    "Brake Cleaner - $12.49\n"
+                    "Shop Towels - $9.59\n"
+                    "Serpentine Belt - $74.99"
+                ),
+                "notes_text": "Sample line item notes.\nSecond line to preview wrapping.",
+                "labor_table": (
+                    "Service Description            Time        Line Total\n"
+                    "Oil change service             1.0 hrs     $100.00\n"
+                    "Brake inspection               0.75 hrs    $75.00\n"
+                    "Battery test                   0.5 hrs     $50.00\n"
+                    "Alignment check                0.25 hrs    $25.00"
+                ),
+                "parts_table": (
+                    "Part / Material                Price\n"
+                    "Oil Filter                     $18.99\n"
+                    "Engine Oil                     $37.95\n"
+                    "Air Filter                     $27.99\n"
+                    "Brake Cleaner                  $12.49\n"
+                    "Shop Towels                    $9.59\n"
+                    "Serpentine Belt                $74.99"
+                ),
+                "parts_total": "$182.00",
+                "labor_total": "$250.00",
+                "tax": "$35.52",
+                "total": "$479.52",
+                "paid": "$0.00",
+                "amount_due": "$479.52",
+            }
+
             return render_template(
                 "invoice_builder.html",
                 templates_payload=payload,
                 active_template_id=int(active.id),
+                owner_has_logo=bool(getattr(owner, "logo_blob", None) or (getattr(owner, "logo_path", None) or "").strip()),
+                logo_preview_url=url_for("api_invoice_builder_logo_preview"),
+                live_preview_url=url_for("api_invoice_builder_live_preview_pdf"),
+                builder_sample_values=builder_sample_values,
+            )
+
+    @app.get("/settings/email-templates")
+    @login_required
+    @subscription_required
+    @owner_required
+    def email_templates():
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            if not _has_pro_features(owner):
+                flash("Email editor is available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
+            if _ensure_customer_email_templates(s, owner):
+                s.commit()
+            rows = (
+                s.query(EmailTemplate)
+                .filter(EmailTemplate.user_id == owner.id)
+                .order_by(EmailTemplate.template_key.asc())
+                .all()
+            )
+            by_key = {(r.template_key or "").strip(): r for r in rows}
+            payload = []
+            for key, cfg in EMAIL_TEMPLATE_DEFS.items():
+                row = by_key.get(key)
+                payload.append(
+                    {
+                        "key": key,
+                        "name": cfg.get("name", key),
+                        "description": cfg.get("description", ""),
+                        "subject": (row.subject if row else cfg.get("default_subject", "")),
+                        "updated_at": (row.updated_at if row else None),
+                    }
+                )
+            return render_template("email_templates.html", templates_payload=payload)
+
+    @app.route("/settings/email-templates/<template_key>", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    @owner_required
+    def email_template_edit(template_key: str):
+        key = _normalize_email_template_key(template_key)
+        if key != (template_key or "").strip():
+            return redirect(url_for("email_template_edit", template_key=key))
+
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            if not _has_pro_features(owner):
+                flash("Email editor is available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
+
+            if _ensure_customer_email_templates(s, owner):
+                s.commit()
+            row = (
+                s.query(EmailTemplate)
+                .filter(EmailTemplate.user_id == owner.id, EmailTemplate.template_key == key)
+                .first()
+            )
+            cfg = EMAIL_TEMPLATE_DEFS.get(key, {})
+            if not row:
+                row = EmailTemplate(
+                    user_id=owner.id,
+                    template_key=key,
+                    name=str(cfg.get("name") or key),
+                    subject=str(cfg.get("default_subject") or ""),
+                    html_body=str(cfg.get("default_html") or ""),
+                )
+                s.add(row)
+                s.flush()
+
+            subject_value = (row.subject or "")
+            html_body_value = (row.html_body or "")
+            if request.method == "POST":
+                action = (request.form.get("action") or "save").strip().lower()
+                subject = (request.form.get("subject") or "").strip()
+                html_body = (request.form.get("html_body") or "").strip()
+                subject_value = subject
+                html_body_value = html_body
+                if action == "reset":
+                    row.subject = str(cfg.get("default_subject") or "")
+                    row.html_body = str(cfg.get("default_html") or "")
+                    s.add(row)
+                    s.commit()
+                    flash("Template reset to default.", "success")
+                    return redirect(url_for("email_template_edit", template_key=key))
+
+                if action == "test":
+                    if not subject:
+                        flash("Subject is required to send a test email.", "error")
+                    elif not html_body:
+                        flash("Email body is required to send a test email.", "error")
+                    else:
+                        to_email = _normalize_email(getattr(owner, "email", None) or "")
+                        if not _looks_like_email(to_email):
+                            flash("Your account email is missing or invalid. Update it in Settings > Account.", "error")
+                        else:
+                            sample_context = {
+                                "customer_name": "Sample Customer",
+                                "business_name": ((owner.business_name or "").strip() or owner.username or "Your Business"),
+                                "document_number": f"{_user_local_now(owner).strftime('%Y')}-0001",
+                                "invoice_amount": "129.60",
+                                "estimate_amount": "129.60",
+                                "amount_due": "129.60",
+                                "due_date": (_user_local_now(owner) + timedelta(days=max(0, int(getattr(owner, "payment_due_days", 30) or 30)))).strftime("%B %d, %Y"),
+                                "card_fee_line": "Paying by card online adds an additional $4.06 (card total: $133.66).",
+                                "portal_validity_line": "This secure link is valid for 90 days from the time this email was sent.",
+                                "timing_line": "This is a friendly reminder to complete payment for your invoice.",
+                                "late_fee_policy_line": "After March 21, 2026, a late fee of 5% of the invoice amount will be charged every 30 day(s).",
+                                "late_fee_line": "Late fees accrued so far: $6.48. Current amount due including late fees: $136.08.",
+                                "action_label": "Open Document",
+                                "action_url": "#",
+                                "action_button": "<a href=\"#\" style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;\">Open Document</a>",
+                            }
+                            subject_rendered = _render_email_template_tokens(subject, sample_context).strip() or "InvoiceRunner Test Email"
+                            html_rendered = _render_email_template_tokens(html_body, sample_context).strip()
+                            text_rendered = _strip_html_to_text(html_rendered)
+                            try:
+                                _send_invoice_pdf_email(
+                                    to_email=to_email,
+                                    subject=subject_rendered,
+                                    body_text=text_rendered,
+                                    html_body=html_rendered,
+                                )
+                                flash(f"Test email sent to {to_email}.", "success")
+                            except Exception as exc:
+                                flash(f"Could not send test email. Check SMTP settings/logs. ({exc})", "error")
+
+                elif not subject:
+                    flash("Subject is required.", "error")
+                elif not html_body:
+                    flash("Email body is required.", "error")
+                else:
+                    row.subject = subject[:255]
+                    row.html_body = html_body[:20000]
+                    s.add(row)
+                    s.commit()
+                    flash("Email template saved.", "success")
+                    return redirect(url_for("email_template_edit", template_key=key))
+
+            sample_context = {
+                "customer_name": "Sample Customer",
+                "business_name": ((owner.business_name or "").strip() or owner.username or "Your Business"),
+                "document_number": f"{_user_local_now(owner).strftime('%Y')}-0001",
+                "invoice_amount": "129.60",
+                "estimate_amount": "129.60",
+                "amount_due": "129.60",
+                "due_date": (_user_local_now(owner) + timedelta(days=max(0, int(getattr(owner, "payment_due_days", 30) or 30)))).strftime("%B %d, %Y"),
+                "card_fee_line": "Paying by card online adds an additional $4.06 (card total: $133.66).",
+                "portal_validity_line": "This secure link is valid for 90 days from the time this email was sent.",
+                "timing_line": "This is a friendly reminder to complete payment for your invoice.",
+                "late_fee_policy_line": "After March 21, 2026, a late fee of 5% of the invoice amount will be charged every 30 day(s).",
+                "late_fee_line": "Late fees accrued so far: $6.48. Current amount due including late fees: $136.08.",
+                "action_label": "Open Document",
+                "action_button": "<a href=\"#\" style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;\">Open Document</a>",
+                "action_url": "#",
+            }
+            token_labels = {
+                "customer_name": "Customer Name",
+                "business_name": "Business Name",
+                "document_number": "Document Number",
+                "invoice_amount": "Invoice Amount",
+                "estimate_amount": "Estimate Amount",
+                "amount_due": "Amount Due",
+                "due_date": "Due Date",
+                "card_fee_line": "Card Fee Line",
+                "portal_validity_line": "Portal Validity Line",
+                "timing_line": "Timing Line",
+                "late_fee_policy_line": "Late Fee Policy Line",
+                "late_fee_line": "Late Fee Line",
+                "action_label": "Action Label",
+                "action_button": "Action Button",
+                "action_url": "Action URL",
+            }
+            preview_subject = _render_email_template_tokens(subject_value or "", sample_context)
+            preview_html = _render_email_template_tokens(html_body_value or "", sample_context)
+            return render_template(
+                "email_template_edit.html",
+                template_key=key,
+                template_name=(cfg.get("name") or key),
+                template_description=(cfg.get("description") or ""),
+                subject_value=subject_value,
+                html_body_value=html_body_value,
+                preview_subject=preview_subject,
+                preview_html=preview_html,
+                token_keys=sorted(sample_context.keys()),
+                token_labels=token_labels,
+            )
+
+    @app.get("/api/invoice-builder/logo-preview")
+    @login_required
+    @subscription_required
+    @owner_required
+    def api_invoice_builder_logo_preview():
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            blob = getattr(owner, "logo_blob", None)
+            if blob:
+                return send_file(
+                    io.BytesIO(blob),
+                    mimetype=(getattr(owner, "logo_blob_mime", None) or "image/png"),
+                    as_attachment=False,
+                    download_name="logo.png",
+                )
+            rel = (getattr(owner, "logo_path", None) or "").strip()
+            if rel:
+                abs_path = str((Path("instance") / rel).resolve())
+                if os.path.exists(abs_path):
+                    return send_file(abs_path, as_attachment=False)
+        return ("", 404)
+
+    @app.post("/api/invoice-builder/live-preview.pdf")
+    @login_required
+    @subscription_required
+    @owner_required
+    def api_invoice_builder_live_preview_pdf():
+        payload = request.get_json(silent=True) or {}
+        design_obj = payload.get("design")
+        if not isinstance(design_obj, dict):
+            return jsonify({"ok": False, "error": "Invalid design payload."}), 400
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            if not u:
+                abort(404)
+            if not _has_pro_features(u):
+                return jsonify({"ok": False, "error": "Pro required."}), 403
+
+            preview_no = f"PV{u.id}{uuid.uuid4().hex[:18]}".upper()
+            preview_display_no = f"{_user_local_now(u).strftime('%Y')}PREVIEW"
+            inv = None
+            pdf_path = None
+            pdf_bytes = b""
+            try:
+                inv = Invoice(
+                    user_id=u.id,
+                    customer_id=None,
+                    invoice_number=preview_no,
+                    display_number=preview_display_no,
+                    invoice_template=_template_key_fallback((u.invoice_template or "").strip() or "auto_repair"),
+                    pdf_template=_pdf_template_key_fallback((u.pdf_template or "").strip() or "classic"),
+                    tax_rate=8.0,
+                    tax_override=None,
+                    customer_email="customer@example.com",
+                    customer_phone="(406) 555-1234",
+                    name="Sample Customer",
+                    vehicle="Sample Job",
+                    hours=2.5,
+                    price_per_hour=100.0,
+                    shop_supplies=12.0,
+                    parts_markup_percent=0.0,
+                    notes="Sample line item notes.\nSecond line to preview wrapping.",
+                    useful_info=None,
+                    converted_from_estimate=False,
+                    converted_to_invoice=False,
+                    paid=0.0,
+                    date_in=_user_local_now(u).strftime("%B %d, %Y"),
+                    is_estimate=False,
+                    pdf_path=None,
+                    pdf_generated_at=None,
+                )
+                s.add(inv)
+                s.flush()
+                inv.parts.extend(
+                    [
+                        InvoicePart(part_name="Oil Filter", part_price=18.99),
+                        InvoicePart(part_name="Engine Oil", part_price=37.95),
+                        InvoicePart(part_name="Air Filter", part_price=27.99),
+                        InvoicePart(part_name="Brake Cleaner", part_price=12.49),
+                        InvoicePart(part_name="Shop Towels", part_price=9.59),
+                        InvoicePart(part_name="Serpentine Belt", part_price=74.99),
+                    ]
+                )
+                inv.labor_items.extend(
+                    [
+                        InvoiceLabor(labor_desc="Oil change service", labor_time_hours=1.0),
+                        InvoiceLabor(labor_desc="Brake inspection", labor_time_hours=0.75),
+                        InvoiceLabor(labor_desc="Battery test", labor_time_hours=0.5),
+                        InvoiceLabor(labor_desc="Alignment check", labor_time_hours=0.25),
+                    ]
+                )
+
+                pdf_path = generate_and_store_pdf(
+                    s,
+                    inv.id,
+                    builder_cfg_override={
+                        "enabled": True,
+                        "accent_color": (getattr(u, "invoice_builder_accent_color", None) or "#0f172a"),
+                        "header_style": (getattr(u, "invoice_builder_header_style", None) or "classic"),
+                        "compact_mode": bool(getattr(u, "invoice_builder_compact_mode", False)),
+                    },
+                    invoice_builder_design_override=design_obj,
+                )
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+            finally:
+                if inv is not None:
+                    try:
+                        s.delete(inv)
+                        s.commit()
+                    except Exception:
+                        s.rollback()
+                try:
+                    if pdf_path and os.path.exists(pdf_path):
+                        os.remove(pdf_path)
+                except Exception:
+                    pass
+            return send_file(
+                io.BytesIO(pdf_bytes),
+                mimetype="application/pdf",
+                as_attachment=False,
+                download_name="invoice-builder-live-preview.pdf",
             )
 
     @app.post("/api/invoice-builder/template/save")
@@ -7736,6 +8350,24 @@ def create_app():
                 f"{portal_line}"
                 "Thank you."
             )
+            tmpl_context = {
+                "customer_name": (customer_name or "there"),
+                "business_name": business_name,
+                "document_number": display_no,
+                "estimate_amount": f"{inv.invoice_total():,.2f}",
+                "portal_validity_line": portal_line.strip(),
+                "action_label": ("View Estimate" if owner_pro_enabled else "Open Estimate"),
+            }
+            subject, body, html_body = _customer_email_template_payload(
+                s,
+                owner=owner,
+                template_key="estimate_ready",
+                context=tmpl_context,
+                fallback_subject=subject,
+                fallback_body_text=body,
+                fallback_action_label=("View Estimate" if owner_pro_enabled else "Open Estimate"),
+                action_url=(portal_url if owner_pro_enabled else None),
+            )
 
             try:
                 _send_invoice_pdf_email(
@@ -7745,6 +8377,7 @@ def create_app():
                     pdf_path=inv.pdf_path,
                     action_url=portal_url if owner_pro_enabled else None,
                     action_label=("View Estimate" if owner_pro_enabled else None),
+                    html_body=html_body,
                 )
             except Exception as e:
                 print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={display_no}: {repr(e)}", flush=True)
@@ -7904,6 +8537,25 @@ def create_app():
                 f"{portal_line}"
                 "Thank you."
             )
+            tmpl_context = {
+                "customer_name": (customer_name or "there"),
+                "business_name": business_name,
+                "document_number": display_no,
+                "invoice_amount": f"{inv.invoice_total():,.2f}",
+                "card_fee_line": card_fee_line.strip(),
+                "portal_validity_line": portal_line.strip(),
+                "action_label": ("View & Pay Invoice" if owner_pro_enabled else "Open Invoice"),
+            }
+            subject, body, html_body = _customer_email_template_payload(
+                s,
+                owner=owner,
+                template_key="invoice_ready",
+                context=tmpl_context,
+                fallback_subject=subject,
+                fallback_body_text=body,
+                fallback_action_label=("View & Pay Invoice" if owner_pro_enabled else "Open Invoice"),
+                action_url=(portal_url if owner_pro_enabled else None),
+            )
 
             try:
                 _send_invoice_pdf_email(
@@ -7913,6 +8565,7 @@ def create_app():
                     pdf_path=inv.pdf_path,
                     action_url=portal_url if owner_pro_enabled else None,
                     action_label=("View & Pay Invoice" if owner_pro_enabled else None),
+                    html_body=html_body,
                 )
             except Exception as e:
                 print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={display_no}: {repr(e)}", flush=True)

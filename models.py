@@ -174,6 +174,11 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="InvoiceDesignTemplate.updated_at.desc(), InvoiceDesignTemplate.id.desc()",
     )
+    email_templates: Mapped[list["EmailTemplate"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="EmailTemplate.template_key.asc()",
+    )
 
     schedule_events: Mapped[list["ScheduleEvent"]] = relationship(
         back_populates="user",
@@ -533,6 +538,26 @@ class InvoiceDesignTemplate(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="invoice_design_templates")
+
+
+class EmailTemplate(Base):
+    __tablename__ = "email_templates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "template_key", name="uq_email_templates_user_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    template_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    html_body: Mapped[str] = mapped_column(String(20000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="email_templates")
 
 
 class BusinessExpense(Base):
