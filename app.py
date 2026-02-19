@@ -803,14 +803,14 @@ def _summary_period_label(month_text: str | None, year_text: str | None) -> str:
     return year
 
 
-def _ensure_business_expense_defaults(session, user_id: int) -> None:
+def _ensure_business_expense_defaults(session, user_id: int) -> bool:
     count_defaults = (
         session.query(BusinessExpense)
         .filter(BusinessExpense.user_id == user_id, BusinessExpense.is_custom.is_(False))
         .count()
     )
     if count_defaults > 0:
-        return
+        return False
 
     for idx, label in enumerate(BUSINESS_EXPENSE_DEFAULT_LABELS):
         session.add(
@@ -823,6 +823,7 @@ def _ensure_business_expense_defaults(session, user_id: int) -> None:
             )
         )
     session.flush()
+    return True
 
 
 def _business_expense_rows(session, user_id: int, ensure_defaults: bool = False):
@@ -6613,7 +6614,9 @@ def create_app():
     def business_expenses():
         uid = _current_user_id_int()
         with db_session() as s:
-            _ensure_business_expense_defaults(s, uid)
+            defaults_added = _ensure_business_expense_defaults(s, uid)
+            if defaults_added:
+                s.commit()
 
             if request.method == "POST":
                 action = (request.form.get("action") or "").strip()
@@ -7349,7 +7352,10 @@ def create_app():
                 flash("Invoice or estimate not found.", "error")
                 return redirect(_target_url())
 
-            category_rows = _business_expense_rows(s, uid, ensure_defaults=True)
+            defaults_added = _ensure_business_expense_defaults(s, uid)
+            if defaults_added:
+                s.commit()
+            category_rows = _business_expense_rows(s, uid, ensure_defaults=False)
             categories = [{"id": int(r.id), "label": (r.label or "").strip()} for r in category_rows]
 
             doc_items = []
