@@ -199,7 +199,7 @@
   const SNAP = 4;
   const TOKENS = [
     "doc_label","invoice_number","date","due_date","business_name","customer_name","customer_email","customer_phone",
-    "job","rate","hours","parts_total","labor_total","tax","total","paid","amount_due"
+    "job","rate","hours","labor_lines","parts_lines","notes_text","parts_total","labor_total","tax","total","paid","amount_due"
   ];
   const tok = (name) => "{" + "{" + name + "}" + "}";
   function setStatus(msg, kind = "info") {
@@ -226,6 +226,9 @@
     job: "2018 Ford F-150",
     rate: "$100.00",
     hours: "2.5",
+    labor_lines: "Oil change service - 1.0 hr - $100.00\nBrake inspection - 1.5 hr - $150.00",
+    parts_lines: "Oil Filter - $18.99\nEngine Oil - $37.95\nAir Filter - $27.99",
+    notes_text: "Thank you for your business.\nRecommended: tire rotation in 5,000 miles.",
     parts_total: "$182.00",
     labor_total: "$250.00",
     tax: "$34.56",
@@ -250,11 +253,31 @@
       if (!el || typeof el !== "object") return el;
       const copy = { ...el };
       if (typeof copy.text === "string") {
-        copy.text = copy.text.replace(/\\n/g, "\n");
+        let txt = copy.text;
+        for (let i = 0; i < 5; i += 1) {
+          if (!txt.includes("\\n")) break;
+          txt = txt.replace(/\\n/g, "\n");
+        }
+        copy.text = txt;
       }
       return copy;
     });
     return safe;
+  }
+
+  function updateSelectedNodeText() {
+    if (!selectedId) return;
+    const el = nodeById(selectedId);
+    if (!el || String(el.type || "text").toLowerCase() === "box") return;
+    const node = canvas.querySelector(`.node[data-id="${CSS.escape(String(selectedId))}"]`);
+    if (!node) return;
+    const resize = node.querySelector(".resize");
+    const rawText = String(el.text || "").replace(/\\n/g, "\n");
+    const renderedText = (showSampleData && showSampleData.checked)
+      ? rawText.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key))
+      : rawText;
+    node.textContent = renderedText;
+    if (resize) node.appendChild(resize);
   }
 
   function renderTemplateList() {
@@ -342,7 +365,7 @@
       propEditor.innerHTML = `
         <div class="mb-2">
           <label class="form-label compact-label">Text</label>
-          <textarea id="propText" class="form-control" rows="4">${el.text || ""}</textarea>
+          <textarea id="propText" class="form-control" rows="4">${String(el.text || "").replace(/\\n/g, "\n")}</textarea>
         </div>
         <div class="mb-2">
           <div class="small text-muted mb-1">Click to insert data fields:</div>
@@ -378,7 +401,11 @@
         samplePreview.textContent = raw.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key));
       };
       renderSamplePreview();
-      document.getElementById("propText").addEventListener("input", (e) => { el.text = e.target.value; renderSamplePreview(); renderCanvas(); });
+      document.getElementById("propText").addEventListener("input", (e) => {
+        el.text = e.target.value;
+        renderSamplePreview();
+        updateSelectedNodeText();
+      });
       document.getElementById("propFontSize").addEventListener("input", (e) => { el.fontSize = Number(e.target.value || 14); renderCanvas(); });
       document.getElementById("propWeight").addEventListener("input", (e) => { el.fontWeight = Number(e.target.value || 500); renderCanvas(); });
       document.getElementById("propColor").addEventListener("input", (e) => { el.color = e.target.value; renderCanvas(); });
@@ -399,7 +426,7 @@
           textArea.focus();
           textArea.selectionStart = textArea.selectionEnd = start + token.length;
           renderSamplePreview();
-          renderCanvas();
+          updateSelectedNodeText();
         });
         tokenList.appendChild(b);
       });
@@ -492,11 +519,11 @@
     } else if (type === "job") {
       addSection(418, 118, 350, 150, `JOB DETAILS\nJob: ${tok("job")}\nRate/Hour: ${tok("rate")}\nTotal Hours: ${tok("hours")}`, 14);
     } else if (type === "labor") {
-      addSection(48, 300, 720, 140, `LABOR\nOil change service - 1.0 hr - $100.00\nBrake inspection - 1.5 hr - $150.00\nLabor Total: ${tok("labor_total")}`, 13);
+      addSection(48, 300, 720, 140, `LABOR\n${tok("labor_lines")}\nLabor Total: ${tok("labor_total")}`, 13);
     } else if (type === "parts") {
-      addSection(48, 450, 720, 150, `PARTS\nOil Filter - $18.99\nEngine Oil - $37.95\nAir Filter - $27.99\nParts Total: ${tok("parts_total")}`, 13);
+      addSection(48, 450, 720, 150, `PARTS\n${tok("parts_lines")}\nParts Total: ${tok("parts_total")}`, 13);
     } else if (type === "notes") {
-      addSection(48, 780, 430, 160, "NOTES\nThank you for your business.\nRecommended: tire rotation in 5,000 miles.", 13);
+      addSection(48, 780, 430, 160, `NOTES\n${tok("notes_text")}`, 13);
     } else if (type === "summary") {
       addSection(
         500,

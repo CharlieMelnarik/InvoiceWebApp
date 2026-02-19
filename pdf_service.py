@@ -174,6 +174,35 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
     customer_name = (getattr(customer, "name", None) or inv.name or "").strip()
     customer_email = (getattr(inv, "customer_email", None) or getattr(customer, "email", None) or "").strip()
     customer_phone = _format_phone((getattr(inv, "customer_phone", None) or getattr(customer, "phone", None) or "").strip())
+    rate_val = float(getattr(inv, "price_per_hour", 0.0) or 0.0)
+    labor_lines: list[str] = []
+    for li in getattr(inv, "labor_items", []) or []:
+        try:
+            t = float(li.labor_time_hours or 0.0)
+        except Exception:
+            t = 0.0
+        line_total = t * rate_val
+        desc = (li.labor_desc or "").strip() or "Labor Item"
+        if t > 0:
+            labor_lines.append(f"{desc} - {t:g} hr - {_money(line_total)}")
+        elif line_total:
+            labor_lines.append(f"{desc} - {_money(line_total)}")
+        else:
+            labor_lines.append(desc)
+    if not labor_lines and (getattr(inv, "hours", 0.0) or 0.0):
+        h = float(getattr(inv, "hours", 0.0) or 0.0)
+        labor_lines.append(f"Labor - {h:g} hr - {_money(h * rate_val)}")
+
+    parts_lines: list[str] = []
+    for p in getattr(inv, "parts", []) or []:
+        name = (p.part_name or "").strip() or "Part"
+        price = float(p.part_price or 0.0)
+        if price:
+            parts_lines.append(f"{name} - {_money(inv.part_price_with_markup(price))}")
+        else:
+            parts_lines.append(name)
+
+    notes_text = (getattr(inv, "notes", None) or "").strip()
     return {
         "doc_label": "ESTIMATE" if is_estimate else "INVOICE",
         "invoice_number": str(getattr(inv, "display_number", None) or inv.invoice_number or ""),
@@ -184,8 +213,11 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
         "customer_email": customer_email,
         "customer_phone": customer_phone,
         "job": str(getattr(inv, "vehicle", None) or ""),
-        "rate": _money(getattr(inv, "price_per_hour", 0.0) or 0.0),
+        "rate": _money(rate_val),
         "hours": str(getattr(inv, "hours", 0.0) or 0.0),
+        "labor_lines": "\n".join(labor_lines),
+        "parts_lines": "\n".join(parts_lines),
+        "notes_text": notes_text,
         "parts_total": _money(inv.parts_total()),
         "labor_total": _money(inv.labor_total()),
         "tax": _money(inv.tax_amount()),
@@ -259,6 +291,19 @@ def _render_invoice_builder_pdf(
             continue
 
         text_raw = str(el.get("text") or "")
+        # Backward compatibility for older starter templates that hardcoded sample lines.
+        text_raw = text_raw.replace(
+            "LABOR\nOil change service - 1.0 hr - $100.00\nBrake inspection - 1.5 hr - $150.00\nLabor Total: {{labor_total}}",
+            "LABOR\n{{labor_lines}}\nLabor Total: {{labor_total}}",
+        )
+        text_raw = text_raw.replace(
+            "PARTS\nOil Filter - $18.99\nEngine Oil - $37.95\nAir Filter - $27.99\nParts Total: {{parts_total}}",
+            "PARTS\n{{parts_lines}}\nParts Total: {{parts_total}}",
+        )
+        text_raw = text_raw.replace(
+            "NOTES\nThank you for your business.\nRecommended: tire rotation in 5,000 miles.",
+            "NOTES\n{{notes_text}}",
+        )
         for k, v in vars_map.items():
             text_raw = text_raw.replace(f"{{{{{k}}}}}", str(v))
         font_size = max(7.0, min(64.0, float(el.get("fontSize") or 14.0))) * min(scale_x, scale_y)
