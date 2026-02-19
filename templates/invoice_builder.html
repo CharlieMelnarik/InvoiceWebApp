@@ -128,6 +128,7 @@
       <button class="btn btn-outline-primary tool-btn" data-quick="service">Use Service Starter</button>
       <div class="tool-group-title">Add Sections</div>
       <button class="btn btn-outline-primary tool-btn" data-add="header">+ Header (Title + Date + Number)</button>
+      <button class="btn btn-outline-primary tool-btn" data-add="business">+ Business Details Section</button>
       <button class="btn btn-outline-primary tool-btn" data-add="bill">+ Bill To Section</button>
       <button class="btn btn-outline-primary tool-btn" data-add="job">+ Job Details Section</button>
       <button class="btn btn-outline-primary tool-btn" data-add="labor">+ Labor Section</button>
@@ -198,8 +199,10 @@
   let drag = null;
   const SNAP = 4;
   const TOKENS = [
-    "doc_label","invoice_number","date","due_date","business_name","customer_name","customer_email","customer_phone",
-    "job","rate","hours","labor_lines","parts_lines","notes_text","parts_total","labor_total","tax","total","paid","amount_due"
+    "doc_label","invoice_number","date","due_date","business_name","business_phone","business_address",
+    "customer_name","customer_email","customer_phone","job","rate","hours",
+    "labor_lines","parts_lines","notes_text","labor_table","parts_table",
+    "parts_total","labor_total","tax","total","paid","amount_due"
   ];
   const tok = (name) => "{" + "{" + name + "}" + "}";
   function setStatus(msg, kind = "info") {
@@ -220,6 +223,8 @@
     date: "February 18, 2026",
     due_date: "March 20, 2026",
     business_name: "Summit Auto Repair",
+    business_phone: "(406) 555-0147",
+    business_address: "123 Work St\nSomewhere, MT 59840",
     customer_name: "John Sample",
     customer_email: "john.sample@email.com",
     customer_phone: "(406) 555-1234",
@@ -229,6 +234,8 @@
     labor_lines: "Oil change service - 1.0 hr - $100.00\nBrake inspection - 1.5 hr - $150.00",
     parts_lines: "Oil Filter - $18.99\nEngine Oil - $37.95\nAir Filter - $27.99",
     notes_text: "Thank you for your business.\nRecommended: tire rotation in 5,000 miles.",
+    labor_table: "Service Description            Time        Line Total\nSample labor item             1.5 hrs     $150.00",
+    parts_table: "Part / Material                Price\nSample part                   $18.99",
     parts_total: "$182.00",
     labor_total: "$250.00",
     tax: "$34.56",
@@ -260,9 +267,42 @@
         }
         copy.text = txt;
       }
+      if (typeof copy.richText === "string") {
+        let rich = copy.richText;
+        for (let i = 0; i < 5; i += 1) {
+          if (!rich.includes("\\n")) break;
+          rich = rich.replace(/\\n/g, "\n");
+        }
+        copy.richText = rich;
+      }
       return copy;
     });
     return safe;
+  }
+
+  function escapeHtml(text) {
+    return String(text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function plainTextToHtml(text) {
+    return escapeHtml(String(text || "").replace(/\\n/g, "\n")).replace(/\n/g, "<br>");
+  }
+
+  function richHtmlToPlain(html) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = String(html || "")
+      .replace(/<\/?(div|p)[^>]*>/gi, "\n")
+      .replace(/<br\s*\/?>/gi, "\n");
+    return (tmp.textContent || tmp.innerText || "").replace(/\r/g, "");
+  }
+
+  function renderedNodeHtml(el) {
+    const rawHtml = String(el.richText || plainTextToHtml(el.text || ""));
+    if (!(showSampleData && showSampleData.checked)) return rawHtml;
+    return rawHtml.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key));
   }
 
   function updateSelectedNodeText() {
@@ -272,12 +312,27 @@
     const node = canvas.querySelector(`.node[data-id="${CSS.escape(String(selectedId))}"]`);
     if (!node) return;
     const resize = node.querySelector(".resize");
-    const rawText = String(el.text || "").replace(/\\n/g, "\n");
-    const renderedText = (showSampleData && showSampleData.checked)
-      ? rawText.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key))
-      : rawText;
-    node.textContent = renderedText;
+    node.innerHTML = renderedNodeHtml(el);
     if (resize) node.appendChild(resize);
+  }
+
+  function insertTokenAtCaret(editor, token) {
+    editor.focus();
+    try {
+      const ok = document.execCommand("insertText", false, token);
+      if (ok) return;
+    } catch (_e) {}
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) {
+      editor.innerHTML += escapeHtml(token);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(document.createTextNode(token));
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 
   function renderTemplateList() {
@@ -325,11 +380,7 @@
       node.style.borderColor = el.borderColor || "transparent";
       node.style.backgroundColor = el.fillColor || "transparent";
       node.style.borderRadius = `${el.radius || 0}px`;
-      const rawText = String(el.text || "").replace(/\\n/g, "\n");
-      const renderedText = (showSampleData && showSampleData.checked)
-        ? rawText.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key))
-        : rawText;
-      node.textContent = renderedText;
+      node.innerHTML = renderedNodeHtml(el);
       const resize = document.createElement("div");
       resize.className = "resize";
       node.appendChild(resize);
@@ -377,7 +428,20 @@
       propEditor.innerHTML = `
         <div class="mb-2">
           <label class="form-label compact-label">Text</label>
-          <textarea id="propText" class="form-control" rows="4">${String(el.text || "").replace(/\\n/g, "\n")}</textarea>
+          <div class="btn-toolbar mb-2 gap-2" role="toolbar" aria-label="Inline text style">
+            <div class="btn-group btn-group-sm" role="group">
+              <button id="inlineBold" type="button" class="btn btn-outline-secondary"><strong>B</strong></button>
+              <button id="inlineItalic" type="button" class="btn btn-outline-secondary"><em>I</em></button>
+              <button id="inlineUnderline" type="button" class="btn btn-outline-secondary"><span style="text-decoration: underline;">U</span></button>
+            </div>
+            <select id="inlineFontFamily" class="form-select form-select-sm" style="max-width: 220px;">
+              <option value="Helvetica">Inline Sans (Helvetica)</option>
+              <option value="Times-Roman">Inline Serif (Times)</option>
+              <option value="Courier">Inline Mono (Courier)</option>
+            </select>
+          </div>
+          <div id="propTextRich" class="form-control" contenteditable="true" style="min-height: 130px; white-space: pre-wrap; overflow: auto;"></div>
+          <div class="small text-muted mt-1">Tip: highlight specific words and use the inline toolbar above for mixed formatting in one box.</div>
         </div>
         <div class="mb-2">
           <div class="small text-muted mb-1">Click to insert data fields:</div>
@@ -426,18 +490,27 @@
           <button id="removeBtn" class="btn btn-outline-danger btn-sm" type="button">Delete Element</button>
         </div>
       `;
-      const textArea = document.getElementById("propText");
+      const textEditor = document.getElementById("propTextRich");
       const samplePreview = document.getElementById("samplePreview");
+      textEditor.innerHTML = String(el.richText || plainTextToHtml(el.text || ""));
+      try { document.execCommand("styleWithCSS", false, false); } catch (_e) {}
+
+      const syncEditorToElement = () => {
+        el.richText = textEditor.innerHTML || "";
+        el.text = richHtmlToPlain(el.richText);
+      };
       const renderSamplePreview = () => {
-        const raw = String(el.text || "").replace(/\\n/g, "\n");
+        const raw = richHtmlToPlain(String(el.richText || plainTextToHtml(el.text || "")));
         samplePreview.textContent = raw.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, key) => SAMPLE_VALUES[key] ?? tok(key));
       };
       renderSamplePreview();
-      document.getElementById("propText").addEventListener("input", (e) => {
-        el.text = e.target.value;
+      textEditor.addEventListener("input", () => {
+        syncEditorToElement();
         renderSamplePreview();
         updateSelectedNodeText();
       });
+      textEditor.addEventListener("keyup", syncEditorToElement);
+      textEditor.addEventListener("blur", syncEditorToElement);
       document.getElementById("propFontSize").addEventListener("input", (e) => { el.fontSize = Number(e.target.value || 14); renderCanvas(); });
       document.getElementById("propFontFamily").addEventListener("change", (e) => { el.fontFamily = e.target.value || "Helvetica"; renderCanvas(); });
       document.getElementById("propColor").addEventListener("input", (e) => { el.color = e.target.value; renderCanvas(); });
@@ -467,6 +540,31 @@
         el.textAlign = "right";
         renderCanvas();
       });
+      const inlineFontFamily = document.getElementById("inlineFontFamily");
+      document.getElementById("inlineBold").addEventListener("click", () => {
+        textEditor.focus();
+        document.execCommand("bold", false, null);
+        syncEditorToElement();
+        updateSelectedNodeText();
+      });
+      document.getElementById("inlineItalic").addEventListener("click", () => {
+        textEditor.focus();
+        document.execCommand("italic", false, null);
+        syncEditorToElement();
+        updateSelectedNodeText();
+      });
+      document.getElementById("inlineUnderline").addEventListener("click", () => {
+        textEditor.focus();
+        document.execCommand("underline", false, null);
+        syncEditorToElement();
+        updateSelectedNodeText();
+      });
+      inlineFontFamily.addEventListener("change", () => {
+        textEditor.focus();
+        document.execCommand("fontName", false, inlineFontFamily.value || "Helvetica");
+        syncEditorToElement();
+        updateSelectedNodeText();
+      });
       const tokenList = document.getElementById("tokenList");
       TOKENS.forEach((t) => {
         const b = document.createElement("button");
@@ -475,14 +573,8 @@
         b.textContent = tok(t);
         b.addEventListener("click", () => {
           const token = tok(t);
-          const start = textArea.selectionStart || 0;
-          const end = textArea.selectionEnd || 0;
-          const before = textArea.value.slice(0, start);
-          const after = textArea.value.slice(end);
-          textArea.value = `${before}${token}${after}`;
-          el.text = textArea.value;
-          textArea.focus();
-          textArea.selectionStart = textArea.selectionEnd = start + token.length;
+          insertTokenAtCaret(textEditor, token);
+          syncEditorToElement();
           renderSamplePreview();
           updateSelectedNodeText();
         });
@@ -576,14 +668,16 @@
       });
       state.elements.push(t1, t2);
       selectedId = t1.id;
+    } else if (type === "business") {
+      addSection(320, 36, 220, 76, `${tok("business_name")}\n${tok("business_address")}\n${tok("business_phone")}`, 11);
     } else if (type === "bill") {
       addSection(48, 118, 350, 150, `BILL TO\n${tok("customer_name")}\nEmail: ${tok("customer_email")}\nPhone: ${tok("customer_phone")}`, 14);
     } else if (type === "job") {
       addSection(418, 118, 350, 150, `JOB DETAILS\nJob: ${tok("job")}\nRate/Hour: ${tok("rate")}\nTotal Hours: ${tok("hours")}`, 14);
     } else if (type === "labor") {
-      addSection(48, 300, 720, 140, `LABOR\n${tok("labor_lines")}\nLabor Total: ${tok("labor_total")}`, 13);
+      addSection(48, 300, 720, 140, `${tok("labor_table")}`, 12);
     } else if (type === "parts") {
-      addSection(48, 450, 720, 150, `PARTS\n${tok("parts_lines")}\nParts Total: ${tok("parts_total")}`, 13);
+      addSection(48, 450, 720, 150, `${tok("parts_table")}`, 12);
     } else if (type === "notes") {
       addSection(48, 780, 430, 160, `NOTES\n${tok("notes_text")}`, 13);
     } else if (type === "summary") {
@@ -604,6 +698,7 @@
     state = base;
     if (kind === "pdf_like") {
       addPreset("header");
+      addPreset("business");
       addPreset("bill");
       addPreset("job");
       addPreset("labor");
@@ -612,10 +707,12 @@
       addPreset("summary");
     } else if (kind === "minimal") {
       addPreset("header");
+      addPreset("business");
       addPreset("bill");
       addPreset("summary");
     } else if (kind === "service") {
       addPreset("header");
+      addPreset("business");
       addPreset("bill");
       addPreset("job");
       addPreset("labor");
@@ -624,6 +721,7 @@
       addPreset("summary");
     } else {
       addPreset("header");
+      addPreset("business");
       addPreset("bill");
       addPreset("job");
       addPreset("parts");

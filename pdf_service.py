@@ -12,6 +12,8 @@ from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.lib.utils import ImageReader
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.platypus import Paragraph
 
 from config import Config
 from models import Invoice, User, Customer, InvoiceDesignTemplate
@@ -171,6 +173,8 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
     if due_line:
         due_date = due_line.replace("Payment due date:", "").strip()
     business_name = (getattr(owner, "business_name", None) or getattr(owner, "username", None) or "InvoiceRunner").strip()
+    owner_phone = _format_phone((getattr(owner, "phone", None) or "").strip())
+    owner_addr = "\n".join(_owner_address_lines(owner))
     customer_name = (getattr(customer, "name", None) or inv.name or "").strip()
     customer_email = (getattr(inv, "customer_email", None) or getattr(customer, "email", None) or "").strip()
     customer_phone = _format_phone((getattr(inv, "customer_phone", None) or getattr(customer, "phone", None) or "").strip())
@@ -209,6 +213,8 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
         "date": str(inv.date_in or ""),
         "due_date": due_date,
         "business_name": business_name,
+        "business_phone": owner_phone,
+        "business_address": owner_addr,
         "customer_name": customer_name,
         "customer_email": customer_email,
         "customer_phone": customer_phone,
@@ -218,6 +224,8 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
         "labor_lines": "\n".join(labor_lines),
         "parts_lines": "\n".join(parts_lines),
         "notes_text": notes_text,
+        "labor_table": "{{labor_table}}",
+        "parts_table": "{{parts_table}}",
         "parts_total": _money(inv.parts_total()),
         "labor_total": _money(inv.labor_total()),
         "tax": _money(inv.tax_amount()),
@@ -295,6 +303,94 @@ def _render_invoice_builder_pdf(
             return "Helvetica-Oblique"
         return "Helvetica"
 
+    def _inline_font_name_from_face(face: str) -> str:
+        raw = (face or "").strip().lower()
+        if "times" in raw:
+            return "Times-Roman"
+        if "courier" in raw or "mono" in raw:
+            return "Courier"
+        return "Helvetica"
+
+    def _draw_builder_table(kind: str, x0: float, y0: float, w0: float, h0: float) -> None:
+        pad_x = 6 * scale_x
+        left = x0 + pad_x
+        right = x0 + w0 - pad_x
+        top = y0 + h0 - (8 * scale_y)
+        row_h = 15 * min(scale_x, scale_y)
+        if kind == "labor":
+            headers = ["Service Description", "Time", "Line Total"]
+            rows = []
+            rate = float(getattr(inv, "price_per_hour", 0.0) or 0.0)
+            for li in getattr(inv, "labor_items", []) or []:
+                t = float(getattr(li, "labor_time_hours", 0.0) or 0.0)
+                line_total = t * rate
+                rows.append([
+                    (getattr(li, "labor_desc", "") or "").strip(),
+                    f"{t:g} hrs" if t else "",
+                    _money(line_total) if line_total else "",
+                ])
+            if not rows and float(getattr(inv, "hours", 0.0) or 0.0):
+                t = float(getattr(inv, "hours", 0.0) or 0.0)
+                rows.append(["Labor", f"{t:g} hrs", _money(t * rate)])
+            col_fracs = [0.62, 0.18, 0.20]
+        else:
+            headers = ["Part / Material", "Price"]
+            rows = []
+            for p in getattr(inv, "parts", []) or []:
+                name = (getattr(p, "part_name", "") or "").strip()
+                price = float(getattr(p, "part_price", 0.0) or 0.0)
+                rows.append([name, _money(inv.part_price_with_markup(price)) if price else ""])
+            col_fracs = [0.78, 0.22]
+
+        if not rows:
+            rows = [["No items", ""]] if kind != "labor" else [["No labor items", "", ""]]
+
+        usable_h = max(row_h * 2, h0 - (14 * scale_y))
+        max_rows = max(1, int((usable_h - row_h) // row_h))
+        rows = rows[:max_rows]
+        col_widths = [w0 * f for f in col_fracs]
+        col_x = [left]
+        for cw in col_widths[:-1]:
+            col_x.append(col_x[-1] + cw)
+
+        pdf.setFillColor(colors.HexColor("#f3f4f6"))
+        pdf.rect(x0 + 1, top - row_h + 2, w0 - 2, row_h, stroke=0, fill=1)
+        pdf.setFillColor(colors.black)
+        pdf.setStrokeColor(colors.HexColor("#d1d5db"))
+        pdf.setFont("Helvetica-Bold", 10 * min(scale_x, scale_y))
+        for idx, head in enumerate(headers):
+            if idx == 0:
+                pdf.drawString(col_x[idx] + 4, top - (row_h * 0.72), head)
+            elif idx == len(headers) - 1:
+                tw = stringWidth(head, "Helvetica-Bold", 10 * min(scale_x, scale_y))
+                pdf.drawString(right - tw - 4, top - (row_h * 0.72), head)
+            else:
+                mid = col_x[idx] + (col_widths[idx] / 2.0)
+                tw = stringWidth(head, "Helvetica-Bold", 10 * min(scale_x, scale_y))
+                pdf.drawString(mid - (tw / 2.0), top - (row_h * 0.72), head)
+        pdf.line(x0 + 1, top - row_h + 1, x0 + w0 - 1, top - row_h + 1)
+
+        y_line = top - row_h - 2
+        pdf.setFont("Helvetica", 10 * min(scale_x, scale_y))
+        for row in rows:
+            if y_line < y0 + 6:
+                break
+            first = str(row[0] if len(row) > 0 else "")
+            second = str(row[1] if len(row) > 1 else "")
+            third = str(row[2] if len(row) > 2 else "")
+            pdf.drawString(col_x[0] + 4, y_line - 10, first[:90])
+            if len(headers) == 3:
+                mid = col_x[1] + (col_widths[1] / 2.0)
+                tw2 = stringWidth(second, "Helvetica", 10 * min(scale_x, scale_y))
+                pdf.drawString(mid - (tw2 / 2.0), y_line - 10, second)
+                tw3 = stringWidth(third, "Helvetica", 10 * min(scale_x, scale_y))
+                pdf.drawString(right - tw3 - 4, y_line - 10, third)
+            else:
+                tw2 = stringWidth(second, "Helvetica", 10 * min(scale_x, scale_y))
+                pdf.drawString(right - tw2 - 4, y_line - 10, second)
+            pdf.line(x0 + 1, y_line - row_h + 2, x0 + w0 - 1, y_line - row_h + 2)
+            y_line -= row_h
+
     for el in elements:
         if not isinstance(el, dict):
             continue
@@ -322,6 +418,13 @@ def _render_invoice_builder_pdf(
             continue
 
         text_raw = str(el.get("text") or "")
+        rich_raw = str(el.get("richText") or "")
+        if "{{labor_table}}" in text_raw or "{{labor_table}}" in rich_raw:
+            _draw_builder_table("labor", rx, ry, rw, rh)
+            continue
+        if "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
+            _draw_builder_table("parts", rx, ry, rw, rh)
+            continue
         # Backward compatibility for older starter templates that hardcoded sample lines.
         text_raw = text_raw.replace(
             "LABOR\nOil change service - 1.0 hr - $100.00\nBrake inspection - 1.5 hr - $150.00\nLabor Total: {{labor_total}}",
@@ -337,6 +440,8 @@ def _render_invoice_builder_pdf(
         )
         for k, v in vars_map.items():
             text_raw = text_raw.replace(f"{{{{{k}}}}}", str(v))
+            if rich_raw:
+                rich_raw = rich_raw.replace(f"{{{{{k}}}}}", str(v))
         font_size = max(7.0, min(64.0, float(el.get("fontSize") or 14.0))) * min(scale_x, scale_y)
         font_weight = int(el.get("fontWeight") or 500)
         font_family = str(el.get("fontFamily") or "Helvetica")
@@ -359,6 +464,33 @@ def _render_invoice_builder_pdf(
         center_x = rx + (rw / 2.0)
         ty = ry + rh - line_h
         max_w = rw - (12 * scale_x)
+        if rich_raw.strip():
+            rich = rich_raw
+            rich = re.sub(r"</?(div|p)[^>]*>", "<br/>", rich, flags=re.I)
+            rich = re.sub(r"<span[^>]*>", "", rich, flags=re.I)
+            rich = re.sub(r"</span>", "", rich, flags=re.I)
+            rich = rich.replace("&nbsp;", " ")
+            rich = re.sub(r"<font\s+face=['\"]?([^'\">]+)['\"]?>", lambda m: f"<font name='{_inline_font_name_from_face(m.group(1))}'>", rich, flags=re.I)
+            rich = re.sub(r"<br\s*>", "<br/>", rich, flags=re.I)
+            if underline and "<u>" not in rich.lower():
+                rich = f"<u>{rich}</u>"
+            align_code = 0 if text_align == "left" else (1 if text_align == "center" else 2)
+            pstyle = ParagraphStyle(
+                "builder_rich",
+                fontName=font_name,
+                fontSize=font_size,
+                leading=line_h,
+                textColor=colors.HexColor(text_color) if re.fullmatch(r"#[0-9a-fA-F]{6}", text_color or "") else colors.black,
+                alignment=align_code,
+            )
+            try:
+                para = Paragraph(rich, pstyle)
+                _w, h_used = para.wrap(max_w, max(10.0, rh - 4))
+                draw_y = ry + rh - h_used - 2
+                para.drawOn(pdf, left_x, max(ry + 2, draw_y))
+                continue
+            except Exception:
+                pass
         for ln in str(text_raw).splitlines():
             for wrapped in _wrap_text(ln, font_name, font_size, max_w):
                 if ty < ry + 2:
