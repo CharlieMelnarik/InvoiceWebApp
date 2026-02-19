@@ -314,6 +314,14 @@
       node.style.color = el.color || "#111827";
       node.style.fontSize = `${el.fontSize || 14}px`;
       node.style.fontWeight = String(el.fontWeight || 500);
+      const fontFamily = String(el.fontFamily || "Helvetica");
+      node.style.fontFamily =
+        fontFamily === "Times-Roman" ? "Georgia, 'Times New Roman', serif" :
+        fontFamily === "Courier" ? "'Courier New', Courier, monospace" :
+        "'Helvetica Neue', Helvetica, Arial, sans-serif";
+      node.style.fontStyle = (String(el.fontStyle || "normal").toLowerCase() === "italic") ? "italic" : "normal";
+      node.style.textAlign = String(el.textAlign || "left").toLowerCase();
+      node.style.textDecoration = (el.underline ? "underline" : "none");
       node.style.borderColor = el.borderColor || "transparent";
       node.style.backgroundColor = el.fillColor || "transparent";
       node.style.borderRadius = `${el.radius || 0}px`;
@@ -362,6 +370,10 @@
       document.getElementById("propFill").addEventListener("input", (e) => { el.fillColor = e.target.value; renderCanvas(); });
       document.getElementById("propRadius").addEventListener("input", (e) => { el.radius = Number(e.target.value || 0); renderCanvas(); });
     } else {
+      const isBold = Number(el.fontWeight || 500) >= 600;
+      const isItalic = String(el.fontStyle || "normal").toLowerCase() === "italic";
+      const isUnderline = !!el.underline;
+      const textAlign = String(el.textAlign || "left").toLowerCase();
       propEditor.innerHTML = `
         <div class="mb-2">
           <label class="form-label compact-label">Text</label>
@@ -381,12 +393,32 @@
             <input id="propFontSize" class="form-control" type="number" min="8" max="80" value="${el.fontSize || 14}">
           </div>
           <div class="col-6">
-            <label class="form-label compact-label">Weight</label>
-            <input id="propWeight" class="form-control" type="number" min="100" max="900" step="100" value="${el.fontWeight || 500}">
+            <label class="form-label compact-label">Font Family</label>
+            <select id="propFontFamily" class="form-select">
+              <option value="Helvetica" ${String(el.fontFamily || "Helvetica") === "Helvetica" ? "selected" : ""}>Sans Serif (Helvetica)</option>
+              <option value="Times-Roman" ${String(el.fontFamily || "Helvetica") === "Times-Roman" ? "selected" : ""}>Serif (Times)</option>
+              <option value="Courier" ${String(el.fontFamily || "Helvetica") === "Courier" ? "selected" : ""}>Monospace (Courier)</option>
+            </select>
           </div>
           <div class="col-6">
             <label class="form-label compact-label">Text Color</label>
             <input id="propColor" class="form-control form-control-color" type="color" value="${el.color || "#111827"}">
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Style</label>
+            <div class="btn-group w-100" role="group" aria-label="Text style controls">
+              <button id="propBold" class="btn btn-sm ${isBold ? "btn-primary" : "btn-outline-primary"}" type="button"><strong>B</strong></button>
+              <button id="propItalic" class="btn btn-sm ${isItalic ? "btn-primary" : "btn-outline-primary"}" type="button"><em>I</em></button>
+              <button id="propUnderline" class="btn btn-sm ${isUnderline ? "btn-primary" : "btn-outline-primary"}" type="button"><span style="text-decoration: underline;">U</span></button>
+            </div>
+          </div>
+          <div class="col-12">
+            <label class="form-label compact-label">Alignment</label>
+            <div class="btn-group w-100" role="group" aria-label="Text alignment">
+              <button id="propAlignLeft" class="btn btn-sm ${textAlign === "left" ? "btn-primary" : "btn-outline-primary"}" type="button">Left</button>
+              <button id="propAlignCenter" class="btn btn-sm ${textAlign === "center" ? "btn-primary" : "btn-outline-primary"}" type="button">Center</button>
+              <button id="propAlignRight" class="btn btn-sm ${textAlign === "right" ? "btn-primary" : "btn-outline-primary"}" type="button">Right</button>
+            </div>
           </div>
         </div>
         <div class="d-grid gap-2 mt-2">
@@ -407,8 +439,34 @@
         updateSelectedNodeText();
       });
       document.getElementById("propFontSize").addEventListener("input", (e) => { el.fontSize = Number(e.target.value || 14); renderCanvas(); });
-      document.getElementById("propWeight").addEventListener("input", (e) => { el.fontWeight = Number(e.target.value || 500); renderCanvas(); });
+      document.getElementById("propFontFamily").addEventListener("change", (e) => { el.fontFamily = e.target.value || "Helvetica"; renderCanvas(); });
       document.getElementById("propColor").addEventListener("input", (e) => { el.color = e.target.value; renderCanvas(); });
+      document.getElementById("propBold").addEventListener("click", () => {
+        const currentlyBold = Number(el.fontWeight || 500) >= 600;
+        el.fontWeight = currentlyBold ? 500 : 700;
+        renderCanvas();
+      });
+      document.getElementById("propItalic").addEventListener("click", () => {
+        const currentlyItalic = String(el.fontStyle || "normal").toLowerCase() === "italic";
+        el.fontStyle = currentlyItalic ? "normal" : "italic";
+        renderCanvas();
+      });
+      document.getElementById("propUnderline").addEventListener("click", () => {
+        el.underline = !el.underline;
+        renderCanvas();
+      });
+      document.getElementById("propAlignLeft").addEventListener("click", () => {
+        el.textAlign = "left";
+        renderCanvas();
+      });
+      document.getElementById("propAlignCenter").addEventListener("click", () => {
+        el.textAlign = "center";
+        renderCanvas();
+      });
+      document.getElementById("propAlignRight").addEventListener("click", () => {
+        el.textAlign = "right";
+        renderCanvas();
+      });
       const tokenList = document.getElementById("tokenList");
       TOKENS.forEach((t) => {
         const b = document.createElement("button");
@@ -470,6 +528,10 @@
       text: opts.text ?? "Text",
       fontSize: opts.fontSize ?? 16,
       fontWeight: opts.fontWeight ?? 600,
+      fontFamily: opts.fontFamily ?? "Helvetica",
+      fontStyle: opts.fontStyle ?? "normal",
+      textAlign: opts.textAlign ?? "left",
+      underline: !!opts.underline,
       color: opts.color ?? "#111827",
       fillColor: "transparent",
       borderColor: "transparent",

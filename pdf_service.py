@@ -264,6 +264,37 @@ def _render_invoice_builder_pdf(
     def _map_y(y: float, h: float) -> float:
         return PAGE_H - ((y + h) * scale_y)
 
+    def _builder_font_name(font_family: str, font_weight: int, font_style: str) -> str:
+        fam = (font_family or "Helvetica").strip().lower()
+        style = (font_style or "normal").strip().lower()
+        is_bold = int(font_weight or 500) >= 600
+        is_italic = style == "italic"
+
+        if fam in {"times", "times-roman", "times new roman"}:
+            if is_bold and is_italic:
+                return "Times-BoldItalic"
+            if is_bold:
+                return "Times-Bold"
+            if is_italic:
+                return "Times-Italic"
+            return "Times-Roman"
+        if fam in {"courier", "courier new"}:
+            if is_bold and is_italic:
+                return "Courier-BoldOblique"
+            if is_bold:
+                return "Courier-Bold"
+            if is_italic:
+                return "Courier-Oblique"
+            return "Courier"
+
+        if is_bold and is_italic:
+            return "Helvetica-BoldOblique"
+        if is_bold:
+            return "Helvetica-Bold"
+        if is_italic:
+            return "Helvetica-Oblique"
+        return "Helvetica"
+
     for el in elements:
         if not isinstance(el, dict):
             continue
@@ -308,21 +339,43 @@ def _render_invoice_builder_pdf(
             text_raw = text_raw.replace(f"{{{{{k}}}}}", str(v))
         font_size = max(7.0, min(64.0, float(el.get("fontSize") or 14.0))) * min(scale_x, scale_y)
         font_weight = int(el.get("fontWeight") or 500)
-        font_name = "Helvetica-Bold" if font_weight >= 600 else "Helvetica"
+        font_family = str(el.get("fontFamily") or "Helvetica")
+        font_style = str(el.get("fontStyle") or "normal")
+        text_align = str(el.get("textAlign") or "left").strip().lower()
+        underline = bool(el.get("underline", False))
+        font_name = _builder_font_name(font_family, font_weight, font_style)
         if re.fullmatch(r"#[0-9a-fA-F]{6}", text_color or ""):
             pdf.setFillColor(colors.HexColor(text_color))
         else:
             pdf.setFillColor(colors.black)
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", text_color or ""):
+            pdf.setStrokeColor(colors.HexColor(text_color))
+        else:
+            pdf.setStrokeColor(colors.black)
         pdf.setFont(font_name, font_size)
         line_h = max(8.0, font_size * 1.2)
-        tx = rx + (6 * scale_x)
+        left_x = rx + (6 * scale_x)
+        right_x = rx + rw - (6 * scale_x)
+        center_x = rx + (rw / 2.0)
         ty = ry + rh - line_h
         max_w = rw - (12 * scale_x)
         for ln in str(text_raw).splitlines():
             for wrapped in _wrap_text(ln, font_name, font_size, max_w):
                 if ty < ry + 2:
                     break
-                pdf.drawString(tx, ty, wrapped)
+                if text_align == "right":
+                    text_w = stringWidth(wrapped, font_name, font_size)
+                    draw_x = max(left_x, right_x - text_w)
+                elif text_align == "center":
+                    text_w = stringWidth(wrapped, font_name, font_size)
+                    draw_x = max(left_x, center_x - (text_w / 2.0))
+                else:
+                    draw_x = left_x
+                    text_w = stringWidth(wrapped, font_name, font_size)
+                pdf.drawString(draw_x, ty, wrapped)
+                if underline and wrapped:
+                    underline_y = ty - max(1.0, font_size * 0.08)
+                    pdf.line(draw_x, underline_y, draw_x + text_w, underline_y)
                 ty -= line_h
 
     pdf.save()
