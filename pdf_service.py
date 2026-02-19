@@ -491,6 +491,8 @@ def _render_invoice_builder_pdf(
     effective_y: dict[str, float] = {}
     base_h: dict[str, float] = {}
     base_y: dict[str, float] = {}
+    base_x: dict[str, float] = {}
+    base_w: dict[str, float] = {}
     grow_parent_by_target: dict[str, str] = {}
     for _el in elements:
         if not isinstance(_el, dict) or _el.get("id") is None:
@@ -502,8 +504,12 @@ def _render_invoice_builder_pdf(
                 grow_parent_by_target[target_id] = el_id
         h0 = max(10.0, float(_el.get("h") or 10.0))
         y0 = float(_el.get("y") or 0.0)
+        x0 = float(_el.get("x") or 0.0)
+        w0 = max(1.0, float(_el.get("w") or 1.0))
         base_h[el_id] = h0
         base_y[el_id] = y0
+        base_x[el_id] = x0
+        base_w[el_id] = w0
         effective_y[el_id] = y0
         text_raw = str(_el.get("text") or "")
         rich_raw = str(_el.get("richText") or "")
@@ -534,6 +540,17 @@ def _render_invoice_builder_pdf(
         oy = float(effective_y.get(outer_id, base_y.get(outer_id, float(outer.get("y") or 0.0))))
         ow = max(1.0, float(outer.get("w") or 1.0))
         oh = max(1.0, float(effective_h.get(outer_id, base_h.get(outer_id, float(outer.get("h") or 1.0)))))
+        return ix >= ox and iy >= oy and (ix + iw) <= (ox + ow) and (iy + ih) <= (oy + oh)
+
+    def _is_base_contained(inner_id: str, outer_id: str) -> bool:
+        ix = float(base_x.get(inner_id, float((elements_by_id.get(inner_id) or {}).get("x") or 0.0)))
+        iy = float(base_y.get(inner_id, float((elements_by_id.get(inner_id) or {}).get("y") or 0.0)))
+        iw = max(1.0, float(base_w.get(inner_id, float((elements_by_id.get(inner_id) or {}).get("w") or 1.0))))
+        ih = max(1.0, float(base_h.get(inner_id, float((elements_by_id.get(inner_id) or {}).get("h") or 1.0))))
+        ox = float(base_x.get(outer_id, float((elements_by_id.get(outer_id) or {}).get("x") or 0.0)))
+        oy = float(base_y.get(outer_id, float((elements_by_id.get(outer_id) or {}).get("y") or 0.0)))
+        ow = max(1.0, float(base_w.get(outer_id, float((elements_by_id.get(outer_id) or {}).get("w") or 1.0))))
+        oh = max(1.0, float(base_h.get(outer_id, float((elements_by_id.get(outer_id) or {}).get("h") or 1.0))))
         return ix >= ox and iy >= oy and (ix + iw) <= (ox + ow) and (iy + ih) <= (oy + oh)
 
     def _nearest_below_y(el_id: str, *, ignore_ids: set[str] | None = None) -> float | None:
@@ -646,6 +663,19 @@ def _render_invoice_builder_pdf(
                 if lower_y < needed_y:
                     effective_y[lower_id] = needed_y
                     changed = True
+
+        # Keep growWith targets anchored inside their parent boxes (if originally inside).
+        for box_id, box_el in ((str(e.get("id")), e) for e in elements if isinstance(e, dict) and str(e.get("type") or "").lower() == "box" and e.get("id") is not None):
+            target_id = str(box_el.get("growWithId") or "").strip()
+            if not target_id or target_id not in elements_by_id:
+                continue
+            if not _is_base_contained(target_id, box_id):
+                continue
+            rel_y = float(base_y.get(target_id, 0.0)) - float(base_y.get(box_id, 0.0))
+            desired_target_y = float(effective_y.get(box_id, base_y.get(box_id, 0.0))) + rel_y
+            if abs(float(effective_y.get(target_id, base_y.get(target_id, 0.0))) - desired_target_y) > 0.1:
+                effective_y[target_id] = desired_target_y
+                changed = True
         if not changed:
             break
 
