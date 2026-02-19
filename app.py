@@ -1289,6 +1289,11 @@ def _send_payment_reminder_for_invoice(
     owner_status = (getattr(owner, "subscription_status", None) or "").strip().lower() if owner else ""
     owner_tier = _normalize_plan_tier(getattr(owner, "subscription_tier", None) if owner else None)
     owner_pro_enabled = owner_status in ("trialing", "active") and owner_tier == "pro"
+    business_name = (
+        (owner.business_name or "").strip()
+        if owner and getattr(owner, "business_name", None)
+        else ""
+    ) or (owner.username if owner and getattr(owner, "username", None) else "the business")
 
     if reminder_kind == "before_due":
         lead = int(getattr(owner, "payment_reminder_days_before", 0) or 0)
@@ -1327,7 +1332,7 @@ def _send_payment_reminder_for_invoice(
     body = (
         f"Hello {(customer.name if customer else 'there') or 'there'},\n\n"
         f"{timing_line}\n"
-        f"Invoice {display_no}\n"
+        f"Invoice {display_no} from {business_name}\n"
         f"Invoice amount due: ${float(inv.amount_due() or 0.0):,.2f}\n"
         f"{late_fee_policy_line}"
         f"{late_fee_line}"
@@ -5923,12 +5928,14 @@ def create_app():
             c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
             portal_token = make_customer_portal_token(inv.user_id, inv.id)
             customer_portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+            owner_pro_enabled = _has_pro_features(owner)
         return render_template(
             "estimate_view.html",
             inv=inv,
             tmpl=tmpl,
             customer=c,
             customer_portal_url=customer_portal_url,
+            owner_pro_enabled=owner_pro_enabled,
             can_edit_document=_can_edit_document(inv),
         )
 
@@ -6234,12 +6241,14 @@ def create_app():
             due_dt = _invoice_due_date_utc(inv, owner)
             late_fee_amount = _invoice_late_fee_amount(inv, owner)
             due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
+            owner_pro_enabled = _has_pro_features(owner)
         return render_template(
             "invoice_view.html",
             inv=inv,
             tmpl=tmpl,
             customer=c,
             customer_portal_url=customer_portal_url,
+            owner_pro_enabled=owner_pro_enabled,
             can_edit_document=_can_edit_document(inv),
             owner_fee_auto_enabled=owner_fee_auto_enabled,
             owner_fee_percent=owner_fee_percent,
@@ -7692,6 +7701,11 @@ def create_app():
             customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
             customer_name = (customer.name if customer else "").strip()
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            business_name = (
+                (owner.business_name or "").strip()
+                if owner and getattr(owner, "business_name", None)
+                else ""
+            ) or (owner.username if owner and getattr(owner, "username", None) else "the business")
 
             to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
             if not to_email or "@" not in to_email:
@@ -7717,7 +7731,7 @@ def create_app():
             subject = f"Estimate {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
-                f"Your estimate {display_no} is ready.\n"
+                f"Your estimate {display_no} from {business_name} is ready.\n"
                 f"Estimate amount: ${inv.invoice_total():,.2f}\n"
                 f"{portal_line}"
                 "Thank you."
@@ -7833,6 +7847,11 @@ def create_app():
             customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
             customer_name = (customer.name if customer else "").strip()
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            business_name = (
+                (owner.business_name or "").strip()
+                if owner and getattr(owner, "business_name", None)
+                else ""
+            ) or (owner.username if owner and getattr(owner, "username", None) else "the business")
 
             to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
             if not to_email or "@" not in to_email:
@@ -7879,7 +7898,7 @@ def create_app():
             subject = f"Invoice {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
-                f"Your invoice {display_no} is ready.\n"
+                f"Your invoice {display_no} from {business_name} is ready.\n"
                 f"Invoice amount: ${inv.invoice_total():,.2f}\n"
                 f"{card_fee_line}\n"
                 f"{portal_line}"

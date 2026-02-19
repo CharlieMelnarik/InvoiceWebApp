@@ -350,9 +350,11 @@
       <div class="doc-subsection" style="padding-top:0; margin-top:0; border-top:0; margin-bottom:12px;">
         <h3 class="doc-subtitle">Actions</h3>
         <div class="doc-action-grid">
-          <a class="btn btn-outline-primary" href="{{ customer_portal_url }}" target="_blank" rel="noopener noreferrer">
-            Customer Portal
-          </a>
+          {% if owner_pro_enabled %}
+            <a class="btn btn-outline-primary" href="{{ customer_portal_url }}" target="_blank" rel="noopener noreferrer">
+              Customer Portal
+            </a>
+          {% endif %}
 
           <a class="btn btn-outline-secondary" href="{{ url_for('invoice_pdf_download', invoice_id=inv.id) }}">
             Download PDF
