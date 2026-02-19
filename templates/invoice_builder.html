@@ -375,7 +375,7 @@
     });
   }
 
-  function renderCanvas() {
+  function renderCanvas(pass = 0) {
     canvas.style.background = state.canvas.bg || "#fff";
     canvas.innerHTML = '<div class="canvas-guide"></div>';
     state.elements.forEach(el => {
@@ -413,6 +413,24 @@
         if (Number(el.h || 0) !== needed) el.h = needed;
       }
     });
+    let linkedChanged = false;
+    state.elements.forEach((box) => {
+      if (!box || box.type !== "box" || !box.growWithId) return;
+      const target = nodeById(box.growWithId);
+      if (!target) return;
+      if (box.growDelta === null || box.growDelta === undefined || Number.isNaN(Number(box.growDelta))) {
+        box.growDelta = Number(box.h || 0) - Number(target.h || 0);
+      }
+      const desired = Math.max(24, Math.round(Number(target.h || 0) + Number(box.growDelta || 0)));
+      if (Number(box.h || 0) !== desired) {
+        box.h = desired;
+        linkedChanged = true;
+      }
+    });
+    if (linkedChanged && pass < 2) {
+      renderCanvas(pass + 1);
+      return;
+    }
     renderPropertyEditor();
   }
 
@@ -423,6 +441,14 @@
       return;
     }
     if (el.type === "box") {
+      const textTargets = state.elements.filter((x) => x && x.type !== "box");
+      const targetOptions = ['<option value="">None</option>'].concat(
+        textTargets.map((t) => {
+          const label = (String(t.text || t.richText || "Text Element").replace(/\s+/g, " ").trim() || "Text Element").slice(0, 42);
+          const selected = String(el.growWithId || "") === String(t.id) ? "selected" : "";
+          return `<option value="${String(t.id)}" ${selected}>${label}</option>`;
+        })
+      ).join("");
       propEditor.innerHTML = `
         <div class="mb-2 small text-muted">Box shape selected.</div>
         <div class="row g-2">
@@ -438,6 +464,14 @@
             <label class="form-label compact-label">Corner Radius</label>
             <input id="propRadius" class="form-control" type="number" min="0" max="40" value="${el.radius || 0}">
           </div>
+          <div class="col-12">
+            <label class="form-label compact-label">Grow With Element</label>
+            <select id="propGrowWith" class="form-select">${targetOptions}</select>
+          </div>
+          <div class="col-6">
+            <label class="form-label compact-label">Height Offset</label>
+            <input id="propGrowDelta" class="form-control" type="number" value="${Number(el.growDelta || 0)}">
+          </div>
         </div>
         <div class="d-grid gap-2 mt-2">
           <button id="duplicateBtn" class="btn btn-outline-primary btn-sm" type="button">Duplicate Element</button>
@@ -447,6 +481,21 @@
       document.getElementById("propBorder").addEventListener("input", (e) => { el.borderColor = e.target.value; renderCanvas(); });
       document.getElementById("propFill").addEventListener("input", (e) => { el.fillColor = e.target.value; renderCanvas(); });
       document.getElementById("propRadius").addEventListener("input", (e) => { el.radius = Number(e.target.value || 0); renderCanvas(); });
+      document.getElementById("propGrowWith").addEventListener("change", (e) => {
+        const targetId = (e.target.value || "").trim();
+        el.growWithId = targetId || null;
+        if (!targetId) {
+          el.growDelta = 0;
+        } else {
+          const target = nodeById(targetId);
+          el.growDelta = Number(el.h || 0) - Number(target?.h || 0);
+        }
+        renderCanvas();
+      });
+      document.getElementById("propGrowDelta").addEventListener("input", (e) => {
+        el.growDelta = Number(e.target.value || 0);
+        renderCanvas();
+      });
     } else {
       const isBold = Number(el.fontWeight || 500) >= 600;
       const isItalic = String(el.fontStyle || "normal").toLowerCase() === "italic";
@@ -728,11 +777,15 @@
     } else if (type === "labor") {
       const box = createBox({ x: 48, y: 300, w: 720, h: 140, borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
       const t = createText({ x: 62, y: 314, w: 692, h: 112, minH: 112, text: `${tok("labor_table")}`, fontSize: 12, fontWeight: 500, autoGrow: true });
+      box.growWithId = t.id;
+      box.growDelta = Number(box.h || 0) - Number(t.h || 0);
       state.elements.push(box, t);
       selectedId = t.id;
     } else if (type === "parts") {
       const box = createBox({ x: 48, y: 450, w: 720, h: 150, borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
       const t = createText({ x: 62, y: 464, w: 692, h: 122, minH: 122, text: `${tok("parts_table")}`, fontSize: 12, fontWeight: 500, autoGrow: true });
+      box.growWithId = t.id;
+      box.growDelta = Number(box.h || 0) - Number(t.h || 0);
       state.elements.push(box, t);
       selectedId = t.id;
     } else if (type === "notes") {

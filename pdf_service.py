@@ -268,6 +268,10 @@ def _render_invoice_builder_pdf(
     elements = design_obj.get("elements") if isinstance(design_obj, dict) else []
     if not isinstance(elements, list):
         elements = []
+    elements_by_id: dict[str, dict] = {}
+    for _el in elements:
+        if isinstance(_el, dict) and _el.get("id") is not None:
+            elements_by_id[str(_el.get("id"))] = _el
 
     def _map_y(y: float, h: float) -> float:
         return PAGE_H - ((y + h) * scale_y)
@@ -472,13 +476,66 @@ def _render_invoice_builder_pdf(
             used = _draw_table_box(cont_x, cont_y, cont_w, cont_h, remaining, cont=True)
             remaining = remaining[used:]
 
+    def _table_row_count(kind: str) -> int:
+        if kind == "labor":
+            rows = len(getattr(inv, "labor_items", []) or [])
+            if rows == 0 and float(getattr(inv, "hours", 0.0) or 0.0):
+                rows = 1
+            return max(1, rows)
+        rows = len(getattr(inv, "parts", []) or [])
+        return max(1, rows)
+
+    def _table_needed_canvas_h(kind: str) -> float:
+        row_h = max(16.0, 18.0 * min(scale_x, scale_y))
+        rows = _table_row_count(kind)
+        needed_h_page = (rows + 1) * row_h + (12 * scale_y)
+        return max(10.0, needed_h_page / max(0.001, scale_y))
+
+    effective_h: dict[str, float] = {}
+    for _el in elements:
+        if not isinstance(_el, dict) or _el.get("id") is None:
+            continue
+        el_id = str(_el.get("id"))
+        base_h = max(10.0, float(_el.get("h") or 10.0))
+        text_raw = str(_el.get("text") or "")
+        rich_raw = str(_el.get("richText") or "")
+        if "{{labor_table}}" in text_raw or "{{labor_table}}" in rich_raw:
+            effective_h[el_id] = max(base_h, _table_needed_canvas_h("labor"))
+        elif "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
+            effective_h[el_id] = max(base_h, _table_needed_canvas_h("parts"))
+        else:
+            effective_h[el_id] = base_h
+
+    for _ in range(3):
+        changed = False
+        for _el in elements:
+            if not isinstance(_el, dict) or str(_el.get("type") or "").lower() != "box" or _el.get("id") is None:
+                continue
+            el_id = str(_el.get("id"))
+            target_id = str(_el.get("growWithId") or "").strip()
+            if not target_id or target_id not in elements_by_id:
+                continue
+            target_h = effective_h.get(target_id, max(10.0, float(elements_by_id[target_id].get("h") or 10.0)))
+            delta = _el.get("growDelta")
+            if delta is None:
+                base_h = max(10.0, float(_el.get("h") or 10.0))
+                base_target_h = max(10.0, float(elements_by_id[target_id].get("h") or 10.0))
+                delta = base_h - base_target_h
+            desired = max(10.0, float(target_h) + float(delta))
+            if abs(effective_h.get(el_id, 0.0) - desired) > 0.1:
+                effective_h[el_id] = desired
+                changed = True
+        if not changed:
+            break
+
     for el in elements:
         if not isinstance(el, dict):
             continue
         x = float(el.get("x") or 0.0)
         y = float(el.get("y") or 0.0)
         w = max(10.0, float(el.get("w") or 10.0))
-        h = max(10.0, float(el.get("h") or 10.0))
+        el_id = str(el.get("id") or "")
+        h = max(10.0, float(effective_h.get(el_id, float(el.get("h") or 10.0))))
         rx = x * scale_x
         ry = _map_y(y, h)
         rw = w * scale_x
