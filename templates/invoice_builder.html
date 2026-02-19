@@ -3,14 +3,14 @@
 
 {% block content %}
 <style>
-  .builder-shell { max-width: 1380px; margin: 0 auto; }
-  .builder-layout { display: grid; grid-template-columns: 300px 1fr 280px; gap: 14px; }
+  .builder-shell { max-width: 1700px; margin: 0 auto; }
+  .builder-layout { display: grid; grid-template-columns: 220px 1fr 250px; gap: 12px; }
   .builder-panel {
     border: 1px solid #b6cae8;
     border-radius: 14px;
     background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
     box-shadow: 0 10px 26px rgba(12, 34, 73, 0.12);
-    padding: 12px;
+    padding: 10px;
   }
   .builder-panel h5 { margin: 0 0 8px; color: #123a71; font-weight: 800; }
   .builder-canvas-wrap {
@@ -18,11 +18,7 @@
     border-radius: 14px;
     padding: 10px;
     background: linear-gradient(180deg, #d8e4f7 0%, #cad8ee 100%);
-    overflow: hidden;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    height: clamp(620px, calc(100vh - 230px), 920px);
+    overflow: auto;
   }
   .builder-canvas {
     position: relative;
@@ -32,7 +28,6 @@
     background: #fff;
     border: 1px solid #a9bedd;
     box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
-    transform-origin: top center;
   }
   .canvas-guide {
     position: absolute;
@@ -59,7 +54,7 @@
     cursor: nwse-resize;
     background: #1e63c6;
   }
-  .tool-btn { width: 100%; margin-bottom: 6px; text-align: left; }
+  .tool-btn { width: 100%; margin-bottom: 6px; text-align: left; font-size: 0.84rem; padding: 0.36rem 0.5rem; }
   .tool-group-title {
     font-size: 0.8rem;
     font-weight: 800;
@@ -73,7 +68,7 @@
     border-radius: 10px;
     background: #f5f9ff;
     padding: 8px;
-    font-size: 0.85rem;
+    font-size: 0.78rem;
     color: #395a88;
     margin-bottom: 8px;
   }
@@ -101,7 +96,7 @@
     margin-bottom: 8px;
   }
   .template-row.active { border-color: #1f58ab; box-shadow: 0 0 0 2px rgba(31, 88, 171, 0.15); }
-  @media (max-width: 1200px) { .builder-layout { grid-template-columns: 1fr; } }
+  @media (max-width: 1300px) { .builder-layout { grid-template-columns: 1fr; } }
 </style>
 
 <div class="builder-shell">
@@ -152,7 +147,7 @@
       <div class="small text-muted mt-2">Tip: click a section, then edit text on the right. Drag to move. Pull corner to resize.</div>
     </section>
 
-    <section id="canvasWrap" class="builder-canvas-wrap">
+    <section class="builder-canvas-wrap">
       <div id="canvas" class="builder-canvas">
         <div class="canvas-guide"></div>
       </div>
@@ -189,7 +184,6 @@
   let currentTemplateId = {{ active_template_id|tojson }};
 
   const canvas = document.getElementById("canvas");
-  const canvasWrap = document.getElementById("canvasWrap");
   const canvasBg = document.getElementById("canvasBg");
   const templateName = document.getElementById("templateName");
   const templateList = document.getElementById("templateList");
@@ -203,7 +197,6 @@
   let state = { canvas: { width: 816, height: 1056, bg: "#ffffff" }, elements: [] };
   let selectedId = null;
   let drag = null;
-  let canvasScale = 1;
   const SNAP = 4;
   const TOKENS = [
     "doc_label","invoice_number","date","due_date","business_name","business_phone","business_address",
@@ -388,18 +381,6 @@
     return best;
   }
 
-  function fitCanvasToView() {
-    if (!canvasWrap || !canvas) return;
-    const wrapRect = canvasWrap.getBoundingClientRect();
-    const availableW = Math.max(100, wrapRect.width - 20);
-    const availableH = Math.max(100, wrapRect.height - 20);
-    const baseW = Number(state?.canvas?.width || 816);
-    const baseH = Number(state?.canvas?.height || 1056);
-    const scale = Math.min(availableW / baseW, availableH / baseH, 1);
-    canvasScale = Math.max(0.35, Math.min(1, scale));
-    canvas.style.transform = `scale(${canvasScale})`;
-  }
-
   function renderTemplateList() {
     templateList.innerHTML = "";
     templates.forEach(t => {
@@ -516,7 +497,6 @@
       renderCanvas(pass + 1);
       return;
     }
-    fitCanvasToView();
     renderPropertyEditor();
   }
 
@@ -1118,8 +1098,8 @@
     if (!drag) return;
     const el = nodeById(drag.id);
     if (!el) return;
-    const dx = (e.clientX - drag.startX) / (canvasScale || 1);
-    const dy = (e.clientY - drag.startY) / (canvasScale || 1);
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
     if (drag.isResize) {
       el.w = Math.max(30, Math.round((drag.originW + dx) / SNAP) * SNAP);
       el.h = Math.max(24, Math.round((drag.originH + dy) / SNAP) * SNAP);
@@ -1175,7 +1155,6 @@
 
   renderTemplateList();
   loadTemplate(currentTemplateId);
-  window.addEventListener("resize", fitCanvasToView);
   if (!templates || !templates.length) {
     quickStart("pdf_like");
   }
