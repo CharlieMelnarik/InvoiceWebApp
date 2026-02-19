@@ -3236,33 +3236,50 @@ def create_app():
 
                 tmpl = (request.form.get("invoice_template") or "").strip()
                 tmpl = _template_key_fallback(tmpl)
+                owner_pro_enabled = _has_pro_features(owner)
+                if (not owner_pro_enabled) and tmpl == "custom":
+                    tmpl = "auto_repair"
                 u.invoice_template = tmpl
-                u.custom_profession_name = (request.form.get("custom_profession_name") or "").strip() or None
-                u.custom_job_label = (request.form.get("custom_job_label") or "").strip() or None
-                u.custom_labor_title = (request.form.get("custom_labor_title") or "").strip() or None
-                u.custom_labor_desc_label = (request.form.get("custom_labor_desc_label") or "").strip() or None
-                u.custom_parts_title = (request.form.get("custom_parts_title") or "").strip() or None
-                u.custom_parts_name_label = (request.form.get("custom_parts_name_label") or "").strip() or None
-                u.custom_shop_supplies_label = (request.form.get("custom_shop_supplies_label") or "").strip() or None
-                u.custom_show_job = (request.form.get("custom_show_job") == "1")
-                u.custom_show_labor = (request.form.get("custom_show_labor") == "1")
-                u.custom_show_parts = (request.form.get("custom_show_parts") == "1")
-                u.custom_show_shop_supplies = (request.form.get("custom_show_shop_supplies") == "1")
-                u.custom_show_notes = (request.form.get("custom_show_notes") == "1")
-                builder_enabled = (request.form.get("invoice_builder_enabled") == "1")
+                builder_enabled = (request.form.get("invoice_builder_enabled") == "1") if owner_pro_enabled else False
                 accent_raw = (request.form.get("invoice_builder_accent_color") or "").strip()
                 if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent_raw or ""):
                     accent_raw = "#0f172a"
                 header_style = (request.form.get("invoice_builder_header_style") or "classic").strip().lower()
                 if header_style not in ("classic", "banded"):
                     header_style = "classic"
-                compact_mode = (request.form.get("invoice_builder_compact_mode") == "1")
+                compact_mode = (request.form.get("invoice_builder_compact_mode") == "1") if owner_pro_enabled else False
                 u.invoice_builder_enabled = builder_enabled
                 u.invoice_builder_accent_color = accent_raw
                 u.invoice_builder_header_style = header_style
                 u.invoice_builder_compact_mode = compact_mode
                 if builder_enabled:
                     u.invoice_template = "custom"
+                if owner_pro_enabled:
+                    u.custom_profession_name = (request.form.get("custom_profession_name") or "").strip() or None
+                    u.custom_job_label = (request.form.get("custom_job_label") or "").strip() or None
+                    u.custom_labor_title = (request.form.get("custom_labor_title") or "").strip() or None
+                    u.custom_labor_desc_label = (request.form.get("custom_labor_desc_label") or "").strip() or None
+                    u.custom_parts_title = (request.form.get("custom_parts_title") or "").strip() or None
+                    u.custom_parts_name_label = (request.form.get("custom_parts_name_label") or "").strip() or None
+                    u.custom_shop_supplies_label = (request.form.get("custom_shop_supplies_label") or "").strip() or None
+                    u.custom_show_job = (request.form.get("custom_show_job") == "1")
+                    u.custom_show_labor = (request.form.get("custom_show_labor") == "1")
+                    u.custom_show_parts = (request.form.get("custom_show_parts") == "1")
+                    u.custom_show_shop_supplies = (request.form.get("custom_show_shop_supplies") == "1")
+                    u.custom_show_notes = (request.form.get("custom_show_notes") == "1")
+                else:
+                    u.custom_profession_name = None
+                    u.custom_job_label = None
+                    u.custom_labor_title = None
+                    u.custom_labor_desc_label = None
+                    u.custom_parts_title = None
+                    u.custom_parts_name_label = None
+                    u.custom_shop_supplies_label = None
+                    u.custom_show_job = True
+                    u.custom_show_labor = True
+                    u.custom_show_parts = True
+                    u.custom_show_shop_supplies = True
+                    u.custom_show_notes = True
 
                 pdf_tmpl = _pdf_template_key_fallback(request.form.get("pdf_template"))
                 u.pdf_template = pdf_tmpl
@@ -3270,7 +3287,6 @@ def create_app():
                 u.tax_rate = _to_float(request.form.get("tax_rate"), 0.0)
                 u.default_hourly_rate = _to_float(request.form.get("default_hourly_rate"), 0.0)
                 u.default_parts_markup = _to_float(request.form.get("default_parts_markup"), 0.0)
-                owner_pro_enabled = _has_pro_features(owner)
                 if owner_pro_enabled:
                     payment_fee_percent = _to_float(request.form.get("payment_fee_percent"), 0.0)
                     payment_fee_fixed = _to_float(request.form.get("payment_fee_fixed"), 0.0)
@@ -3390,8 +3406,11 @@ def create_app():
             u = s.get(User, uid)
             if not u:
                 abort(404)
+            pro_enabled = _has_pro_features(u)
 
             tmpl = _template_key_fallback((request.args.get("invoice_template") or "").strip() or u.invoice_template)
+            if (not pro_enabled) and tmpl == "custom":
+                tmpl = _template_key_fallback(u.invoice_template if (u.invoice_template or "") != "custom" else "auto_repair")
             pdf_tmpl = _pdf_template_key_fallback((request.args.get("pdf_template") or "").strip() or u.pdf_template)
             custom_base = INVOICE_TEMPLATES.get("custom", {})
 
@@ -3408,7 +3427,7 @@ def create_app():
                 return bool(fallback)
 
             custom_cfg_override = None
-            if tmpl == "custom":
+            if tmpl == "custom" and pro_enabled:
                 custom_cfg_override = {
                     "profession_label": _arg_text(
                         "custom_profession_name",
@@ -3428,10 +3447,10 @@ def create_app():
                 }
 
             builder_cfg_override = {
-                "enabled": _arg_bool("invoice_builder_enabled", bool(getattr(u, "invoice_builder_enabled", False))),
+                "enabled": _arg_bool("invoice_builder_enabled", bool(getattr(u, "invoice_builder_enabled", False))) if pro_enabled else False,
                 "accent_color": _arg_text("invoice_builder_accent_color", (getattr(u, "invoice_builder_accent_color", None) or "#0f172a")),
                 "header_style": _arg_text("invoice_builder_header_style", (getattr(u, "invoice_builder_header_style", None) or "classic")).lower(),
-                "compact_mode": _arg_bool("invoice_builder_compact_mode", bool(getattr(u, "invoice_builder_compact_mode", False))),
+                "compact_mode": _arg_bool("invoice_builder_compact_mode", bool(getattr(u, "invoice_builder_compact_mode", False))) if pro_enabled else False,
             }
 
             preview_no = f"PV{uid}{uuid.uuid4().hex[:18]}".upper()
@@ -4279,6 +4298,9 @@ def create_app():
             u = s.get(User, uid)
             if not u:
                 abort(403)
+            if not _has_pro_features(u):
+                flash("Stripe Connect customer payments are available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
 
             acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
             if not acct_id:
@@ -4328,6 +4350,11 @@ def create_app():
             abort(500)
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
+            if not u:
+                abort(403)
+            if not _has_pro_features(u):
+                flash("Stripe Connect customer payments are available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
             acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip() if u else ""
             if not acct_id:
                 flash("Connect a Stripe account first.", "error")
@@ -7676,15 +7703,23 @@ def create_app():
                 inv = _estimate_owned_or_404(s, estimate_id)
 
             display_no = inv.display_number or inv.invoice_number
-            portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
-            portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+            owner_pro_enabled = _has_pro_features(owner)
+            portal_url = None
+            if owner_pro_enabled:
+                portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
+                portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
+            portal_line = (
+                "This secure link is valid for 90 days from the time this email was sent.\n\n"
+                if owner_pro_enabled
+                else ""
+            )
 
             subject = f"Estimate {display_no}"
             body = (
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Your estimate {display_no} is ready.\n"
                 f"Estimate amount: ${inv.invoice_total():,.2f}\n"
-                "This secure link is valid for 90 days from the time this email was sent.\n\n"
+                f"{portal_line}"
                 "Thank you."
             )
 
@@ -7694,8 +7729,8 @@ def create_app():
                     subject=subject,
                     body_text=body,
                     pdf_path=inv.pdf_path,
-                    action_url=portal_url,
-                    action_label="View Estimate",
+                    action_url=portal_url if owner_pro_enabled else None,
+                    action_label=("View Estimate" if owner_pro_enabled else None),
                 )
             except Exception as e:
                 print(f"[ESTIMATE SEND] SMTP ERROR to={to_email} estimate={display_no}: {repr(e)}", flush=True)
@@ -7809,11 +7844,12 @@ def create_app():
                 inv = _invoice_owned_or_404(s, invoice_id)
 
             display_no = inv.display_number or inv.invoice_number
-            portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
-            portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
-
             amount_due = max(0.0, float(inv.amount_due() or 0.0))
             owner_pro_enabled = _has_pro_features(owner)
+            portal_url = None
+            if owner_pro_enabled:
+                portal_token = make_customer_portal_token(inv.user_id or _current_user_id_int(), inv.id)
+                portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
             fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
             fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
             fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
@@ -7834,6 +7870,11 @@ def create_app():
                     f"Paying by card online adds an additional ${convenience_fee:,.2f} "
                     f"(card total: ${card_total:,.2f}).\n"
                 )
+            portal_line = (
+                "This secure link is valid for 90 days from the time this email was sent.\n\n"
+                if owner_pro_enabled
+                else ""
+            )
 
             subject = f"Invoice {display_no}"
             body = (
@@ -7841,7 +7882,7 @@ def create_app():
                 f"Your invoice {display_no} is ready.\n"
                 f"Invoice amount: ${inv.invoice_total():,.2f}\n"
                 f"{card_fee_line}\n"
-                "This secure link is valid for 90 days from the time this email was sent.\n\n"
+                f"{portal_line}"
                 "Thank you."
             )
 
@@ -7851,8 +7892,8 @@ def create_app():
                     subject=subject,
                     body_text=body,
                     pdf_path=inv.pdf_path,
-                    action_url=portal_url,
-                    action_label=("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
+                    action_url=portal_url if owner_pro_enabled else None,
+                    action_label=("View & Pay Invoice" if owner_pro_enabled else None),
                 )
             except Exception as e:
                 print(f"[INVOICE SEND] SMTP ERROR to={to_email} inv={display_no}: {repr(e)}", flush=True)
