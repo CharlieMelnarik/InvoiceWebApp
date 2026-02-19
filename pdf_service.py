@@ -311,12 +311,62 @@ def _render_invoice_builder_pdf(
             return "Courier"
         return "Helvetica"
 
-    def _draw_builder_table(kind: str, x0: float, y0: float, w0: float, h0: float) -> None:
+    def _span_style_to_tags(style_text: str, inner_html: str) -> str:
+        style_map: dict[str, str] = {}
+        for part in (style_text or "").split(";"):
+            if ":" not in part:
+                continue
+            k, v = part.split(":", 1)
+            key = k.strip().lower()
+            val = v.strip()
+            if key:
+                style_map[key] = val
+
+        open_tags: list[str] = []
+        close_tags: list[str] = []
+        font_attrs: list[str] = []
+
+        fam = style_map.get("font-family", "")
+        if fam:
+            font_attrs.append(f"name='{_inline_font_name_from_face(fam)}'")
+
+        size_raw = style_map.get("font-size", "")
+        if size_raw:
+            m_size = re.search(r"(\d+(?:\.\d+)?)", size_raw)
+            if m_size:
+                font_attrs.append(f"size='{m_size.group(1)}'")
+
+        color_raw = style_map.get("color", "")
+        if color_raw:
+            m_color = re.search(r"(#[0-9a-fA-F]{6})", color_raw)
+            if m_color:
+                font_attrs.append(f"color='{m_color.group(1)}'")
+
+        if font_attrs:
+            open_tags.append(f"<font {' '.join(font_attrs)}>")
+            close_tags.insert(0, "</font>")
+
+        if "bold" in style_map.get("font-weight", "").lower():
+            open_tags.append("<b>")
+            close_tags.insert(0, "</b>")
+
+        if "italic" in style_map.get("font-style", "").lower():
+            open_tags.append("<i>")
+            close_tags.insert(0, "</i>")
+
+        if "underline" in style_map.get("text-decoration", "").lower():
+            open_tags.append("<u>")
+            close_tags.insert(0, "</u>")
+
+        return "".join(open_tags) + inner_html + "".join(close_tags)
+
+    def _draw_builder_table(kind: str, x0: float, y0: float, w0: float, h0: float, *, auto_grow: bool = True) -> None:
         pad_x = 6 * scale_x
-        left = x0 + pad_x
-        right = x0 + w0 - pad_x
-        top = y0 + h0 - (8 * scale_y)
-        row_h = 15 * min(scale_x, scale_y)
+        row_h = max(16.0, 18.0 * min(scale_x, scale_y))
+        body_font = max(8.0, 10.0 * min(scale_x, scale_y))
+        header_font = max(8.5, 10.5 * min(scale_x, scale_y))
+        bottom_margin = 36.0
+
         if kind == "labor":
             headers = ["Service Description", "Time", "Line Total"]
             rows = []
@@ -345,51 +395,82 @@ def _render_invoice_builder_pdf(
         if not rows:
             rows = [["No items", ""]] if kind != "labor" else [["No labor items", "", ""]]
 
-        usable_h = max(row_h * 2, h0 - (14 * scale_y))
-        max_rows = max(1, int((usable_h - row_h) // row_h))
-        rows = rows[:max_rows]
-        col_widths = [w0 * f for f in col_fracs]
-        col_x = [left]
-        for cw in col_widths[:-1]:
-            col_x.append(col_x[-1] + cw)
+        def _draw_table_box(box_x: float, box_y: float, box_w: float, box_h: float, draw_rows: list[list[str]], *, cont: bool) -> int:
+            left = box_x + pad_x
+            right = box_x + box_w - pad_x
+            top = box_y + box_h - (8 * scale_y)
+            col_widths = [box_w * f for f in col_fracs]
+            col_x = [left]
+            for cw in col_widths[:-1]:
+                col_x.append(col_x[-1] + cw)
 
-        pdf.setFillColor(colors.HexColor("#f3f4f6"))
-        pdf.rect(x0 + 1, top - row_h + 2, w0 - 2, row_h, stroke=0, fill=1)
-        pdf.setFillColor(colors.black)
-        pdf.setStrokeColor(colors.HexColor("#d1d5db"))
-        pdf.setFont("Helvetica-Bold", 10 * min(scale_x, scale_y))
-        for idx, head in enumerate(headers):
-            if idx == 0:
-                pdf.drawString(col_x[idx] + 4, top - (row_h * 0.72), head)
-            elif idx == len(headers) - 1:
-                tw = stringWidth(head, "Helvetica-Bold", 10 * min(scale_x, scale_y))
-                pdf.drawString(right - tw - 4, top - (row_h * 0.72), head)
-            else:
-                mid = col_x[idx] + (col_widths[idx] / 2.0)
-                tw = stringWidth(head, "Helvetica-Bold", 10 * min(scale_x, scale_y))
-                pdf.drawString(mid - (tw / 2.0), top - (row_h * 0.72), head)
-        pdf.line(x0 + 1, top - row_h + 1, x0 + w0 - 1, top - row_h + 1)
+            header_label = f"{headers[0]} (cont.)" if cont else headers[0]
+            header_cells = [header_label] + headers[1:]
 
-        y_line = top - row_h - 2
-        pdf.setFont("Helvetica", 10 * min(scale_x, scale_y))
-        for row in rows:
-            if y_line < y0 + 6:
-                break
-            first = str(row[0] if len(row) > 0 else "")
-            second = str(row[1] if len(row) > 1 else "")
-            third = str(row[2] if len(row) > 2 else "")
-            pdf.drawString(col_x[0] + 4, y_line - 10, first[:90])
-            if len(headers) == 3:
-                mid = col_x[1] + (col_widths[1] / 2.0)
-                tw2 = stringWidth(second, "Helvetica", 10 * min(scale_x, scale_y))
-                pdf.drawString(mid - (tw2 / 2.0), y_line - 10, second)
-                tw3 = stringWidth(third, "Helvetica", 10 * min(scale_x, scale_y))
-                pdf.drawString(right - tw3 - 4, y_line - 10, third)
-            else:
-                tw2 = stringWidth(second, "Helvetica", 10 * min(scale_x, scale_y))
-                pdf.drawString(right - tw2 - 4, y_line - 10, second)
-            pdf.line(x0 + 1, y_line - row_h + 2, x0 + w0 - 1, y_line - row_h + 2)
-            y_line -= row_h
+            pdf.setFillColor(colors.HexColor("#f3f4f6"))
+            pdf.rect(box_x + 1, top - row_h + 1, box_w - 2, row_h, stroke=0, fill=1)
+            pdf.setFillColor(colors.black)
+            pdf.setStrokeColor(colors.HexColor("#d1d5db"))
+            pdf.setFont("Helvetica-Bold", header_font)
+            for idx, head in enumerate(header_cells):
+                if idx == 0:
+                    pdf.drawString(col_x[idx] + 4, top - (row_h * 0.72), head)
+                elif idx == len(header_cells) - 1:
+                    tw = stringWidth(head, "Helvetica-Bold", header_font)
+                    pdf.drawString(right - tw - 4, top - (row_h * 0.72), head)
+                else:
+                    mid = col_x[idx] + (col_widths[idx] / 2.0)
+                    tw = stringWidth(head, "Helvetica-Bold", header_font)
+                    pdf.drawString(mid - (tw / 2.0), top - (row_h * 0.72), head)
+            pdf.line(box_x + 1, top - row_h, box_x + box_w - 1, top - row_h)
+
+            fit_rows = max(1, int(((top - (box_y + 6)) - row_h) // row_h))
+            row_count = min(len(draw_rows), fit_rows)
+            y_cursor = top - row_h
+            pdf.setFont("Helvetica", body_font)
+            for row in draw_rows[:row_count]:
+                row_top = y_cursor
+                row_bottom = y_cursor - row_h
+                text_y = row_top - (row_h * 0.68)
+                first = str(row[0] if len(row) > 0 else "")
+                second = str(row[1] if len(row) > 1 else "")
+                third = str(row[2] if len(row) > 2 else "")
+                pdf.drawString(col_x[0] + 4, text_y, first[:120])
+                if len(header_cells) == 3:
+                    mid = col_x[1] + (col_widths[1] / 2.0)
+                    tw2 = stringWidth(second, "Helvetica", body_font)
+                    pdf.drawString(mid - (tw2 / 2.0), text_y, second)
+                    tw3 = stringWidth(third, "Helvetica", body_font)
+                    pdf.drawString(right - tw3 - 4, text_y, third)
+                else:
+                    tw2 = stringWidth(second, "Helvetica", body_font)
+                    pdf.drawString(right - tw2 - 4, text_y, second)
+                # Draw separators below text baseline so they do not cross through text.
+                pdf.line(box_x + 1, row_bottom + 1.5, box_x + box_w - 1, row_bottom + 1.5)
+                y_cursor -= row_h
+            return row_count
+
+        # Grow within page when possible.
+        if auto_grow:
+            needed_h = (len(rows) + 1) * row_h + (12 * scale_y)
+            if needed_h > h0:
+                growth = needed_h - h0
+                y0 = max(bottom_margin, y0 - growth)
+                h0 = needed_h
+
+        consumed = _draw_table_box(x0, y0, w0, h0, rows, cont=False)
+        remaining = rows[consumed:]
+        # Continuation pages for overflow rows.
+        while remaining:
+            pdf.showPage()
+            pdf.setFillColor(colors.HexColor(canvas_bg))
+            pdf.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
+            cont_x = max(24.0, min(x0, PAGE_W - w0 - 24.0))
+            cont_w = min(w0, PAGE_W - 48.0)
+            cont_y = bottom_margin + 12.0
+            cont_h = PAGE_H - (cont_y + 42.0)
+            used = _draw_table_box(cont_x, cont_y, cont_w, cont_h, remaining, cont=True)
+            remaining = remaining[used:]
 
     for el in elements:
         if not isinstance(el, dict):
@@ -420,10 +501,10 @@ def _render_invoice_builder_pdf(
         text_raw = str(el.get("text") or "")
         rich_raw = str(el.get("richText") or "")
         if "{{labor_table}}" in text_raw or "{{labor_table}}" in rich_raw:
-            _draw_builder_table("labor", rx, ry, rw, rh)
+            _draw_builder_table("labor", rx, ry, rw, rh, auto_grow=True)
             continue
         if "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
-            _draw_builder_table("parts", rx, ry, rw, rh)
+            _draw_builder_table("parts", rx, ry, rw, rh, auto_grow=True)
             continue
         # Backward compatibility for older starter templates that hardcoded sample lines.
         text_raw = text_raw.replace(
@@ -467,6 +548,22 @@ def _render_invoice_builder_pdf(
         if rich_raw.strip():
             rich = rich_raw
             rich = re.sub(r"</?(div|p)[^>]*>", "<br/>", rich, flags=re.I)
+            # Convert span inline styles into reportlab-friendly tags.
+            for _ in range(8):
+                new_rich = re.sub(
+                    r"<span\b([^>]*)>(.*?)</span>",
+                    lambda m: _span_style_to_tags(
+                        re.search(r"style=['\"]([^'\"]*)['\"]", m.group(1) or "", flags=re.I).group(1)
+                        if re.search(r"style=['\"]([^'\"]*)['\"]", m.group(1) or "", flags=re.I)
+                        else "",
+                        m.group(2) or "",
+                    ),
+                    rich,
+                    flags=re.I | re.S,
+                )
+                if new_rich == rich:
+                    break
+                rich = new_rich
             rich = re.sub(r"<span[^>]*>", "", rich, flags=re.I)
             rich = re.sub(r"</span>", "", rich, flags=re.I)
             rich = rich.replace("&nbsp;", " ")

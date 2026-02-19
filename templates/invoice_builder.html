@@ -335,6 +335,26 @@
     sel.addRange(range);
   }
 
+  function applyInlineSpanStyle(editor, styles) {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer) || range.collapsed) return false;
+    const span = document.createElement("span");
+    Object.entries(styles || {}).forEach(([k, v]) => {
+      if (v !== null && v !== undefined && String(v).trim() !== "") span.style[k] = String(v);
+    });
+    const frag = range.extractContents();
+    span.appendChild(frag);
+    range.insertNode(span);
+    const newRange = document.createRange();
+    newRange.selectNodeContents(span);
+    newRange.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+    return true;
+  }
+
   function renderTemplateList() {
     templateList.innerHTML = "";
     templates.forEach(t => {
@@ -385,6 +405,13 @@
       resize.className = "resize";
       node.appendChild(resize);
       canvas.appendChild(node);
+      if (el.type !== "box" && (el.autoGrow || /\{\{\s*(labor_table|parts_table|labor_lines|parts_lines)\s*\}\}/i.test(String(el.text || "") + " " + String(el.richText || "")))) {
+        const baseMin = Math.max(24, Number(el.minH || 30));
+        node.style.height = "auto";
+        const needed = Math.max(baseMin, Math.ceil(node.scrollHeight + 8));
+        node.style.height = `${needed}px`;
+        if (Number(el.h || 0) !== needed) el.h = needed;
+      }
     });
     renderPropertyEditor();
   }
@@ -438,6 +465,18 @@
               <option value="Helvetica">Inline Sans (Helvetica)</option>
               <option value="Times-Roman">Inline Serif (Times)</option>
               <option value="Courier">Inline Mono (Courier)</option>
+            </select>
+            <select id="inlineFontSize" class="form-select form-select-sm" style="max-width: 140px;">
+              <option value="">Inline Size</option>
+              <option value="10">10 pt</option>
+              <option value="12">12 pt</option>
+              <option value="14">14 pt</option>
+              <option value="16">16 pt</option>
+              <option value="18">18 pt</option>
+              <option value="20">20 pt</option>
+              <option value="24">24 pt</option>
+              <option value="28">28 pt</option>
+              <option value="32">32 pt</option>
             </select>
           </div>
           <div id="propTextRich" class="form-control" contenteditable="true" style="min-height: 130px; white-space: pre-wrap; overflow: auto;"></div>
@@ -541,6 +580,7 @@
         renderCanvas();
       });
       const inlineFontFamily = document.getElementById("inlineFontFamily");
+      const inlineFontSize = document.getElementById("inlineFontSize");
       document.getElementById("inlineBold").addEventListener("click", () => {
         textEditor.focus();
         document.execCommand("bold", false, null);
@@ -562,6 +602,15 @@
       inlineFontFamily.addEventListener("change", () => {
         textEditor.focus();
         document.execCommand("fontName", false, inlineFontFamily.value || "Helvetica");
+        syncEditorToElement();
+        updateSelectedNodeText();
+      });
+      inlineFontSize.addEventListener("change", () => {
+        const sz = (inlineFontSize.value || "").trim();
+        if (!sz) return;
+        textEditor.focus();
+        const ok = applyInlineSpanStyle(textEditor, { fontSize: `${sz}px` });
+        if (!ok) return;
         syncEditorToElement();
         updateSelectedNodeText();
       });
@@ -624,6 +673,8 @@
       fontStyle: opts.fontStyle ?? "normal",
       textAlign: opts.textAlign ?? "left",
       underline: !!opts.underline,
+      autoGrow: !!opts.autoGrow,
+      minH: opts.minH ?? (opts.h ?? 50),
       color: opts.color ?? "#111827",
       fillColor: "transparent",
       borderColor: "transparent",
@@ -675,9 +726,15 @@
     } else if (type === "job") {
       addSection(418, 118, 350, 150, `JOB DETAILS\nJob: ${tok("job")}\nRate/Hour: ${tok("rate")}\nTotal Hours: ${tok("hours")}`, 14);
     } else if (type === "labor") {
-      addSection(48, 300, 720, 140, `${tok("labor_table")}`, 12);
+      const box = createBox({ x: 48, y: 300, w: 720, h: 140, borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
+      const t = createText({ x: 62, y: 314, w: 692, h: 112, minH: 112, text: `${tok("labor_table")}`, fontSize: 12, fontWeight: 500, autoGrow: true });
+      state.elements.push(box, t);
+      selectedId = t.id;
     } else if (type === "parts") {
-      addSection(48, 450, 720, 150, `${tok("parts_table")}`, 12);
+      const box = createBox({ x: 48, y: 450, w: 720, h: 150, borderColor: "#111827", fillColor: "#ffffff", radius: 8 });
+      const t = createText({ x: 62, y: 464, w: 692, h: 122, minH: 122, text: `${tok("parts_table")}`, fontSize: 12, fontWeight: 500, autoGrow: true });
+      state.elements.push(box, t);
+      selectedId = t.id;
     } else if (type === "notes") {
       addSection(48, 780, 430, 160, `NOTES\n${tok("notes_text")}`, 13);
     } else if (type === "summary") {
