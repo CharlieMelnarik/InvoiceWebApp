@@ -3,16 +3,16 @@
 
 {% block content %}
 <style>
-  .builder-shell { max-width: 1700px; margin: 0 auto; }
-  .builder-layout { display: grid; grid-template-columns: 220px 1fr 250px; gap: 12px; }
+  .builder-shell { max-width: 1820px; margin: 0 auto; }
+  .builder-layout { display: grid; grid-template-columns: 175px 1fr 210px; gap: 10px; }
   .builder-panel {
     border: 1px solid #b6cae8;
     border-radius: 14px;
     background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
     box-shadow: 0 10px 26px rgba(12, 34, 73, 0.12);
-    padding: 10px;
+    padding: 8px;
   }
-  .builder-panel h5 { margin: 0 0 8px; color: #123a71; font-weight: 800; }
+  .builder-panel h5 { margin: 0 0 6px; color: #123a71; font-weight: 800; font-size: 1rem; }
   .builder-canvas-wrap {
     border: 1px solid #a7bfdf;
     border-radius: 14px;
@@ -54,21 +54,21 @@
     cursor: nwse-resize;
     background: #1e63c6;
   }
-  .tool-btn { width: 100%; margin-bottom: 6px; text-align: left; font-size: 0.84rem; padding: 0.36rem 0.5rem; }
+  .tool-btn { width: 100%; margin-bottom: 5px; text-align: left; font-size: 0.78rem; padding: 0.28rem 0.42rem; }
   .tool-group-title {
     font-size: 0.8rem;
     font-weight: 800;
     letter-spacing: 0.03em;
     color: #2a4d7f;
-    margin: 8px 0 6px;
+    margin: 6px 0 4px;
     text-transform: uppercase;
   }
   .helper-callout {
     border: 1px solid #b9cdea;
     border-radius: 10px;
     background: #f5f9ff;
-    padding: 8px;
-    font-size: 0.78rem;
+    padding: 6px;
+    font-size: 0.72rem;
     color: #395a88;
     margin-bottom: 8px;
   }
@@ -87,13 +87,13 @@
     cursor: pointer;
   }
   .token-btn:hover { background: #e7f0ff; }
-  .template-list { max-height: 280px; overflow: auto; }
+  .template-list { max-height: 240px; overflow: auto; }
   .template-row {
     border: 1px solid #bdd0ea;
     border-radius: 10px;
-    padding: 8px;
+    padding: 6px;
     background: #fff;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
   .template-row.active { border-color: #1f58ab; box-shadow: 0 0 0 2px rgba(31, 88, 171, 0.15); }
   @media (max-width: 1300px) { .builder-layout { grid-template-columns: 1fr; } }
