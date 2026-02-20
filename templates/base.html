@@ -7,6 +7,7 @@
 
   <!-- Bootstrap -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -256,6 +257,223 @@
       font-size: 1.15rem;
       line-height: 1;
     }
+    .app-shell {
+      display: flex;
+      min-height: 100vh;
+    }
+    .app-sidebar {
+      width: 270px;
+      flex: 0 0 270px;
+      background: linear-gradient(180deg, #0f2749 0%, #143763 48%, #1b4a83 100%);
+      border-right: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 12px 0 28px rgba(9, 29, 58, 0.22);
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      z-index: 1040;
+      transition: width 0.18s ease, flex-basis 0.18s ease;
+    }
+    .app-sidebar-brand {
+      padding: 1rem 1rem 0.8rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      display: flex;
+      justify-content: center;
+    }
+    .app-sidebar-brand img {
+      width: auto;
+      height: 52px;
+    }
+    .app-sidebar-brand .brand-icon {
+      display: none;
+      width: 56px;
+      height: 56px;
+      object-fit: contain;
+    }
+    .app-nav {
+      padding: 0.9rem 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .app-nav-link {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      color: rgba(238, 246, 255, 0.9);
+      text-decoration: none;
+      font-weight: 600;
+      border-radius: 10px;
+      padding: 0.56rem 0.7rem;
+      transition: background-color 0.15s ease, color 0.15s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .app-nav-link:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.12);
+    }
+    .app-nav-link .nav-icon {
+      width: 1.15rem;
+      text-align: center;
+      font-size: 0.98rem;
+      line-height: 1;
+      flex: 0 0 auto;
+    }
+    .app-nav-link .nav-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .app-nav-link.active {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.2);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+    }
+    .app-sidebar-footer {
+      margin-top: auto;
+      padding: 0.9rem 0.85rem 1rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+    .sidebar-collapse-btn {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      color: #f6fbff;
+      font-weight: 700;
+      padding: 0.45rem 0.6rem;
+      background: rgba(255, 255, 255, 0.08);
+      margin-bottom: 0.55rem;
+    }
+    .sidebar-collapse-btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+      color: #fff;
+    }
+    .app-user {
+      color: rgba(238, 246, 255, 0.88);
+      font-size: 0.9rem;
+      margin-bottom: 0.55rem;
+      overflow-wrap: anywhere;
+    }
+    .app-logout {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      color: #f6fbff;
+      text-decoration: none;
+      font-weight: 600;
+      padding: 0.5rem 0.65rem;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .app-logout:hover {
+      background: rgba(255, 255, 255, 0.18);
+      color: #fff;
+    }
+    .app-main {
+      min-width: 0;
+      flex: 1;
+      padding: 1rem 1.1rem;
+    }
+    .app-main-content {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .sidebar-toggle-btn {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      border: 1px solid #b7cbe8;
+      background: #f4f8ff;
+      color: #234b81;
+      border-radius: 10px;
+      padding: 0.45rem 0.72rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+    .sidebar-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 19, 40, 0.42);
+      z-index: 1035;
+    }
+    body.sidebar-collapsed .app-sidebar {
+      width: 84px;
+      flex: 0 0 84px;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-sidebar {
+      width: 270px;
+      flex: 0 0 270px;
+    }
+    body.sidebar-collapsed .app-sidebar-brand {
+      padding: 0.85rem 0.35rem 0.65rem;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-sidebar-brand {
+      padding: 1rem 1rem 0.8rem;
+    }
+    body.sidebar-collapsed .app-sidebar-brand .brand-full {
+      display: none;
+    }
+    body.sidebar-collapsed .app-sidebar-brand .brand-icon {
+      display: block;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-sidebar-brand .brand-full {
+      display: block;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-sidebar-brand .brand-icon {
+      display: none;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-sidebar-brand img {
+      height: 52px;
+    }
+    body.sidebar-collapsed .app-nav {
+      padding: 0.75rem 0.35rem;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-nav {
+      padding: 0.9rem 0.75rem;
+    }
+    body.sidebar-collapsed .app-nav-link {
+      justify-content: center;
+      gap: 0;
+      padding: 0.62rem 0.3rem;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-nav-link {
+      justify-content: flex-start;
+      gap: 0.55rem;
+      text-align: left;
+      padding: 0.56rem 0.7rem;
+    }
+    body.sidebar-collapsed .app-nav-link .nav-label {
+      display: none;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-nav-link .nav-label {
+      display: inline;
+    }
+    body.sidebar-collapsed .app-user,
+    body.sidebar-collapsed .app-logout {
+      display: none;
+    }
+    body.sidebar-collapsed.sidebar-hover-expand .app-user,
+    body.sidebar-collapsed.sidebar-hover-expand .app-logout {
+      display: block;
+    }
+    body.sidebar-collapsed .sidebar-collapse-btn {
+      margin-bottom: 0;
+      font-size: 0;
+      padding: 0.5rem 0.2rem;
+    }
+    body.sidebar-collapsed .sidebar-collapse-btn::before {
+      content: "»";
+      font-size: 1rem;
+      font-weight: 800;
+    }
 
     @media (max-width: 768px) {
       .page-header {
@@ -323,6 +541,37 @@
         flex: 1 1 100%;
       }
     }
+    @media (max-width: 991px) {
+      body.sidebar-collapsed .app-sidebar {
+        width: 270px;
+        flex: 0 0 270px;
+      }
+      .app-shell {
+        display: block;
+      }
+      .app-sidebar {
+        position: fixed;
+        left: -280px;
+        width: 270px;
+        height: 100vh;
+        transition: left 0.2s ease;
+      }
+      body.sidebar-open .app-sidebar {
+        left: 0;
+      }
+      .sidebar-overlay {
+        display: none;
+      }
+      body.sidebar-open .sidebar-overlay {
+        display: block;
+      }
+      .app-main {
+        padding: 0.9rem 0.8rem 1rem;
+      }
+      .sidebar-toggle-btn {
+        display: inline-flex;
+      }
+    }
 
     .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
@@ -342,10 +591,59 @@
 </head>
 
 <body>
+{% set __page_content %}{% block content %}{% endblock %}{% endset %}
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-  <div class="container">
+{% if current_user.is_authenticated %}
+  {% set ep = request.endpoint or '' %}
+  <div class="app-shell">
+    <aside class="app-sidebar">
+      <a class="app-sidebar-brand" href="{{ url_for('index') }}">
+        <img class="brand-full" src="{{ url_for('static', filename='images/InvoiceRunner.png') }}" alt="InvoiceRunner">
+        <img class="brand-icon" src="{{ url_for('static', filename='images/InvoiceRunnerSquare.png') }}" alt="InvoiceRunner">
+      </a>
 
+      <nav class="app-nav">
+        <a class="app-nav-link {% if ep in ['customers_list','customer_view','customer_new'] %}active{% endif %}" href="{{ url_for('customers_list') }}"><i class="bi bi-people nav-icon" aria-hidden="true"></i><span class="nav-label">Customers</span></a>
+        <a class="app-nav-link {% if ep == 'schedule' %}active{% endif %}" href="{{ url_for('schedule') }}"><i class="bi bi-calendar3 nav-icon" aria-hidden="true"></i><span class="nav-label">Scheduler</span></a>
+        <a class="app-nav-link {% if ep in ['invoices','invoice_new','invoice_edit','invoice_view'] %}active{% endif %}" href="{{ url_for('invoices') }}"><i class="bi bi-receipt nav-icon" aria-hidden="true"></i><span class="nav-label">Invoices</span></a>
+        <a class="app-nav-link {% if ep in ['estimates','estimate_new','estimate_edit','estimate_view'] %}active{% endif %}" href="{{ url_for('estimates') }}"><i class="bi bi-file-earmark-text nav-icon" aria-hidden="true"></i><span class="nav-label">Estimates</span></a>
+        {% if not is_employee_account %}
+          <a class="app-nav-link {% if ep in ['business_expenses','business_expense_category'] %}active{% endif %}" href="{{ url_for('business_expenses') }}"><i class="bi bi-briefcase nav-icon" aria-hidden="true"></i><span class="nav-label">Business Expenses</span></a>
+          <a class="app-nav-link {% if ep in ['year_summary','profit_loss','profit_loss_pdf_preview','profit_loss_pdf_download'] %}active{% endif %}" href="{{ url_for('year_summary') }}"><i class="bi bi-bar-chart-line nav-icon" aria-hidden="true"></i><span class="nav-label">Financial Summary</span></a>
+        {% endif %}
+        <a class="app-nav-link {% if ep in ['settings','billing_page','invoice_builder','email_templates','email_template_edit'] %}active{% endif %}" href="{{ url_for('settings') }}"><i class="bi bi-gear nav-icon" aria-hidden="true"></i><span class="nav-label">Settings</span></a>
+      </nav>
+
+      <div class="app-sidebar-footer">
+        <button type="button" class="sidebar-collapse-btn" id="sidebarCollapseBtn">Hide Menu</button>
+        <div class="app-user">{{ current_user.username }}</div>
+        <a class="app-logout" href="{{ url_for('logout') }}">Logout</a>
+      </div>
+    </aside>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <main class="app-main">
+      <button type="button" class="sidebar-toggle-btn" id="sidebarToggleBtn">☰ Menu</button>
+      <div class="app-main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, msg in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                {{ msg }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        {{ __page_content|safe }}
+      </div>
+    </main>
+  </div>
+{% else %}
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+    <div class="container">
       <a class="navbar-brand d-flex align-items-center" href="{{ url_for('index') }}">
         <img
           src="{{ url_for('static', filename='images/InvoiceRunner.png') }}"
@@ -353,87 +651,111 @@
           style="height: 50px; width: auto;"
         >
       </a>
-
-
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-
-    <div class="collapse navbar-collapse" id="navMain">
-      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-
-        {% if current_user.is_authenticated %}
-
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('customers_list') }}">Customers</a>
-          </li>
-          
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('schedule') }}">Scheduler</a>
-          </li>
-
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('invoices') }}">Invoices</a>
-          </li>
-
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('estimates') }}">Estimates</a>
-          </li>
-
-          {% if not is_employee_account %}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('business_expenses') }}">Business Expenses</a>
-            </li>
-
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('year_summary') }}">Financial Summary</a>
-            </li>
-          {% endif %}
-
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('settings') }}">Settings</a>
-          </li>
-
-        {% endif %}
-      </ul>
-
-      <ul class="navbar-nav ms-auto">
-
-        {% if current_user.is_authenticated %}
-          <li class="nav-item">
-            <span class="navbar-text me-3 small-muted">
-              {{ current_user.username }}
-            </span>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
-          </li>
-        {% endif %}
-
-      </ul>
     </div>
+  </nav>
+
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, msg in messages %}
+          <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+            {{ msg }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {{ __page_content|safe }}
   </div>
-</nav>
-
-<div class="container">
-
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      {% for category, msg in messages %}
-        <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
-          {{ msg }}
-          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-      {% endfor %}
-    {% endif %}
-  {% endwith %}
-
-  {% block content %}{% endblock %}
-
-</div>
+{% endif %}
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+  (function () {
+    const toggleBtn = document.getElementById("sidebarToggleBtn");
+    const collapseBtn = document.getElementById("sidebarCollapseBtn");
+    const overlay = document.getElementById("sidebarOverlay");
+    const sidebarEl = document.querySelector(".app-sidebar");
+    const desktopMq = window.matchMedia("(min-width: 992px)");
+    if (!toggleBtn && !collapseBtn) return;
+
+    const closeSidebar = () => document.body.classList.remove("sidebar-open");
+    const openSidebar = () => document.body.classList.add("sidebar-open");
+    let hoverCollapseTimer = null;
+    const setHoverExpanded = (expanded) => {
+      if (!desktopMq.matches) return;
+      if (!document.body.classList.contains("sidebar-collapsed")) {
+        document.body.classList.remove("sidebar-hover-expand");
+        return;
+      }
+      if (expanded) {
+        if (hoverCollapseTimer) {
+          clearTimeout(hoverCollapseTimer);
+          hoverCollapseTimer = null;
+        }
+        document.body.classList.add("sidebar-hover-expand");
+      } else {
+        if (hoverCollapseTimer) clearTimeout(hoverCollapseTimer);
+        hoverCollapseTimer = setTimeout(() => {
+          document.body.classList.remove("sidebar-hover-expand");
+          hoverCollapseTimer = null;
+        }, 120);
+      }
+    };
+    const setCollapsed = (collapsed) => {
+      document.body.classList.toggle("sidebar-collapsed", Boolean(collapsed));
+      if (collapseBtn) collapseBtn.textContent = collapsed ? "Show Menu" : "Hide Menu";
+      try { localStorage.setItem("invoicerunner_sidebar_collapsed", collapsed ? "1" : "0"); } catch (_e) {}
+    };
+
+    try {
+      const saved = localStorage.getItem("invoicerunner_sidebar_collapsed") === "1";
+      if (desktopMq.matches) setCollapsed(saved);
+      else setCollapsed(false);
+    } catch (_e) {
+      setCollapsed(false);
+    }
+
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", () => {
+        if (document.body.classList.contains("sidebar-open")) closeSidebar();
+        else openSidebar();
+      });
+    }
+    if (overlay) overlay.addEventListener("click", closeSidebar);
+    if (collapseBtn) {
+      collapseBtn.addEventListener("click", () => {
+        if (!desktopMq.matches) {
+          if (document.body.classList.contains("sidebar-open")) closeSidebar();
+          else openSidebar();
+          return;
+        }
+        document.body.classList.remove("sidebar-hover-expand");
+        setCollapsed(!document.body.classList.contains("sidebar-collapsed"));
+      });
+    }
+    window.addEventListener("resize", () => {
+      if (window.innerWidth > 991) {
+        closeSidebar();
+      } else {
+        document.body.classList.remove("sidebar-hover-expand");
+        setCollapsed(false);
+      }
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (!desktopMq.matches || !document.body.classList.contains("sidebar-collapsed") || !sidebarEl) return;
+      const rect = sidebarEl.getBoundingClientRect();
+      const inSidebarZone =
+        e.clientX <= (rect.right + 8) &&
+        e.clientY >= rect.top &&
+        e.clientY <= rect.bottom;
+      const nearEdge = e.clientX <= 28;
+      setHoverExpanded(nearEdge || inSidebarZone);
+    });
+  })();
+
   (function () {
     const isMobile = window.matchMedia("(max-width: 768px)").matches;
     if (!isMobile) return;

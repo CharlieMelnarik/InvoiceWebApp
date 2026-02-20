@@ -2633,12 +2633,6 @@ def _render_simple_pdf(
         except Exception:
             logo_drawn = False
 
-    if not logo_drawn:
-        pdf.setFillColor(colors.white)
-        pdf.setFont("Helvetica-Bold", 16)
-        initials = (header_name[:2] or "IR").upper()
-        pdf.drawCentredString(icon_cx, icon_cy - 6, initials)
-
     pdf.setFillColor(text_dark)
     pdf.setFont("Helvetica-Bold", 14)
     pdf.drawCentredString(icon_cx, icon_y - 12, "Estimate" if is_estimate else "Invoice")
@@ -2911,7 +2905,9 @@ def _render_blueprint_pdf(
         pdf.setFillColor(dark2)
         pdf.rect(M, PAGE_H - M - 1.9 * inch, rail_w, 0.5 * inch, stroke=0, fill=1)
         pdf.setFillColor(accent)
-        pdf.rect(M, PAGE_H - M - 2.45 * inch, rail_w, 0.06 * inch, stroke=0, fill=1)
+        accent_h = 0.06 * inch
+        accent_y = M + ((PAGE_H - (2 * M)) / 2.0) - (accent_h / 2.0)
+        pdf.rect(M, accent_y, rail_w, accent_h, stroke=0, fill=1)
 
     page_chrome()
 
@@ -2921,17 +2917,17 @@ def _render_blueprint_pdf(
     info_email = (getattr(owner, "email", None) or "").strip() if owner else ""
     rail_center = M + rail_w / 2.0
 
-    # Logo area
+    # Logo area (only render when a real logo exists)
     logo_box_w = rail_w - 0.5 * inch
     logo_box_h = 1.05 * inch
     logo_x = M + (rail_w - logo_box_w) / 2.0
     logo_y = PAGE_H - M - 1.20 * inch
-    pdf.setFillColor(colors.white)
-    pdf.roundRect(logo_x, logo_y - logo_box_h, logo_box_w, logo_box_h, 10, stroke=0, fill=1)
     logo_drawn = False
     if owner_logo_blob:
         try:
             img = ImageReader(io.BytesIO(owner_logo_blob))
+            pdf.setFillColor(colors.white)
+            pdf.roundRect(logo_x, logo_y - logo_box_h, logo_box_w, logo_box_h, 10, stroke=0, fill=1)
             pdf.drawImage(img, logo_x + 12, logo_y - logo_box_h + 12, width=logo_box_w - 24, height=logo_box_h - 24, preserveAspectRatio=True, mask="auto", anchor="c")
             logo_drawn = True
         except Exception:
@@ -2939,22 +2935,18 @@ def _render_blueprint_pdf(
     elif owner_logo_abs and os.path.exists(owner_logo_abs):
         try:
             img = ImageReader(owner_logo_abs)
+            pdf.setFillColor(colors.white)
+            pdf.roundRect(logo_x, logo_y - logo_box_h, logo_box_w, logo_box_h, 10, stroke=0, fill=1)
             pdf.drawImage(img, logo_x + 12, logo_y - logo_box_h + 12, width=logo_box_w - 24, height=logo_box_h - 24, preserveAspectRatio=True, mask="auto", anchor="c")
             logo_drawn = True
         except Exception:
             logo_drawn = False
-    if not logo_drawn:
-        pdf.setFillColor(dark)
-        pdf.setFont("Helvetica-Bold", 24)
-        pdf.drawCentredString(rail_center, logo_y - 44, "IR")
 
     # Rail identity
     pdf.setFillColor(colors.white)
-    pdf.setFont("Helvetica-Bold", 18)
-    pdf.drawCentredString(rail_center, PAGE_H - M - 2.05 * inch, "INVOICE" if not is_estimate else "ESTIMATE")
     pdf.setFont("Helvetica-Bold", 11)
-    # Keep identity block clearly below the logo card to prevent overlap.
-    name_y = PAGE_H - M - 2.62 * inch
+    # If no logo exists, move identity block up so no empty logo space remains.
+    name_y = PAGE_H - M - (2.62 * inch if logo_drawn else 2.30 * inch)
     pdf.drawCentredString(rail_center, name_y, header_name or "Your Business")
     pdf.setFont("Helvetica", 9)
     yy = name_y - 0.20 * inch
@@ -3258,17 +3250,17 @@ def _render_luxe_pdf(
 
     draw_header_band()
 
-    # logo chip
+    # logo chip (only render when a real logo exists)
     chip_x = M + 16
     chip_y_top = PAGE_H - M - 16
     chip_w = 1.2 * inch
     chip_h = 1.1 * inch
-    pdf.setFillColor(colors.white)
-    pdf.roundRect(chip_x, chip_y_top - chip_h, chip_w, chip_h, 10, stroke=0, fill=1)
     logo_drawn = False
     if owner_logo_blob:
         try:
             img = ImageReader(io.BytesIO(owner_logo_blob))
+            pdf.setFillColor(colors.white)
+            pdf.roundRect(chip_x, chip_y_top - chip_h, chip_w, chip_h, 10, stroke=0, fill=1)
             pdf.drawImage(img, chip_x + 8, chip_y_top - chip_h + 8, width=chip_w - 16, height=chip_h - 16, preserveAspectRatio=True, mask="auto", anchor="c")
             logo_drawn = True
         except Exception:
@@ -3276,32 +3268,31 @@ def _render_luxe_pdf(
     elif owner_logo_abs and os.path.exists(owner_logo_abs):
         try:
             img = ImageReader(owner_logo_abs)
+            pdf.setFillColor(colors.white)
+            pdf.roundRect(chip_x, chip_y_top - chip_h, chip_w, chip_h, 10, stroke=0, fill=1)
             pdf.drawImage(img, chip_x + 8, chip_y_top - chip_h + 8, width=chip_w - 16, height=chip_h - 16, preserveAspectRatio=True, mask="auto", anchor="c")
             logo_drawn = True
         except Exception:
             logo_drawn = False
-    if not logo_drawn:
-        pdf.setFillColor(navy)
-        pdf.setFont("Helvetica-Bold", 24)
-        pdf.drawCentredString(chip_x + chip_w / 2.0, chip_y_top - 38, "IR")
 
     # header text
     business = ((getattr(owner, "business_name", None) or getattr(owner, "username", None) or "").strip()) if owner else ""
     owner_phone = _format_phone((getattr(owner, "phone", None) or "").strip()) if owner else ""
     owner_addr = _owner_address_lines(owner)
+    header_x = chip_x + (chip_w + 16 if logo_drawn else 0)
     pdf.setFillColor(colors.white)
     pdf.setFont("Helvetica-Bold", 23)
-    pdf.drawString(chip_x + chip_w + 16, PAGE_H - M - 34, doc_label)
+    pdf.drawString(header_x, PAGE_H - M - 34, doc_label)
     pdf.setFillColor(colors.HexColor("#eadac6"))
     pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawString(chip_x + chip_w + 16, PAGE_H - M - 52, business or "Your Business")
+    pdf.drawString(header_x, PAGE_H - M - 52, business or "Your Business")
     pdf.setFont("Helvetica", 10)
     yy = PAGE_H - M - 68
     for ln in owner_addr[:2]:
-        pdf.drawString(chip_x + chip_w + 16, yy, ln)
+        pdf.drawString(header_x, yy, ln)
         yy -= 12
     if owner_phone:
-        pdf.drawString(chip_x + chip_w + 16, yy, owner_phone)
+        pdf.drawString(header_x, yy, owner_phone)
 
     right_text(PAGE_W - M - 14, PAGE_H - M - 28, f"#{display_no}", "Helvetica-Bold", 14, colors.white)
     right_text(PAGE_W - M - 14, PAGE_H - M - 46, f"Issued: {generated_str}", "Helvetica", 10, colors.HexColor("#bfdbfe"))
