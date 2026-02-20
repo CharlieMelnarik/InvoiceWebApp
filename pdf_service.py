@@ -87,6 +87,58 @@ def _invoice_due_date_line(inv: Invoice, owner: User | None, *, is_estimate: boo
     return f"Payment due date: {due_dt.strftime('%B %d, %Y')}"
 
 
+def _invoice_due_date_utc(inv: Invoice, owner: User | None) -> datetime:
+    raw_due_days = getattr(owner, "payment_due_days", None) if owner else None
+    due_days = 30 if raw_due_days is None else int(raw_due_days)
+    due_days = max(0, min(3650, due_days))
+    created = getattr(inv, "created_at", None) or datetime.utcnow()
+    return created + timedelta(days=due_days)
+
+
+def _invoice_late_fee_amount(inv: Invoice, owner: User | None, *, as_of: datetime | None = None) -> float:
+    if not owner or not bool(getattr(owner, "late_fee_enabled", False)):
+        return 0.0
+    if bool(getattr(inv, "is_estimate", False)):
+        return 0.0
+    if float(inv.amount_due() or 0.0) <= 0.0:
+        return 0.0
+
+    now_utc = as_of or datetime.utcnow()
+    due_dt = _invoice_due_date_utc(inv, owner)
+    tz_offset = int(getattr(owner, "schedule_summary_tz_offset_minutes", 0) or 0)
+    tz_offset = max(-720, min(840, tz_offset))
+    now_local = now_utc + timedelta(minutes=tz_offset)
+    due_local = due_dt + timedelta(minutes=tz_offset)
+    overdue_days = (now_local.date() - due_local.date()).days
+    if overdue_days < 1:
+        return 0.0
+
+    frequency_days = int(getattr(owner, "late_fee_frequency_days", 30) or 30)
+    frequency_days = max(1, min(365, frequency_days))
+    cycles = 1 + ((overdue_days - 1) // frequency_days)
+
+    mode = (getattr(owner, "late_fee_mode", "fixed") or "fixed").strip().lower()
+    base_total = float(inv.invoice_total() or 0.0)
+    if mode == "percent":
+        pct = max(0.0, float(getattr(owner, "late_fee_percent", 0.0) or 0.0))
+        fee_per_cycle = base_total * (pct / 100.0)
+    else:
+        fee_per_cycle = max(0.0, float(getattr(owner, "late_fee_fixed", 0.0) or 0.0))
+    return round(max(0.0, fee_per_cycle * cycles), 2)
+
+
+def _invoice_pdf_amounts(inv: Invoice, owner: User | None, *, is_estimate: bool) -> tuple[float, float, float]:
+    total = float(inv.invoice_total() or 0.0)
+    due = float(inv.amount_due() or 0.0)
+    if is_estimate:
+        return total, due, 0.0
+    late_fee = _invoice_late_fee_amount(inv, owner)
+    if late_fee > 0.0:
+        total += late_fee
+        due += late_fee
+    return round(total, 2), round(max(0.0, due), 2), round(late_fee, 2)
+
+
 def _tax_label(inv: Invoice) -> str:
     if getattr(inv, "tax_override", None) is not None:
         return "Tax"
@@ -269,6 +321,7 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
             parts_lines.append(name)
 
     notes_text = (getattr(inv, "notes", None) or "").strip()
+    total_with_fees, due_with_fees, late_fee = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
     return {
         "doc_label": "ESTIMATE" if is_estimate else "INVOICE",
         "invoice_number": str(getattr(inv, "display_number", None) or inv.invoice_number or ""),
@@ -291,9 +344,10 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
         "parts_total": _money(inv.parts_total()),
         "labor_total": _money(inv.labor_total()),
         "tax": _money(inv.tax_amount()),
-        "total": _money(inv.invoice_total()),
+        "total": _money(total_with_fees),
+        "late_fee": _money(late_fee),
         "paid": _money(getattr(inv, "paid", 0.0) or 0.0),
-        "amount_due": _money(inv.amount_due()),
+        "amount_due": _money(due_with_fees),
     }
 
 
@@ -1355,9 +1409,8 @@ def _render_modern_pdf(
 
     total_parts = inv.parts_total() if show_parts else 0.0
     total_labor = inv.labor_total() if show_labor else 0.0
-    total_price = inv.invoice_total()
+    total_price, price_owed, late_fee_amount = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
     tax_amount = inv.tax_amount()
-    price_owed = inv.amount_due()
 
     right_edge = sum_x + sum_w - 12
     y = notes_y_top - 44
@@ -1370,6 +1423,8 @@ def _render_modern_pdf(
         label_right_value(sum_x + 12, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
     if tax_amount:
         label_right_value(sum_x + 12, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 16
+    if late_fee_amount > 0 and not is_estimate:
+        label_right_value(sum_x + 12, right_edge, y, "Late Fee:", _money(late_fee_amount)); y -= 16
 
     pdf.setStrokeColor(line_color)
     pdf.line(sum_x + 12, y + 4, sum_x + sum_w - 12, y + 4)
@@ -1600,9 +1655,8 @@ def _render_split_panel_pdf(
 
     total_parts = inv.parts_total() if show_parts else 0.0
     total_labor = inv.labor_total() if show_labor else 0.0
-    total_price = inv.invoice_total()
+    total_price, price_owed, late_fee_amount = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
     tax_amount = inv.tax_amount()
-    price_owed = inv.amount_due()
 
     pdf.setFont("Helvetica", 9)
     y = rail_y + 125
@@ -1614,6 +1668,8 @@ def _render_split_panel_pdf(
         pdf.drawString(rail_x + 12, y, f"{cfg['shop_supplies_label']}: {_money(inv.shop_supplies)}"); y -= 14
     if tax_amount:
         pdf.drawString(rail_x + 12, y, f"{_tax_label(inv)}: {_money(tax_amount)}"); y -= 14
+    if late_fee_amount > 0 and not is_estimate:
+        pdf.drawString(rail_x + 12, y, f"Late Fee: {_money(late_fee_amount)}"); y -= 14
 
     y -= 4
     pdf.setFont("Helvetica-Bold", 10)
@@ -2185,7 +2241,7 @@ def _render_strip_pdf(
     pdf.setFont("Helvetica-Bold", 12)
     pdf.drawString(strip_x + box_w + 10, strip_y - 34, inv.date_in)
 
-    total_price = inv.invoice_total()
+    total_price, price_owed, late_fee_amount = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
     pdf.setFillColor(accent_dark)
     pdf.rect(strip_x + (2 * box_w), strip_y - strip_h, box_w * 2, strip_h, stroke=0, fill=1)
     pdf.setFillColor(colors.white)
@@ -2342,7 +2398,6 @@ def _render_strip_pdf(
     total_parts = inv.parts_total() if show_parts else 0.0
     total_labor = inv.labor_total() if show_labor else 0.0
     tax_amount = inv.tax_amount()
-    price_owed = inv.amount_due()
 
     sum_w = 2.5 * inch
     sum_x = PAGE_W - M - sum_w
@@ -2377,6 +2432,8 @@ def _render_strip_pdf(
         label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 14
     if tax_amount:
         label_right_value(sum_x + 10, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 14
+    if late_fee_amount > 0 and not is_estimate:
+        label_right_value(sum_x + 10, right_edge, y, "Late Fee:", _money(late_fee_amount)); y -= 14
 
     pdf.setStrokeColor(line_color)
     pdf.line(sum_x + 10, y + 4, sum_x + sum_w - 10, y + 4)
@@ -2428,6 +2485,7 @@ def _render_basic_pdf(
     M = 0.5 * inch
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
+    total_with_fees, due_with_fees, late_fee_amount = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
 
     def right_text(x, y, text, font="Helvetica", size=10):
         pdf.setFont(font, size)
@@ -2469,7 +2527,7 @@ def _render_basic_pdf(
     right_text(mid_x - 6, info_y - 24, display_no)
     right_text(info_x + info_w - 6, info_y - 24, generated_str)
 
-    if not is_estimate and (inv.paid or 0.0) + 0.01 < inv.invoice_total():
+    if not is_estimate and due_with_fees > 0.0:
         due_line = _invoice_due_date_line(inv, owner, is_estimate=is_estimate)
         if due_line:
             pdf.setFont("Helvetica", 9)
@@ -2527,6 +2585,8 @@ def _render_basic_pdf(
         if float(inv.shop_supplies or 0.0):
             items.append((cfg.get("shop_supplies_label", "Additional Fees"), float(inv.shop_supplies or 0.0)))
     tax_amt = float(inv.tax_amount() or 0.0)
+    if late_fee_amount > 0 and not is_estimate:
+        items.append(("Late Fee", late_fee_amount))
     if tax_amt:
         items.append((_tax_label(inv), tax_amt))
 
@@ -2551,7 +2611,7 @@ def _render_basic_pdf(
     pdf.drawCentredString(table_x + (desc_w / 2.0), total_row_y - 4, "Thank you for your business!")
     pdf.setFont("Helvetica-Bold", 12)
     pdf.drawString(table_x + desc_w + 10, total_row_y - 4, "TOTAL")
-    right_text(table_x + table_w - 8, total_row_y - 4, _money(inv.invoice_total()), "Helvetica-Bold", 12)
+    right_text(table_x + table_w - 8, total_row_y - 4, _money(total_with_fees), "Helvetica-Bold", 12)
 
     foot_y = M + 18
     pdf.setFont("Helvetica", 8)
@@ -2596,6 +2656,7 @@ def _render_simple_pdf(
 
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
+    total_with_fees, due_with_fees, late_fee_amount = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
 
     def right_text(x, y, text, font="Helvetica", size=10, color=text_dark):
         pdf.setFont(font, size)
@@ -2667,7 +2728,7 @@ def _render_simple_pdf(
 
     meta_x = PAGE_W - M - 3.25 * inch
     meta_y = bill_y
-    due_val = max(0.0, float(inv.amount_due() or 0.0))
+    due_val = max(0.0, due_with_fees)
     left_pairs = [
         ("Date Issued", generated_str),
     ]
@@ -2677,7 +2738,7 @@ def _render_simple_pdf(
             left_pairs.append(("Due Date", due_line.replace("Payment due date:", "").strip()))
     right_pairs = [
         ("Invoice Number" if not is_estimate else "Estimate Number", display_no),
-        ("Amount Due" if not is_estimate else "Estimate Total", _money(due_val if not is_estimate else inv.invoice_total())),
+        ("Amount Due" if not is_estimate else "Estimate Total", _money(due_val if not is_estimate else total_with_fees)),
     ]
     pdf.setFont("Helvetica", 11)
     ly = meta_y
@@ -2784,9 +2845,9 @@ def _render_simple_pdf(
     if bool(cfg.get("show_shop_supplies", True)):
         subtotal += float(inv.shop_supplies or 0.0)
     tax = float(inv.tax_amount() or 0.0)
-    total = float(inv.invoice_total() or 0.0)
+    total = float(total_with_fees or 0.0)
     paid = float(inv.paid or 0.0)
-    amount_due = float(inv.amount_due() or 0.0)
+    amount_due = float(due_with_fees or 0.0)
 
     sum_right = PAGE_W - M
     sum_left = sum_right - 2.85 * inch
@@ -2802,6 +2863,10 @@ def _render_simple_pdf(
         sum_y -= 20
         right_text(sum_left + 1.35 * inch, sum_y, _tax_label(inv), "Helvetica", 12, text_dark)
         right_text(sum_right, sum_y, _money(tax), "Helvetica", 12, text_dark)
+    if late_fee_amount > 0 and not is_estimate:
+        sum_y -= 20
+        right_text(sum_left + 1.35 * inch, sum_y, "Late Fee", "Helvetica", 12, text_dark)
+        right_text(sum_right, sum_y, _money(late_fee_amount), "Helvetica", 12, text_dark)
     pdf.setStrokeColor(colors.HexColor("#d1d5db"))
     divider_y = sum_y - 12
     pdf.line(sum_left, divider_y, sum_right, divider_y)
@@ -2888,6 +2953,7 @@ def _render_blueprint_pdf(
 
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
+    total_with_fees, due_with_fees, late_fee_amount = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
 
     right_x0 = M + rail_w + 0.28 * inch
     right_w = PAGE_W - right_x0 - M
@@ -2992,7 +3058,7 @@ def _render_blueprint_pdf(
     pdf.drawString(x2 + 10, card_y - 14, "Amount Due" if not is_estimate else "Estimate Total")
     pdf.setFillColor(ink)
     pdf.setFont("Helvetica-Bold", 14)
-    pdf.drawString(x2 + 10, card_y - 34, _money(inv.amount_due() if not is_estimate else inv.invoice_total()))
+    pdf.drawString(x2 + 10, card_y - 34, _money(due_with_fees if not is_estimate else total_with_fees))
 
     # Bill to + date panel
     block_top = card_y - c_h - 14
@@ -3046,7 +3112,7 @@ def _render_blueprint_pdf(
     pdf.setFont("Helvetica-Bold", 9)
     pdf.drawString(px, py, "Status")
     pdf.setFillColor(ink)
-    paid_flag = float(inv.amount_due() or 0.0) <= 0.0
+    paid_flag = float(due_with_fees or 0.0) <= 0.0
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawString(px, py - 14, "Paid" if paid_flag else "Open")
 
@@ -3064,7 +3130,7 @@ def _render_blueprint_pdf(
     x_amt = x_rate + col_rate
     row_desc_header = cfg.get("labor_desc_label", "Description")
     row_qty_header = cfg.get("labor_time_label", "Qty")
-    row_rate_header = cfg.get("job_rate_label", "Rate")
+    row_rate_header = "Rate"
     row_amount_header = cfg.get("labor_total_label", "Amount")
     pdf.setFillColor(colors.white)
     pdf.setFont("Helvetica-Bold", 9)
@@ -3142,9 +3208,9 @@ def _render_blueprint_pdf(
     if bool(cfg.get("show_shop_supplies", True)):
         subtotal += float(inv.shop_supplies or 0.0)
     tax = float(inv.tax_amount() or 0.0)
-    total = float(inv.invoice_total() or 0.0)
+    total = float(total_with_fees or 0.0)
     paid = float(inv.paid or 0.0)
-    amount_due = float(inv.amount_due() or 0.0)
+    amount_due = float(due_with_fees or 0.0)
 
     if row_y < 2.2 * inch:
         row_y = table_cont_page()
@@ -3161,6 +3227,9 @@ def _render_blueprint_pdf(
     if tax > 0:
         sum_y -= 18
         right_text(sx + sum_w - 10, sum_y, f"{_tax_label(inv)}   {_money(tax)}", "Helvetica", 11, ink)
+    if late_fee_amount > 0 and not is_estimate:
+        sum_y -= 18
+        right_text(sx + sum_w - 10, sum_y, f"Late Fee   {_money(late_fee_amount)}", "Helvetica", 11, ink)
     pdf.setStrokeColor(line)
     divider_y = sum_y - 10
     pdf.line(sx + 10, divider_y, sx + sum_w - 10, divider_y)
@@ -3234,6 +3303,7 @@ def _render_luxe_pdf(
 
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
     pdf.setTitle(f"{doc_label.title()} - {display_no}")
+    total_with_fees, due_with_fees, late_fee_amount = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
 
     def right_text(x, y, text, font="Helvetica", size=10, color=ink):
         pdf.setFont(font, size)
@@ -3328,7 +3398,7 @@ def _render_luxe_pdf(
     if customer_email:
         pdf.drawString(left_x + 12, by, customer_email)
 
-    due_amt = inv.amount_due() if not is_estimate else inv.invoice_total()
+    due_amt = due_with_fees if not is_estimate else total_with_fees
     pdf.setFillColor(royal)
     pdf.setFont("Helvetica-Bold", 10)
     pdf.drawString(right_x + 12, cards_top - 16, "TOTAL DUE" if not is_estimate else "ESTIMATE TOTAL")
@@ -3337,13 +3407,16 @@ def _render_luxe_pdf(
     pdf.drawString(right_x + 12, cards_top - 42, _money(due_amt))
     pdf.setFont("Helvetica", 10)
     pdf.setFillColor(muted)
-    paid_state = "Paid" if float(inv.amount_due() or 0.0) <= 0.0 else "Open"
+    paid_state = "Paid" if float(due_with_fees or 0.0) <= 0.0 else "Open"
     tax_amount = float(inv.tax_amount() or 0.0)
     right_status_y = cards_top - 60
     pdf.drawString(right_x + 12, right_status_y, f"Status: {paid_state}")
     next_meta_y = right_status_y - 14
     if tax_amount > 0:
         pdf.drawString(right_x + 12, next_meta_y, f"Tax: {_money(tax_amount)}")
+        next_meta_y -= 14
+    if late_fee_amount > 0 and not is_estimate:
+        pdf.drawString(right_x + 12, next_meta_y, f"Late Fee: {_money(late_fee_amount)}")
         next_meta_y -= 14
     paid_amount = float(inv.paid or 0.0)
     if not is_estimate and paid_amount:
@@ -3475,8 +3548,8 @@ def _render_luxe_pdf(
     if bool(cfg.get("show_shop_supplies", True)):
         subtotal += float(inv.shop_supplies or 0.0)
     tax = float(inv.tax_amount() or 0.0)
-    total = float(inv.invoice_total() or 0.0)
-    due = float(inv.amount_due() or 0.0)
+    total = float(total_with_fees or 0.0)
+    due = float(due_with_fees or 0.0)
 
     notes_h = 0.56 * inch
     notes_bottom = M + 0.16 * inch
@@ -3489,6 +3562,8 @@ def _render_luxe_pdf(
     subtotal_line = f"Subtotal {_money(subtotal)}"
     if tax > 0:
         subtotal_line = f"{subtotal_line}   •   {_tax_label(inv)} {_money(tax)}"
+    if late_fee_amount > 0 and not is_estimate:
+        subtotal_line = f"{subtotal_line}   •   Late Fee {_money(late_fee_amount)}"
     pdf.drawString(M + 12, fy - 18, subtotal_line)
     right_text(PAGE_W - M - 12, fy - 18, f"Total {_money(total)}", "Helvetica-Bold", 12, colors.white)
     if not is_estimate:
@@ -4367,9 +4442,8 @@ def generate_and_store_pdf(
     sum_w = 240
     total_parts = inv.parts_total() if show_parts else 0.0
     total_labor = inv.labor_total() if show_labor else 0.0
-    total_price = inv.invoice_total()
+    total_price, price_owed, late_fee_amount = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
     tax_amount = inv.tax_amount()
-    price_owed = inv.amount_due()
 
     summary_rows = 1  # Total / Estimated Total
     if show_parts and has_parts_rows and total_parts:
@@ -4379,6 +4453,8 @@ def generate_and_store_pdf(
     if show_shop_supplies and inv.shop_supplies:
         summary_rows += 1
     if tax_amount:
+        summary_rows += 1
+    if late_fee_amount > 0 and not is_estimate:
         summary_rows += 1
     paid_amount = float(inv.paid or 0.0)
     if not is_estimate and paid_amount:
@@ -4401,6 +4477,8 @@ def generate_and_store_pdf(
         label_right_value(sum_x + 10, right_edge, y, f"{cfg['shop_supplies_label']}:", _money(inv.shop_supplies)); y -= 16
     if tax_amount:
         label_right_value(sum_x + 10, right_edge, y, f"{_tax_label(inv)}:", _money(tax_amount)); y -= 16
+    if late_fee_amount > 0 and not is_estimate:
+        label_right_value(sum_x + 10, right_edge, y, "Late Fee:", _money(late_fee_amount)); y -= 16
 
     pdf.setStrokeColor(colors.HexColor("#DDDDDD"))
     pdf.line(sum_x + 10, y + 4, sum_x + sum_w - 10, y + 4)

@@ -4469,9 +4469,22 @@ def create_app():
                 s.add(inv)
                 s.flush()
 
-                inv.parts.append(InvoicePart(part_name="Sample Part", part_price=18.0))
+                inv.parts.extend(
+                    [
+                        InvoicePart(part_name="Sample Part A", part_price=18.0),
+                        InvoicePart(part_name="Sample Part B", part_price=26.5),
+                        InvoicePart(part_name="Sample Part C", part_price=12.75),
+                        InvoicePart(part_name="Sample Part D", part_price=33.25),
+                    ]
+                )
                 if tmpl != "flipping_items":
-                    inv.labor_items.append(InvoiceLabor(labor_desc="Sample labor item", labor_time_hours=1.5))
+                    inv.labor_items.extend(
+                        [
+                            InvoiceLabor(labor_desc="Sample labor item A", labor_time_hours=1.5),
+                            InvoiceLabor(labor_desc="Sample labor item B", labor_time_hours=2.0),
+                            InvoiceLabor(labor_desc="Sample labor item C", labor_time_hours=0.75),
+                        ]
+                    )
                 else:
                     inv.paid = 120.0
                     inv.hours = 120.0 - inv.parts_total_raw() - inv.shop_supplies
