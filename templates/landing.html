@@ -253,6 +253,21 @@
       font-size: 1rem;
       color: #163a6b;
     }
+    .module h3 .beta-pill {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 0.35rem;
+      padding: 0.1rem 0.42rem;
+      border-radius: 999px;
+      font-size: 0.64rem;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: #8a4e08;
+      background: #ffe4b8;
+      border: 1px solid #e7b469;
+      vertical-align: middle;
+    }
 
     .module p {
       margin: 0;
@@ -484,7 +499,7 @@
           </div>
           <div class="trust-strip">
             <div class="trust-item">Invoice + estimate creation with live PDF styling</div>
-            <div class="trust-item">Customer portal links and online payment support</div>
+            <div class="trust-item">Automated due-date reminders and late fee rules</div>
             <div class="trust-item">Employee-ready workflows with role restrictions</div>
           </div>
         </div>
@@ -495,6 +510,7 @@
             <li>Customer records, contact history, and document timelines</li>
             <li>Scheduler for appointments with employee/company schedule views</li>
             <li>Business expenses, split expense tracking, and Profit &amp; Loss breakdowns</li>
+            <li>Email template editor for customer-facing messages and reminders</li>
             <li>Subscription billing, plan upgrades, and Pro feature controls</li>
             <li>Portal-based customer viewing and invoice payments via Stripe Connect</li>
           </ul>
@@ -509,7 +525,7 @@
       <div class="module-grid">
         <article class="module">
           <h3>Invoices &amp; Estimates</h3>
-          <p>Create, edit, duplicate, convert between estimate and invoice, and send customer-ready PDFs by email.</p>
+          <p>Create, edit, duplicate, convert between estimate and invoice, and send customer-ready estimates and invoices by email, at the click of a button.</p>
           <span class="tag">Core</span>
         </article>
         <article class="module">
@@ -538,6 +554,11 @@
           <p>Generate a downloadable breakdown of income and categorized operating expenses.</p>
           <span class="tag">Reporting</span>
         </article>
+        <article class="module">
+          <h3>Support &amp; Contact</h3>
+          <p>Built-in Contact Us form routes user feedback and questions directly to InvoiceRunner support.</p>
+          <span class="tag">Operations</span>
+        </article>
 
         <article class="module">
           <h3>Customer Portal</h3>
@@ -551,7 +572,12 @@
         </article>
         <article class="module">
           <h3>Employee Accounts</h3>
-          <p>Invite employees with permission controls for edits, schedules, and sensitive business areas.</p>
+          <p>Create employee logins with role-based access so staff can handle day-to-day work while owner-only areas stay protected.</p>
+          <span class="tag">Pro</span>
+        </article>
+        <article class="module">
+          <h3>Invoice Builder <span class="beta-pill">Beta</span></h3>
+          <p>Build custom PDF layouts with drag-and-drop controls and exact preview rendering.</p>
           <span class="tag">Pro</span>
         </article>
       </div>
@@ -578,7 +604,7 @@
             <li>Invoices, estimates, and PDF downloads</li>
             <li>Customer management and scheduler</li>
             <li>Business expenses + financial summaries</li>
-            <li>Customer portal view links (no online payment)</li>
+            <li>Email PDF delivery to customers (no customer portal)</li>
             <li>7-day Basic trial</li>
           </ul>
         </article>
@@ -591,8 +617,11 @@
           <ul>
             <li>Everything in Basic</li>
             <li>Invoice online payments through Stripe Connect with easy payment setup</li>
+            <li>Customer portal links with secure online payment experience</li>
+            <li>Automated payment reminders, due-date sends, and late fee rules</li>
             <li>Employee invitations + role-based access</li>
             <li>Company + employee schedule visibility controls</li>
+            <li>Email editor and custom invoice builder tools</li>
             <li>Pro payout preview tools and payment fee controls</li>
             <li>7-day Pro trial</li>
           </ul>

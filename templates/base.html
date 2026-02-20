@@ -646,17 +646,19 @@
     </main>
   </div>
 {% else %}
-  <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-    <div class="container">
-      <a class="navbar-brand d-flex align-items-center" href="{{ url_for('index') }}">
-        <img
-          src="{{ url_for('static', filename='images/InvoiceRunner.png') }}"
-          alt="InvoiceRunner"
-          style="height: 50px; width: auto;"
-        >
-      </a>
-    </div>
-  </nav>
+  {% if not hide_public_nav|default(false) %}
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+      <div class="container">
+        <a class="navbar-brand d-flex align-items-center" href="{{ url_for('index') }}">
+          <img
+            src="{{ url_for('static', filename='images/InvoiceRunner.png') }}"
+            alt="InvoiceRunner"
+            style="height: 50px; width: auto;"
+          >
+        </a>
+      </div>
+    </nav>
+  {% endif %}
 
   <div class="container">
     {% with messages = get_flashed_messages(with_categories=true) %}

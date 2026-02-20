@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% set title = "Contact Us" %}
+{% set hide_public_nav = true %}
+
+{% block content %}
+<style>
+  .support-shell {
+    max-width: 820px;
+    margin: 2.2rem auto 0;
+  }
+  .support-panel {
+    border: 1px solid #b6c9e6;
+    border-radius: 20px;
+    background:
+      radial-gradient(620px 300px at 0% -10%, rgba(42, 101, 200, 0.24), transparent 68%),
+      radial-gradient(560px 300px at 100% 0%, rgba(182, 128, 37, 0.18), transparent 70%),
+      radial-gradient(420px 260px at 50% 100%, rgba(8, 122, 107, 0.1), transparent 72%),
+      linear-gradient(180deg, #f9fcff 0%, #e8f2ff 100%);
+    box-shadow: 0 22px 42px rgba(12, 34, 73, 0.16);
+    padding: 1.2rem;
+  }
+  .support-card {
+    border: 1px solid #c4d6ef;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f5f9ff 100%);
+    box-shadow: 0 12px 24px rgba(15, 40, 85, 0.1);
+    padding: 1.1rem;
+  }
+  .support-title {
+    margin: 0 0 0.25rem;
+    color: #12345f;
+    font-weight: 800;
+    text-align: center;
+  }
+  .support-subtitle {
+    margin: 0;
+    color: #42608e;
+    font-size: 0.95rem;
+    text-align: center;
+  }
+  .support-help-link {
+    color: #1f58ab;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .support-help-link:hover {
+    text-decoration: underline;
+  }
+  @media (max-width: 991px) {
+    .support-shell {
+      margin-top: 1rem;
+    }
+    .support-panel {
+      padding: 0.9rem;
+    }
+  }
+</style>
+
+<section class="support-shell">
+  <div class="support-panel">
+    <div class="support-card">
+      <h1 class="h3 support-title">Contact InvoiceRunner</h1>
+      <p class="support-subtitle mb-3">Questions, account issues, comments, and support requests.</p>
+
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label req">Category</label>
+            <select class="form-select" name="category" required>
+              {% set cat = (form_data.category if form_data else 'General') %}
+              {% for option in ["General", "Bug Report", "Billing", "Feature Request", "Account Access", "Other"] %}
+                <option value="{{ option }}" {% if cat == option %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label req">Your Name</label>
+            <input class="form-control" name="name" maxlength="120" value="{{ form_data.name if form_data else '' }}" required>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label req">Email</label>
+            <input class="form-control" type="email" name="email" maxlength="254" value="{{ form_data.email if form_data else '' }}" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Phone (optional)</label>
+            <input class="form-control" name="phone" maxlength="40" placeholder="(406) 555-1234" value="{{ form_data.phone if form_data else '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label req">Subject</label>
+            <input class="form-control" name="subject" maxlength="180" value="{{ form_data.subject if form_data else '' }}" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label req">Message</label>
+            <textarea
+              class="form-control"
+              name="message"
+              rows="8"
+              maxlength="10000"
+              placeholder="Tell us how we can help..."
+              required
+            >{{ form_data.message if form_data else '' }}</textarea>
+          </div>
+          {% if turnstile_site_key %}
+            <div class="col-12">
+              <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"></div>
+            </div>
+          {% endif %}
+          <div class="col-12 d-flex justify-content-between align-items-center gap-2 flex-wrap">
+            <a class="support-help-link" href="{{ url_for('login') }}">Back to login</a>
+            <button class="btn btn-primary" type="submit">Send Message</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+  {% if turnstile_site_key %}
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  {% endif %}
+{% endblock %}
+

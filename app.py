@@ -1585,6 +1585,83 @@ def _send_contact_us_email(
         smtp.send_message(msg)
 
 
+def _send_public_contact_us_email(
+    *,
+    contact_to_email: str,
+    category: str,
+    subject: str,
+    message: str,
+    sender_name: str,
+    sender_email: str,
+    sender_phone: str,
+) -> None:
+    host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
+    user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
+    password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
+    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    if not all([host, port, user, password, mail_from]):
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+
+    to_email = (contact_to_email or "").strip().lower()
+    if not _looks_like_email(to_email):
+        raise RuntimeError("Contact destination email is invalid.")
+
+    cat_clean = (category or "General").strip()[:80]
+    subj_clean = (subject or "").strip()[:180]
+    msg_clean = (message or "").strip()[:10000]
+    sender_name_clean = (sender_name or "").strip()[:120]
+    sender_email_clean = (sender_email or "").strip().lower()[:254]
+    sender_phone_clean = _format_phone_display((sender_phone or "").strip())[:40]
+
+    mail_subject = f"[InvoiceRunner Contact] {cat_clean}: {subj_clean or '(No subject)'}"
+    text_body = (
+        "A public Contact Us message was submitted on InvoiceRunner.\n\n"
+        f"Category: {cat_clean}\n"
+        f"Subject: {subj_clean or '(No subject)'}\n\n"
+        "Contact Details\n"
+        f"- Name: {sender_name_clean or 'N/A'}\n"
+        f"- Email: {sender_email_clean or 'N/A'}\n"
+        f"- Phone: {sender_phone_clean or 'N/A'}\n"
+        f"- IP: {_client_ip() or 'N/A'}\n"
+        f"- User Agent: {(request.headers.get('User-Agent') or '')[:300] or 'N/A'}\n\n"
+        "Message\n"
+        f"{msg_clean}\n"
+    )
+
+    html_body = (
+        "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.45;\">"
+        "<p><strong>A public Contact Us message was submitted on InvoiceRunner.</strong></p>"
+        f"<p><strong>Category:</strong> {html.escape(cat_clean)}<br>"
+        f"<strong>Subject:</strong> {html.escape(subj_clean or '(No subject)')}</p>"
+        "<h3 style=\"margin:14px 0 6px 0;font-size:15px;\">Contact Details</h3>"
+        "<ul style=\"margin:0 0 10px 18px;padding:0;\">"
+        f"<li><strong>Name:</strong> {html.escape(sender_name_clean or 'N/A')}</li>"
+        f"<li><strong>Email:</strong> {html.escape(sender_email_clean or 'N/A')}</li>"
+        f"<li><strong>Phone:</strong> {html.escape(sender_phone_clean or 'N/A')}</li>"
+        f"<li><strong>IP:</strong> {html.escape(_client_ip() or 'N/A')}</li>"
+        f"<li><strong>User Agent:</strong> {html.escape((request.headers.get('User-Agent') or '')[:300] or 'N/A')}</li>"
+        "</ul>"
+        "<h3 style=\"margin:14px 0 6px 0;font-size:15px;\">Message</h3>"
+        f"<pre style=\"white-space:pre-wrap;background:#f7f7f7;border:1px solid #ddd;padding:10px;border-radius:8px;\">{html.escape(msg_clean)}</pre>"
+        "</div>"
+    )
+
+    msg = EmailMessage()
+    msg["Subject"] = mail_subject
+    msg["From"] = mail_from
+    msg["To"] = to_email
+    if sender_email_clean and _looks_like_email(sender_email_clean):
+        msg["Reply-To"] = sender_email_clean
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, password)
+        smtp.send_message(msg)
+
+
 def _ensure_customer_email_templates(session, owner: User | None) -> bool:
     if not owner:
         return False
@@ -3566,6 +3643,139 @@ def create_app():
             return redirect(url_for("login"))
 
         return render_template("reset_password.html", token=token)
+
+    @app.route("/contact-support", methods=["GET", "POST"])
+    def contact_support_public():
+        if current_user.is_authenticated:
+            return redirect(url_for("contact_us"))
+
+        turnstile_site_key = _turnstile_site_key()
+        form_data = {
+            "category": "General",
+            "name": "",
+            "email": "",
+            "phone": "",
+            "subject": "",
+            "message": "",
+        }
+
+        if request.method == "POST":
+            category = (request.form.get("category") or "General").strip()
+            name = (request.form.get("name") or "").strip()
+            email = (request.form.get("email") or "").strip().lower()
+            phone = (request.form.get("phone") or "").strip()
+            subject = (request.form.get("subject") or "").strip()
+            message = (request.form.get("message") or "").strip()
+            form_data = {
+                "category": category,
+                "name": name,
+                "email": email,
+                "phone": phone,
+                "subject": subject,
+                "message": message,
+            }
+
+            allowed_categories = {
+                "General",
+                "Bug Report",
+                "Billing",
+                "Feature Request",
+                "Account Access",
+                "Other",
+            }
+            if category not in allowed_categories:
+                category = "General"
+                form_data["category"] = category
+
+            if _turnstile_enabled():
+                token = (request.form.get("cf-turnstile-response") or "").strip()
+                ok, reason = _verify_turnstile(token)
+                if not ok:
+                    flash("Captcha verification failed. Please try again.", "error")
+                    print(f"[PUBLIC CONTACT] captcha failed: {reason}", flush=True)
+                    return render_template(
+                        "contact_support_public.html",
+                        turnstile_site_key=turnstile_site_key,
+                        form_data=form_data,
+                    )
+
+            if not name:
+                flash("Please enter your name.", "error")
+                return render_template(
+                    "contact_support_public.html",
+                    turnstile_site_key=turnstile_site_key,
+                    form_data=form_data,
+                )
+            if not email or not _looks_like_email(email):
+                flash("Please enter a valid email address.", "error")
+                return render_template(
+                    "contact_support_public.html",
+                    turnstile_site_key=turnstile_site_key,
+                    form_data=form_data,
+                )
+            if not subject:
+                flash("Please enter a subject.", "error")
+                return render_template(
+                    "contact_support_public.html",
+                    turnstile_site_key=turnstile_site_key,
+                    form_data=form_data,
+                )
+            if not message:
+                flash("Please enter a message.", "error")
+                return render_template(
+                    "contact_support_public.html",
+                    turnstile_site_key=turnstile_site_key,
+                    form_data=form_data,
+                )
+            if len(name) > 120:
+                flash("Name must be 120 characters or fewer.", "error")
+                return render_template(
+                    "contact_support_public.html",
+                    turnstile_site_key=turnstile_site_key,
+                    form_data=form_data,
+                )
+            if len(subject) > 180:
+                flash("Subject must be 180 characters or fewer.", "error")
+                return render_template(
+                    "contact_support_public.html",
+                    turnstile_site_key=turnstile_site_key,
+                    form_data=form_data,
+                )
+            if len(message) > 10000:
+                flash("Message is too long (max 10,000 characters).", "error")
+                return render_template(
+                    "contact_support_public.html",
+                    turnstile_site_key=turnstile_site_key,
+                    form_data=form_data,
+                )
+
+            try:
+                _send_public_contact_us_email(
+                    contact_to_email="cmmelnarik@gmail.com",
+                    category=category,
+                    subject=subject,
+                    message=message,
+                    sender_name=name,
+                    sender_email=email,
+                    sender_phone=phone,
+                )
+            except Exception as exc:
+                print(f"[PUBLIC CONTACT] SMTP ERROR: {repr(exc)}", flush=True)
+                flash("Could not send your message right now. Please try again.", "error")
+                return render_template(
+                    "contact_support_public.html",
+                    turnstile_site_key=turnstile_site_key,
+                    form_data=form_data,
+                )
+
+            flash("Message sent to InvoiceRunner. Thank you.", "success")
+            return redirect(url_for("contact_support_public"))
+
+        return render_template(
+            "contact_support_public.html",
+            turnstile_site_key=turnstile_site_key,
+            form_data=form_data,
+        )
 
     @app.route("/logout")
     @login_required
