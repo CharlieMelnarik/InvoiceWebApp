@@ -39,7 +39,7 @@
               {% for key, cfg in pdf_templates.items() %}
                 <div class="col-md-6">
                   <label class="pdf-template-card">
-                    <input class="pdf-template-radio" type="radio" name="pdf_template" value="{{ key }}" {% if (u.pdf_template or 'classic') == key %}checked{% endif %} required>
+                    <input class="pdf-template-radio" type="radio" name="pdf_template" value="{{ key }}" {% if (selected_pdf_template or 'classic') == key %}checked{% endif %} required>
                     <div class="pdf-template-body">
                       <div class="pdf-template-preview">
                         <img src="{{ url_for('static', filename=cfg.preview) }}" alt="{{ cfg.label }} preview">

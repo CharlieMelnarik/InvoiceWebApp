@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" role="img" aria-label="Basic invoice template preview">
+  <rect width="640" height="420" fill="#ffffff"/>
+  <rect x="18" y="18" width="604" height="384" fill="#ffffff" stroke="#111111" stroke-width="1.5"/>
+
+  <text x="44" y="58" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#111111">[Company Name]</text>
+  <text x="44" y="74" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">[Street Address]</text>
+  <text x="44" y="87" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">[City, ST ZIP]</text>
+  <text x="44" y="100" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">Phone: (000) 000-0000</text>
+
+  <text x="488" y="60" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="700" fill="#111111">INVOICE</text>
+
+  <rect x="354" y="72" width="220" height="34" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+  <line x1="464" y1="72" x2="464" y2="106" stroke="#111111" stroke-width="1"/>
+  <line x1="354" y1="88" x2="574" y2="88" stroke="#111111" stroke-width="1"/>
+  <text x="410" y="84" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" font-weight="700" fill="#111111">INVOICE #</text>
+  <text x="519" y="84" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" font-weight="700" fill="#111111">DATE</text>
+  <text x="410" y="100" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#111111">[123456]</text>
+  <text x="519" y="100" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#111111">5/1/2026</text>
+
+  <rect x="44" y="132" width="220" height="20" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+  <text x="54" y="146" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#111111">BILL TO</text>
+  <text x="44" y="168" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">[Name]</text>
+  <text x="44" y="181" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">[Company Name]</text>
+  <text x="44" y="194" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">[Street Address]</text>
+  <text x="44" y="207" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">[City, ST ZIP]</text>
+  <text x="44" y="220" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">[Phone]</text>
+  <text x="44" y="233" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">[Email Address]</text>
+
+  <rect x="44" y="250" width="530" height="130" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+  <line x1="470" y1="250" x2="470" y2="380" stroke="#111111" stroke-width="1"/>
+  <line x1="44" y1="270" x2="574" y2="270" stroke="#111111" stroke-width="1"/>
+  <text x="54" y="264" font-family="Arial, Helvetica, sans-serif" font-size="9" font-weight="700" fill="#111111">DESCRIPTION</text>
+  <text x="555" y="264" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="9" font-weight="700" fill="#111111">AMOUNT</text>
+
+  <text x="54" y="294" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">Service fee</text>
+  <text x="555" y="294" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">200.00</text>
+  <text x="54" y="308" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">Labor: 5 hours at $75/hr</text>
+  <text x="555" y="308" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">375.00</text>
+  <text x="54" y="322" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">Tax</text>
+  <text x="555" y="322" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#111111">26.56</text>
+
+  <line x1="44" y1="358" x2="574" y2="358" stroke="#111111" stroke-width="1"/>
+  <text x="190" y="374" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-style="italic" fill="#111111">Thank you for your business!</text>
+  <text x="516" y="374" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#111111">TOTAL  $551.56</text>
+</svg>

@@ -359,7 +359,7 @@
 (() => {
   const saveUrl = "{{ url_for('api_invoice_builder_save') }}";
   const activateBase = "/api/invoice-builder/template/";
-  const templates = {{ templates_payload|tojson }};
+  const templates = Array.isArray({{ templates_payload|tojson }}) ? {{ templates_payload|tojson }} : [];
   const logoPreviewUrl = {{ (logo_preview_url or '')|tojson }};
   const livePreviewUrl = {{ (live_preview_url or '')|tojson }};
   const ownerHasLogo = {{ (owner_has_logo or False)|tojson }};
@@ -887,22 +887,53 @@
 
   function renderTemplateList() {
     templateList.innerHTML = "";
-    templates.forEach(t => {
+    let count = 0;
+    (Array.isArray(templates) ? templates : []).forEach((t) => {
+      if (!t || typeof t !== "object") return;
+      const idNum = Number(t.id);
+      if (!Number.isFinite(idNum)) return;
+
       const row = document.createElement("div");
-      row.className = "template-row" + (Number(t.id) === Number(currentTemplateId) ? " active" : "");
-      row.innerHTML = `
-        <div class="d-flex justify-content-between align-items-center">
-          <strong>${t.name}</strong>
-          ${t.is_active ? '<span class="badge text-bg-success">Active</span>' : ""}
-        </div>
-        <div class="d-flex gap-1 mt-2">
-          <button class="btn btn-outline-primary btn-sm" data-load="${t.id}">Load</button>
-          <button class="btn btn-outline-success btn-sm" data-activate="${t.id}">Activate</button>
-          <button class="btn btn-outline-danger btn-sm" data-delete="${t.id}">Delete</button>
-        </div>
-      `;
+      row.className = "template-row" + (idNum === Number(currentTemplateId) ? " active" : "");
+
+      const head = document.createElement("div");
+      head.className = "d-flex justify-content-between align-items-center";
+      const name = document.createElement("strong");
+      name.textContent = String(t.name || "Template");
+      head.appendChild(name);
+      if (t.is_active) {
+        const badge = document.createElement("span");
+        badge.className = "badge text-bg-success";
+        badge.textContent = "Active";
+        head.appendChild(badge);
+      }
+      row.appendChild(head);
+
+      const actions = document.createElement("div");
+      actions.className = "d-flex gap-1 mt-2";
+      const mkBtn = (cls, label, attr) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `btn ${cls} btn-sm`;
+        btn.textContent = label;
+        btn.setAttribute(attr, String(idNum));
+        return btn;
+      };
+      actions.appendChild(mkBtn("btn-outline-primary", "Load", "data-load"));
+      actions.appendChild(mkBtn("btn-outline-success", "Activate", "data-activate"));
+      actions.appendChild(mkBtn("btn-outline-danger", "Delete", "data-delete"));
+      row.appendChild(actions);
+
       templateList.appendChild(row);
+      count += 1;
     });
+
+    if (count === 0) {
+      const empty = document.createElement("div");
+      empty.className = "small text-muted";
+      empty.textContent = "No templates loaded. If this looks wrong, refresh this page.";
+      templateList.appendChild(empty);
+    }
   }
 
   function renderCanvas(pass = 0) {

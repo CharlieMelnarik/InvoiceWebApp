@@ -135,6 +135,9 @@
     background: linear-gradient(180deg, #edf4ff 0%, #dfeaff 100%);
     padding: 12px;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    max-width: 760px;
+    margin-left: auto;
+    margin-right: auto;
   }
   .live-preview-title {
     font-size: 0.93rem;
@@ -144,10 +147,20 @@
   }
   .live-preview-frame {
     width: 100%;
-    height: 560px;
+    height: 430px;
     border: 1px solid #9eb7dc;
     border-radius: 10px;
     background: #fff;
+  }
+  @media (max-width: 991px) {
+    .live-preview-frame {
+      height: 380px;
+    }
+  }
+  @media (max-width: 575px) {
+    .live-preview-frame {
+      height: 320px;
+    }
   }
   .save-row {
     position: sticky;
@@ -376,7 +389,7 @@
             {% for key, cfg in pdf_templates.items() %}
               <div class="col-md-6 col-xl-3">
                 <label class="pdf-template-card">
-                  <input class="pdf-template-radio" type="radio" name="pdf_template" value="{{ key }}" {% if (u.pdf_template or 'classic') == key %}checked{% endif %} required>
+                  <input class="pdf-template-radio" type="radio" name="pdf_template" value="{{ key }}" {% if (selected_pdf_template or 'classic') == key %}checked{% endif %} required>
                   <div class="pdf-template-body">
                     <div class="pdf-template-preview">
                       <img src="{{ url_for('static', filename=cfg.preview) }}" alt="{{ cfg.label }} preview">
@@ -434,12 +447,19 @@
           </div>
           <div class="settings-help">Automated reminder timing and late-fee accrual for unpaid invoices.</div>
 
+          <div class="d-flex justify-content-start mb-2">
+            <div class="form-check mb-0">
+              <input class="form-check-input" type="checkbox" id="paymentRemindersEnabled" name="payment_reminders_enabled" value="1" {% if u.payment_reminders_enabled %}checked{% endif %}>
+              <label class="form-check-label" for="paymentRemindersEnabled">Enable payment reminders</label>
+            </div>
+          </div>
+
           <div class="row g-3">
             <div class="col-md-4">
               <label class="form-label compact-label mb-0">Default Due Date (days)</label>
               <div class="form-check form-switch m-0 mb-1">
-                <input class="form-check-input" type="checkbox" id="paymentRemindersEnabled" name="payment_reminders_enabled" value="1" {% if u.payment_reminders_enabled %}checked{% endif %}>
-                <label class="form-check-label small text-muted" for="paymentRemindersEnabled">Will auto send payment reminders on the due date</label>
+                <input class="form-check-input" type="checkbox" id="paymentReminderDueTodayEnabled" name="payment_reminder_due_today_enabled" value="1" {% if u.payment_reminder_due_today_enabled is not defined or u.payment_reminder_due_today_enabled %}checked{% endif %}>
+                <label class="form-check-label small text-muted" for="paymentReminderDueTodayEnabled">Will auto-send Reminder On Due Date</label>
               </div>
               <input type="text" class="form-control" name="payment_due_days" inputmode="numeric" value="{{ u.payment_due_days if u.payment_due_days is not none else '30' }}" placeholder="30">
             </div>

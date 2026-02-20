@@ -130,7 +130,12 @@ def _invoice_late_fee_amount(inv: Invoice, owner: User | None, *, as_of: datetim
 
     now_utc = as_of or datetime.utcnow()
     due_dt = _invoice_due_date_utc(inv, owner)
-    overdue_days = (now_utc.date() - due_dt.date()).days
+    # Compare in the owner's local date so late fees begin the day *after* due date locally.
+    tz_offset = int(getattr(owner, "schedule_summary_tz_offset_minutes", 0) or 0)
+    tz_offset = max(-720, min(840, tz_offset))
+    now_local = now_utc + timedelta(minutes=tz_offset)
+    due_local = due_dt + timedelta(minutes=tz_offset)
+    overdue_days = (now_local.date() - due_local.date()).days
     if overdue_days < 1:
         return 0.0
 
@@ -633,7 +638,28 @@ PDF_TEMPLATES = {
         "desc": "Header-led layout with a bold total strip and clean rows.",
         "preview": "images/pdf_template_strip.svg",
     },
+    "basic": {
+        "label": "Basic",
+        "desc": "Simple black-and-white layout with straightforward sections.",
+        "preview": "images/pdf_template_basic.svg",
+    },
+    "simple": {
+        "label": "Simple",
+        "desc": "Minimal, clean layout with soft accents and structured totals.",
+        "preview": "images/pdf_template_simple.svg",
+    },
+    "blueprint": {
+        "label": "Blueprint",
+        "desc": "Bold studio-style layout with a dark side rail and structured data cards.",
+        "preview": "images/pdf_template_blueprint.svg",
+    },
+    "luxe": {
+        "label": "Luxe",
+        "desc": "High-contrast premium layout with distinct Labor and Parts tables.",
+        "preview": "images/pdf_template_luxe.svg",
+    },
 }
+PRO_ONLY_PDF_TEMPLATES = {"basic", "simple", "blueprint", "luxe"}
 
 
 EMAIL_TEMPLATE_DEFS = {
@@ -849,8 +875,30 @@ BUSINESS_EXPENSE_DEFAULT_LABELS = [
 
 
 def _pdf_template_key_fallback(key: str | None) -> str:
-    key = (key or "").strip()
+    key = (key or "").strip().lower()
     return key if key in PDF_TEMPLATES else "classic"
+
+
+def _user_has_pro_pdf_templates(u: User | None) -> bool:
+    if not u:
+        return False
+    status = (getattr(u, "subscription_status", None) or "").strip().lower()
+    if status not in ("trialing", "active"):
+        return False
+    return _normalize_plan_tier(getattr(u, "subscription_tier", None)) == "pro"
+
+
+def _pdf_templates_for_user(u: User | None) -> dict[str, dict]:
+    if _user_has_pro_pdf_templates(u):
+        return PDF_TEMPLATES
+    return {k: v for k, v in PDF_TEMPLATES.items() if k not in PRO_ONLY_PDF_TEMPLATES}
+
+
+def _pdf_template_for_user(u: User | None, key: str | None) -> str:
+    chosen = _pdf_template_key_fallback(key)
+    if chosen in PRO_ONLY_PDF_TEMPLATES and not _user_has_pro_pdf_templates(u):
+        return "classic"
+    return chosen
 
 
 # -----------------------------
@@ -3460,6 +3508,8 @@ def create_app():
                     )
                 employees = []
                 owner_pro_enabled = _has_pro_features(owner)
+                visible_pdf_templates = _pdf_templates_for_user(owner)
+                selected_pdf_template = _pdf_template_for_user(owner, getattr(u, "pdf_template", None))
                 if (not is_employee) and owner_pro_enabled:
                     employees = (
                         s.query(User)
@@ -3477,13 +3527,14 @@ def create_app():
                     employee_features_enabled=owner_pro_enabled,
                     employees=employees,
                     templates=INVOICE_TEMPLATES,
-                    pdf_templates=PDF_TEMPLATES,
+                    pdf_templates=visible_pdf_templates,
+                    selected_pdf_template=selected_pdf_template,
                     docs_for_preview=docs_for_preview,
                 )
 
             if request.method == "POST":
                 if is_employee:
-                    pdf_tmpl = _pdf_template_key_fallback(request.form.get("pdf_template"))
+                    pdf_tmpl = _pdf_template_for_user(owner, request.form.get("pdf_template"))
                     actor.pdf_template = pdf_tmpl
                     s.commit()
                     flash("Employee settings saved.", "success")
@@ -3610,7 +3661,7 @@ def create_app():
                     u.custom_show_shop_supplies = True
                     u.custom_show_notes = True
 
-                pdf_tmpl = _pdf_template_key_fallback(request.form.get("pdf_template"))
+                pdf_tmpl = _pdf_template_for_user(owner, request.form.get("pdf_template"))
                 u.pdf_template = pdf_tmpl
 
                 u.tax_rate = _to_float(request.form.get("tax_rate"), 0.0)
@@ -3752,7 +3803,10 @@ def create_app():
             tmpl = _template_key_fallback((request.args.get("invoice_template") or "").strip() or u.invoice_template)
             if (not pro_enabled) and tmpl == "custom":
                 tmpl = _template_key_fallback(u.invoice_template if (u.invoice_template or "") != "custom" else "auto_repair")
-            pdf_tmpl = _pdf_template_key_fallback((request.args.get("pdf_template") or "").strip() or u.pdf_template)
+            pdf_tmpl = _pdf_template_for_user(
+                u,
+                (request.args.get("pdf_template") or "").strip() or u.pdf_template,
+            )
             custom_base = INVOICE_TEMPLATES.get("custom", {})
 
             def _arg_text(name: str, fallback: str) -> str:
@@ -4235,7 +4289,7 @@ def create_app():
                     invoice_number=preview_no,
                     display_number=preview_display_no,
                     invoice_template=_template_key_fallback((u.invoice_template or "").strip() or "auto_repair"),
-                    pdf_template=_pdf_template_key_fallback((u.pdf_template or "").strip() or "classic"),
+                    pdf_template=_pdf_template_for_user(u, (u.pdf_template or "").strip() or "classic"),
                     tax_rate=8.0,
                     tax_override=None,
                     customer_email="customer@example.com",
@@ -6301,7 +6355,7 @@ def create_app():
             u = s.get(User, uid)
             default_local_now = _user_local_now(u)
             user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
-            user_pdf_template = _pdf_template_key_fallback(getattr(u, "pdf_template", None) if u else None)
+            user_pdf_template = _pdf_template_for_user(u, getattr(u, "pdf_template", None) if u else None)
             user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
             user_default_hourly_rate = float(getattr(u, "default_hourly_rate", 0.0) or 0.0) if u else 0.0
             user_default_parts_markup = float(getattr(u, "default_parts_markup", 0.0) or 0.0) if u else 0.0
@@ -6478,7 +6532,7 @@ def create_app():
             u = s.get(User, uid)
             default_local_now = _user_local_now(u)
             user_template_key = _template_key_fallback(getattr(u, "invoice_template", None) if u else None)
-            user_pdf_template = _pdf_template_key_fallback(getattr(u, "pdf_template", None) if u else None)
+            user_pdf_template = _pdf_template_for_user(u, getattr(u, "pdf_template", None) if u else None)
             user_tax_rate = float(getattr(u, "tax_rate", 0.0) or 0.0) if u else 0.0
             user_default_hourly_rate = float(getattr(u, "default_hourly_rate", 0.0) or 0.0) if u else 0.0
             user_default_parts_markup = float(getattr(u, "default_parts_markup", 0.0) or 0.0) if u else 0.0

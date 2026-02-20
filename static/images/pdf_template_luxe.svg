@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" role="img" aria-label="Luxe invoice template preview">
+  <rect width="640" height="420" fill="#f8f5ef"/>
+  <rect x="24" y="22" width="592" height="88" rx="12" fill="#1f2933"/>
+  <rect x="24" y="104" width="592" height="8" rx="4" fill="#8b5e34"/>
+  <rect x="40" y="34" width="72" height="64" rx="10" fill="#fffdf8"/>
+  <text x="76" y="73" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#1f2933">IR</text>
+  <text x="126" y="56" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#fffdf8">INVOICE</text>
+  <text x="126" y="78" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#eadac6">Your Business</text>
+  <text x="600" y="50" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="#fffdf8">#2026-0001</text>
+  <text x="600" y="68" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#eadac6">Issued February 20, 2026</text>
+
+  <rect x="24" y="126" width="368" height="84" rx="12" fill="#fffdf8" stroke="#d9cfbf"/>
+  <rect x="404" y="126" width="212" height="84" rx="12" fill="#fffdf8" stroke="#d9cfbf"/>
+  <text x="36" y="146" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" fill="#8b5e34">BILLED TO</text>
+  <text x="36" y="165" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#111827">Sample Customer</text>
+  <text x="36" y="183" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#111827">123 Main St, Somewhere</text>
+  <text x="416" y="146" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" fill="#8b5e34">TOTAL DUE</text>
+  <text x="416" y="178" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#111827">$1,699.48</text>
+
+  <rect x="24" y="224" width="592" height="24" rx="8" fill="#1f2933"/>
+  <text x="36" y="241" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" fill="#d4a373">LABOR</text>
+  <text x="36" y="266" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#475569">Description</text>
+  <text x="530" y="266" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#475569">Hours</text>
+  <text x="594" y="266" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#475569">Line Total</text>
+  <text x="36" y="286" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#111827">Brake service</text>
+  <text x="530" y="286" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#111827">2.5</text>
+  <text x="594" y="286" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" fill="#111827">$250.00</text>
+  <line x1="24" y1="294" x2="616" y2="294" stroke="#d9cfbf"/>
+
+  <rect x="24" y="306" width="592" height="24" rx="8" fill="#1f2933"/>
+  <text x="36" y="323" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" fill="#d4a373">PARTS</text>
+  <text x="36" y="348" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#475569">Part / Material</text>
+  <text x="530" y="348" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#475569">Qty</text>
+  <text x="594" y="348" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#475569">Price</text>
+  <text x="36" y="368" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#111827">Duralast filter</text>
+  <text x="530" y="368" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#111827">1</text>
+  <text x="594" y="368" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" fill="#111827">$18.99</text>
+
+  <rect x="24" y="380" width="592" height="30" rx="10" fill="#1f2933"/>
+  <text x="36" y="399" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#fffdf8">Subtotal $432.00  •  Tax $34.56</text>
+  <text x="604" y="399" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#eadac6">Amount Due $466.56</text>
+</svg>
