@@ -7282,9 +7282,31 @@ def create_app():
         except Exception:
             return str(x)
 
-    def _profit_loss_income_for_period(s, uid: int, target_year: int, target_month: int | None) -> float:
+    def _paid_invoice_income_components(inv: Invoice, *, eps: float = 0.01) -> tuple[float, float]:
+        """
+        Returns (recognized_income, late_fee_income) for a single invoice.
+        Late-fee income is treated as any amount paid above invoice_total, and is only
+        recognized when the invoice is fully paid.
+        """
+        paid = float(inv.paid or 0.0)
+        invoice_total = float(inv.invoice_total() or 0.0)
+        if paid + eps < invoice_total:
+            return 0.0, 0.0
+        late_fee_income = max(0.0, round(paid - invoice_total, 2))
+        recognized_income = invoice_total + late_fee_income
+        return recognized_income, late_fee_income
+
+    def _profit_loss_income_for_period(
+        s,
+        uid: int,
+        target_year: int,
+        target_month: int | None,
+        *,
+        include_breakdown: bool = False,
+    ) -> float | tuple[float, float]:
         EPS = 0.01
         total_paid_invoices_amount = 0.0
+        total_late_fee_income = 0.0
         invs = (
             s.query(Invoice)
             .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
@@ -7301,10 +7323,11 @@ def create_app():
                 mo = _parse_month_from_datein(inv.date_in)
                 if mo != target_month:
                     continue
-            paid = float(inv.paid or 0.0)
-            invoice_total = inv.invoice_total()
-            if paid + EPS >= invoice_total:
-                total_paid_invoices_amount += invoice_total
+            recognized_income, late_fee_income = _paid_invoice_income_components(inv, eps=EPS)
+            total_paid_invoices_amount += recognized_income
+            total_late_fee_income += late_fee_income
+        if include_breakdown:
+            return total_paid_invoices_amount, total_late_fee_income
         return total_paid_invoices_amount
 
     @app.route("/year-summary")
@@ -7334,6 +7357,7 @@ def create_app():
         total_tax_collected = 0.0
 
         total_paid_invoices_amount = 0.0
+        total_late_fee_income = 0.0
         total_outstanding_unpaid = 0.0
         labor_unpaid = 0.0
         labor_unpaid_raw = 0.0
@@ -7379,10 +7403,12 @@ def create_app():
                 total_invoice_amount += invoice_total
                 count += 1
 
-                fully_paid = (paid + EPS >= invoice_total)
+                recognized_income, late_fee_income = _paid_invoice_income_components(inv, eps=EPS)
+                fully_paid = recognized_income > 0.0
 
                 if fully_paid:
-                    total_paid_invoices_amount += invoice_total
+                    total_paid_invoices_amount += recognized_income
+                    total_late_fee_income += late_fee_income
                     total_tax_collected += tax_amount
                 else:
                     outstanding = max(0.0, invoice_total - paid)
@@ -7415,6 +7441,7 @@ def create_app():
             "total_supplies": total_supplies,
             "total_tax_collected": total_tax_collected,
             "total_paid_invoices_amount": total_paid_invoices_amount,
+            "total_late_fee_income": total_late_fee_income,
             "total_outstanding_unpaid": total_outstanding_unpaid,
             "unpaid_count": len(unpaid),
             "profit_paid_labor_only": profit_paid_labor_only,
@@ -8296,7 +8323,9 @@ def create_app():
         with db_session() as s:
             u = s.get(User, uid)
             rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
-            income_total = _profit_loss_income_for_period(s, uid, target_year, target_month)
+            income_total, late_fee_income = _profit_loss_income_for_period(
+                s, uid, target_year, target_month, include_breakdown=True
+            )
             total_expenses = sum(float(r["amount"] or 0.0) for r in rows)
             net_total = income_total - total_expenses
             return render_template(
@@ -8305,6 +8334,7 @@ def create_app():
                 month=(str(target_month) if target_month else ""),
                 period_label=period_label,
                 income_total=income_total,
+                late_fee_income=late_fee_income,
                 total_expenses=total_expenses,
                 net_total=net_total,
                 rows=rows,

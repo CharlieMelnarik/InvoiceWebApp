@@ -74,8 +74,12 @@
         <div class="fw-semibold">{{ money(total_invoice_amount - total_labor) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Paid Invoices</div>
+        <div class="small-muted">Total Paid Invoices (incl. Late Fees)</div>
         <div class="fw-semibold">{{ money(total_paid_invoices_amount) }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="small-muted">Late Fee Income (Paid Invoices)</div>
+        <div class="fw-semibold">{{ money(total_late_fee_income) }}</div>
       </div>
 
       <div class="col-12"><hr class="my-2"></div>
