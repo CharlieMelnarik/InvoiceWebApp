@@ -216,8 +216,11 @@
   <div class="settings-jump">
     <a class="settings-jump-link" href="#section-account">Account</a>
     <a class="settings-jump-link" href="#section-invoice">Invoice Defaults</a>
+    {% if not is_employee_account %}
+      <a class="settings-jump-link" href="#customProfessionCard">Custom Profession</a>
+    {% endif %}
     {% if pro_features_enabled and not is_employee_account %}
-      <a class="settings-jump-link" href="#customProfessionCard">Invoice Builder</a>
+      <a class="settings-jump-link" href="#section-invoice-builder">Invoice Builder</a>
       <a class="settings-jump-link" href="#section-email-editor">Email Editor</a>
     {% endif %}
     <a class="settings-jump-link" href="#section-preview">PDF Preview</a>
@@ -249,9 +252,18 @@
         <div class="mb-0">
           <label class="form-label compact-label req">Business Type / Profession</label>
           <select class="form-select" id="invoiceTemplateSelect" name="invoice_template" required>
-            {% for key, cfg in templates.items() %}
-              <option value="{{ key }}" {% if (u.invoice_template or 'auto_repair') == key %}selected{% endif %}>{{ cfg.label }}</option>
-            {% endfor %}
+            <optgroup label="Built-in">
+              {% for key, cfg in templates.items() %}
+                <option value="{{ key }}" {% if (u.invoice_template or 'auto_repair') == key %}selected{% endif %}>{{ cfg.label }}</option>
+              {% endfor %}
+            </optgroup>
+            {% if custom_profession_presets %}
+              <optgroup label="Saved Custom Professions">
+                {% for p in custom_profession_presets %}
+                  <option value="custom_preset:{{ p.id }}" {% if (u.invoice_template or '') == ('custom_preset:' ~ p.id) %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+              </optgroup>
+            {% endif %}
           </select>
           <div class="small-muted mt-1">New documents use this style. Existing documents keep their saved template.</div>
         </div>
@@ -278,36 +290,33 @@
         </div>
       </section>
 
-      {% if pro_features_enabled and not is_employee_account %}
+      {% if not is_employee_account %}
         <section class="settings-card span-2" id="customProfessionCard">
           <div class="settings-card-head">
-            <h5>Invoice Builder</h5>
+            <h5>Custom Profession</h5>
           </div>
-          <div class="settings-help">Build your own invoice/estimate structure with custom labels, section visibility, and style controls.</div>
-          <div class="mb-2">
-            <a class="btn btn-outline-primary btn-sm" href="{{ url_for('invoice_builder') }}">Open Advanced Drag & Drop Builder</a>
-          </div>
-          <div class="row g-3">
-          <div class="col-md-4 d-flex align-items-end">
-            <div class="form-check mb-2">
-              <input class="form-check-input" type="checkbox" id="invoiceBuilderEnabled" name="invoice_builder_enabled" value="1" {% if u.invoice_builder_enabled %}checked{% endif %}>
-              <label class="form-check-label" for="invoiceBuilderEnabled">Enable Invoice Builder</label>
+          <div class="settings-help">Set your own labels and section visibility for the custom profession layout.</div>
+          <div class="row g-3 mb-2">
+            <div class="col-md-8">
+              <label class="form-label compact-label">Save Current Custom Profession As</label>
+              <input
+                class="form-control"
+                name="custom_profession_preset_name"
+                maxlength="120"
+                value="{{ u.custom_profession_name or '' }}"
+                placeholder="e.g. Home Services"
+              >
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+              <button class="btn btn-outline-primary w-100" type="submit" name="save_custom_profession_preset" value="1">
+                Save To Profession List
+              </button>
             </div>
           </div>
-          <div class="col-md-4">
-            <label class="form-label compact-label">Accent Color</label>
-            <input class="form-control form-control-color" type="color" name="invoice_builder_accent_color" value="{{ u.invoice_builder_accent_color or '#0f172a' }}">
-          </div>
-          <div class="col-md-4">
-            <label class="form-label compact-label">Header Style</label>
-            <select class="form-select" name="invoice_builder_header_style">
-              <option value="classic" {% if (u.invoice_builder_header_style or 'classic') == 'classic' %}selected{% endif %}>Classic</option>
-              <option value="banded" {% if (u.invoice_builder_header_style or 'classic') == 'banded' %}selected{% endif %}>Banded</option>
-            </select>
-          </div>
+          <div class="row g-3">
           <div class="col-md-4">
             <label class="form-label compact-label">Custom Profession Name</label>
-            <input class="form-control" name="custom_profession_name" value="{{ u.custom_profession_name or '' }}" placeholder="e.g. Window Tinting">
+            <input class="form-control" name="custom_profession_name" value="{{ u.custom_profession_name or '' }}" placeholder="e.g. Home Services">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Job Label</label>
@@ -356,22 +365,66 @@
                 <input class="form-check-input" type="checkbox" id="customShowNotes" name="custom_show_notes" value="1" {% if u.custom_show_notes is not defined or u.custom_show_notes %}checked{% endif %}>
                 <label class="form-check-label" for="customShowNotes">Notes</label>
               </div>
-              <div class="form-check">
+            </div>
+          </div>
+          </div>
+          {% if custom_profession_presets %}
+            <div class="mt-3">
+              <label class="form-label compact-label">Saved Custom Professions</label>
+              <div class="d-flex flex-wrap gap-2">
+                {% for p in custom_profession_presets %}
+                  <button
+                    class="btn btn-outline-danger btn-sm"
+                    type="submit"
+                    name="delete_custom_profession_preset"
+                    value="{{ p.id }}"
+                    onclick="return confirm('Delete saved profession &quot;{{ p.name|e }}&quot;?');"
+                  >
+                    Delete {{ p.name }}
+                  </button>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        </section>
+
+        {% if pro_features_enabled %}
+        <section class="settings-card span-2" id="section-invoice-builder">
+          <div class="settings-card-head">
+            <h5>Invoice Builder (Pro)</h5>
+          </div>
+          <div class="settings-help">Advanced drag-and-drop template builder and styling controls.</div>
+          <div class="mb-2">
+            <a class="btn btn-outline-primary btn-sm" href="{{ url_for('invoice_builder') }}">Open Advanced Drag & Drop Builder</a>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4 d-flex align-items-end">
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="invoiceBuilderEnabled" name="invoice_builder_enabled" value="1" {% if u.invoice_builder_enabled %}checked{% endif %}>
+                <label class="form-check-label" for="invoiceBuilderEnabled">Enable Invoice Builder</label>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label compact-label">Accent Color</label>
+              <input class="form-control form-control-color" type="color" name="invoice_builder_accent_color" value="{{ u.invoice_builder_accent_color or '#0f172a' }}">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label compact-label">Header Style</label>
+              <select class="form-select" name="invoice_builder_header_style">
+                <option value="classic" {% if (u.invoice_builder_header_style or 'classic') == 'classic' %}selected{% endif %}>Classic</option>
+                <option value="banded" {% if (u.invoice_builder_header_style or 'classic') == 'banded' %}selected{% endif %}>Banded</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <div class="form-check mt-2">
                 <input class="form-check-input" type="checkbox" id="invoiceBuilderCompactMode" name="invoice_builder_compact_mode" value="1" {% if u.invoice_builder_compact_mode %}checked{% endif %}>
                 <label class="form-check-label" for="invoiceBuilderCompactMode">Compact table spacing</label>
               </div>
             </div>
           </div>
-          </div>
         </section>
 
-        <section class="settings-card" id="section-email-editor">
-          <div class="settings-card-head">
-            <h5>Email Editor</h5>
-          </div>
-          <div class="settings-help">Customize customer-facing email messages for invoice, estimate, and payment reminder sends.</div>
-          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('email_templates') }}">Open Customer Email Editor</a>
-        </section>
+        {% endif %}
       {% endif %}
 
       <section class="settings-card span-2" id="section-preview">
@@ -404,6 +457,16 @@
           <div class="small-muted mt-2">Applies to all invoices and estimates downloaded after saving.</div>
         </div>
       </section>
+
+      {% if pro_features_enabled and not is_employee_account %}
+        <section class="settings-card" id="section-email-editor">
+          <div class="settings-card-head">
+            <h5>Email Editor</h5>
+          </div>
+          <div class="settings-help">Customize customer-facing email messages for invoice, estimate, and payment reminder sends.</div>
+          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('email_templates') }}">Open Customer Email Editor</a>
+        </section>
+      {% endif %}
 
       {% if pro_features_enabled %}
         <section class="settings-card span-2" id="section-payments">
@@ -681,7 +744,10 @@
   const lateFeePercentWrap = document.getElementById("lateFeePercentWrap");
   function toggleCustomCard() {
     if (!templateSelect || !customCard) return;
-    customCard.style.display = "";
+    const selectedValue = (templateSelect.value || "").toLowerCase();
+    const isCustomSelected = selectedValue === "custom" || selectedValue.startsWith("custom_preset:");
+    const builderEnabled = !!(builderEnabledToggle && builderEnabledToggle.checked);
+    customCard.style.display = (isCustomSelected || builderEnabled) ? "" : "none";
   }
   function syncBuilderTemplate() {
     if (!templateSelect || !builderEnabledToggle) return;

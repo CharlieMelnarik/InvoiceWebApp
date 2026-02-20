@@ -40,7 +40,7 @@ from models import (
     Base, make_engine, make_session_factory,
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
     ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
-    InvoiceDesignTemplate, EmailTemplate,
+    InvoiceDesignTemplate, EmailTemplate, CustomProfessionPreset,
 )
 from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
 
@@ -576,7 +576,35 @@ INVOICE_TEMPLATES = {
 
 def _template_key_fallback(key: str | None) -> str:
     key = (key or "").strip()
+    if key.startswith("custom_preset:"):
+        return "custom"
     return key if key in INVOICE_TEMPLATES else "auto_repair"
+
+
+def _custom_preset_id_from_key(key: str | None) -> int | None:
+    raw = (key or "").strip()
+    if not raw.startswith("custom_preset:"):
+        return None
+    try:
+        pid = int(raw.split(":", 1)[1])
+    except Exception:
+        return None
+    return pid if pid > 0 else None
+
+
+def _apply_custom_profession_from_preset(user: User, preset: CustomProfessionPreset) -> None:
+    user.custom_profession_name = (preset.name or "").strip() or None
+    user.custom_job_label = (preset.job_label or "").strip() or None
+    user.custom_labor_title = (preset.labor_title or "").strip() or None
+    user.custom_labor_desc_label = (preset.labor_desc_label or "").strip() or None
+    user.custom_parts_title = (preset.parts_title or "").strip() or None
+    user.custom_parts_name_label = (preset.parts_name_label or "").strip() or None
+    user.custom_shop_supplies_label = (preset.shop_supplies_label or "").strip() or None
+    user.custom_show_job = bool(preset.show_job)
+    user.custom_show_labor = bool(preset.show_labor)
+    user.custom_show_parts = bool(preset.show_parts)
+    user.custom_show_shop_supplies = bool(preset.show_shop_supplies)
+    user.custom_show_notes = bool(preset.show_notes)
 
 
 def _template_config_for(key: str | None, user: User | None = None) -> dict:
@@ -3930,6 +3958,12 @@ def create_app():
                         }
                     )
                 employees = []
+                custom_profession_presets = (
+                    s.query(CustomProfessionPreset)
+                    .filter(CustomProfessionPreset.user_id == u.id)
+                    .order_by(CustomProfessionPreset.name.asc(), CustomProfessionPreset.id.asc())
+                    .all()
+                )
                 owner_pro_enabled = _has_pro_features(owner)
                 visible_pdf_templates = _pdf_templates_for_user(owner)
                 selected_pdf_template = _pdf_template_for_user(owner, getattr(u, "pdf_template", None))
@@ -3950,6 +3984,7 @@ def create_app():
                     employee_features_enabled=owner_pro_enabled,
                     employees=employees,
                     templates=INVOICE_TEMPLATES,
+                    custom_profession_presets=custom_profession_presets,
                     pdf_templates=visible_pdf_templates,
                     selected_pdf_template=selected_pdf_template,
                     docs_for_preview=docs_for_preview,
@@ -4037,12 +4072,28 @@ def create_app():
                     u.logo_blob = png_bytes
                     u.logo_blob_mime = "image/png"
 
-                tmpl = (request.form.get("invoice_template") or "").strip()
-                tmpl = _template_key_fallback(tmpl)
+                raw_template_choice = (request.form.get("invoice_template") or "").strip()
+                tmpl = _template_key_fallback(raw_template_choice)
                 owner_pro_enabled = _has_pro_features(owner)
-                if (not owner_pro_enabled) and tmpl == "custom":
-                    tmpl = "auto_repair"
-                u.invoice_template = tmpl
+                selected_preset_id = _custom_preset_id_from_key(raw_template_choice)
+                selected_preset = None
+                if selected_preset_id:
+                    selected_preset = (
+                        s.query(CustomProfessionPreset)
+                        .filter(
+                            CustomProfessionPreset.id == selected_preset_id,
+                            CustomProfessionPreset.user_id == u.id,
+                        )
+                        .first()
+                    )
+                    if selected_preset:
+                        tmpl = "custom"
+                        _apply_custom_profession_from_preset(u, selected_preset)
+                        u.invoice_template = raw_template_choice
+                    else:
+                        u.invoice_template = tmpl
+                else:
+                    u.invoice_template = tmpl
                 builder_enabled = (request.form.get("invoice_builder_enabled") == "1") if owner_pro_enabled else False
                 accent_raw = (request.form.get("invoice_builder_accent_color") or "").strip()
                 if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent_raw or ""):
@@ -4057,32 +4108,98 @@ def create_app():
                 u.invoice_builder_compact_mode = compact_mode
                 if builder_enabled:
                     u.invoice_template = "custom"
-                if owner_pro_enabled:
-                    u.custom_profession_name = (request.form.get("custom_profession_name") or "").strip() or None
-                    u.custom_job_label = (request.form.get("custom_job_label") or "").strip() or None
-                    u.custom_labor_title = (request.form.get("custom_labor_title") or "").strip() or None
-                    u.custom_labor_desc_label = (request.form.get("custom_labor_desc_label") or "").strip() or None
-                    u.custom_parts_title = (request.form.get("custom_parts_title") or "").strip() or None
-                    u.custom_parts_name_label = (request.form.get("custom_parts_name_label") or "").strip() or None
-                    u.custom_shop_supplies_label = (request.form.get("custom_shop_supplies_label") or "").strip() or None
-                    u.custom_show_job = (request.form.get("custom_show_job") == "1")
-                    u.custom_show_labor = (request.form.get("custom_show_labor") == "1")
-                    u.custom_show_parts = (request.form.get("custom_show_parts") == "1")
-                    u.custom_show_shop_supplies = (request.form.get("custom_show_shop_supplies") == "1")
-                    u.custom_show_notes = (request.form.get("custom_show_notes") == "1")
-                else:
-                    u.custom_profession_name = None
-                    u.custom_job_label = None
-                    u.custom_labor_title = None
-                    u.custom_labor_desc_label = None
-                    u.custom_parts_title = None
-                    u.custom_parts_name_label = None
-                    u.custom_shop_supplies_label = None
-                    u.custom_show_job = True
-                    u.custom_show_labor = True
-                    u.custom_show_parts = True
-                    u.custom_show_shop_supplies = True
-                    u.custom_show_notes = True
+                u.custom_profession_name = (request.form.get("custom_profession_name") or "").strip() or None
+                u.custom_job_label = (request.form.get("custom_job_label") or "").strip() or None
+                u.custom_labor_title = (request.form.get("custom_labor_title") or "").strip() or None
+                u.custom_labor_desc_label = (request.form.get("custom_labor_desc_label") or "").strip() or None
+                u.custom_parts_title = (request.form.get("custom_parts_title") or "").strip() or None
+                u.custom_parts_name_label = (request.form.get("custom_parts_name_label") or "").strip() or None
+                u.custom_shop_supplies_label = (request.form.get("custom_shop_supplies_label") or "").strip() or None
+                u.custom_show_job = (request.form.get("custom_show_job") == "1")
+                u.custom_show_labor = (request.form.get("custom_show_labor") == "1")
+                u.custom_show_parts = (request.form.get("custom_show_parts") == "1")
+                u.custom_show_shop_supplies = (request.form.get("custom_show_shop_supplies") == "1")
+                u.custom_show_notes = (request.form.get("custom_show_notes") == "1")
+
+                if request.form.get("save_custom_profession_preset") == "1":
+                    preset_name = (request.form.get("custom_profession_preset_name") or "").strip()
+                    if not preset_name:
+                        preset_name = (u.custom_profession_name or "").strip()
+                    if not preset_name:
+                        flash("Enter a profession name before saving a preset.", "error")
+                        return _render_settings()
+                    if len(preset_name) > 120:
+                        flash("Profession preset name must be 120 characters or fewer.", "error")
+                        return _render_settings()
+                    existing_preset = (
+                        s.query(CustomProfessionPreset)
+                        .filter(
+                            CustomProfessionPreset.user_id == u.id,
+                            text("lower(name) = :n"),
+                        )
+                        .params(n=preset_name.lower())
+                        .first()
+                    )
+                    if existing_preset:
+                        existing_preset.job_label = u.custom_job_label
+                        existing_preset.labor_title = u.custom_labor_title
+                        existing_preset.labor_desc_label = u.custom_labor_desc_label
+                        existing_preset.parts_title = u.custom_parts_title
+                        existing_preset.parts_name_label = u.custom_parts_name_label
+                        existing_preset.shop_supplies_label = u.custom_shop_supplies_label
+                        existing_preset.show_job = bool(u.custom_show_job)
+                        existing_preset.show_labor = bool(u.custom_show_labor)
+                        existing_preset.show_parts = bool(u.custom_show_parts)
+                        existing_preset.show_shop_supplies = bool(u.custom_show_shop_supplies)
+                        existing_preset.show_notes = bool(u.custom_show_notes)
+                        u.custom_profession_name = preset_name
+                        u.invoice_template = f"custom_preset:{int(existing_preset.id)}"
+                        flash("Custom profession preset updated.", "success")
+                    else:
+                        new_preset = CustomProfessionPreset(
+                            user_id=u.id,
+                            name=preset_name,
+                            job_label=u.custom_job_label,
+                            labor_title=u.custom_labor_title,
+                            labor_desc_label=u.custom_labor_desc_label,
+                            parts_title=u.custom_parts_title,
+                            parts_name_label=u.custom_parts_name_label,
+                            shop_supplies_label=u.custom_shop_supplies_label,
+                            show_job=bool(u.custom_show_job),
+                            show_labor=bool(u.custom_show_labor),
+                            show_parts=bool(u.custom_show_parts),
+                            show_shop_supplies=bool(u.custom_show_shop_supplies),
+                            show_notes=bool(u.custom_show_notes),
+                        )
+                        s.add(new_preset)
+                        s.flush()
+                        u.custom_profession_name = preset_name
+                        u.invoice_template = f"custom_preset:{int(new_preset.id)}"
+                        flash("Custom profession preset saved.", "success")
+
+                delete_preset_raw = (request.form.get("delete_custom_profession_preset") or "").strip()
+                if delete_preset_raw:
+                    try:
+                        delete_preset_id = int(delete_preset_raw)
+                    except Exception:
+                        delete_preset_id = 0
+                    if delete_preset_id > 0:
+                        preset_to_delete = (
+                            s.query(CustomProfessionPreset)
+                            .filter(
+                                CustomProfessionPreset.id == delete_preset_id,
+                                CustomProfessionPreset.user_id == u.id,
+                            )
+                            .first()
+                        )
+                        if preset_to_delete:
+                            deleting_name = (preset_to_delete.name or "").strip() or "custom profession"
+                            s.delete(preset_to_delete)
+                            if (u.invoice_template or "").strip() == f"custom_preset:{delete_preset_id}":
+                                u.invoice_template = "custom"
+                            flash(f'Deleted "{deleting_name}" from saved custom professions.', "success")
+                        else:
+                            flash("Saved custom profession not found.", "error")
 
                 pdf_tmpl = _pdf_template_for_user(owner, request.form.get("pdf_template"))
                 u.pdf_template = pdf_tmpl
@@ -4223,9 +4340,9 @@ def create_app():
                 abort(404)
             pro_enabled = _has_pro_features(u)
 
-            tmpl = _template_key_fallback((request.args.get("invoice_template") or "").strip() or u.invoice_template)
-            if (not pro_enabled) and tmpl == "custom":
-                tmpl = _template_key_fallback(u.invoice_template if (u.invoice_template or "") != "custom" else "auto_repair")
+            raw_preview_template = (request.args.get("invoice_template") or "").strip() or (u.invoice_template or "")
+            tmpl = _template_key_fallback(raw_preview_template)
+            preview_preset_id = _custom_preset_id_from_key(raw_preview_template)
             pdf_tmpl = _pdf_template_for_user(
                 u,
                 (request.args.get("pdf_template") or "").strip() or u.pdf_template,
@@ -4245,23 +4362,68 @@ def create_app():
                 return bool(fallback)
 
             custom_cfg_override = None
-            if tmpl == "custom" and pro_enabled:
+            if tmpl == "custom":
+                preset_for_preview = None
+                if preview_preset_id:
+                    preset_for_preview = (
+                        s.query(CustomProfessionPreset)
+                        .filter(
+                            CustomProfessionPreset.id == preview_preset_id,
+                            CustomProfessionPreset.user_id == u.id,
+                        )
+                        .first()
+                    )
+                preset_label = (
+                    (preset_for_preview.name or "").strip()
+                    if preset_for_preview
+                    else (u.custom_profession_name or custom_base.get("label", "Custom"))
+                )
+                preset_job_label = (
+                    (preset_for_preview.job_label or "").strip()
+                    if preset_for_preview
+                    else (u.custom_job_label or custom_base.get("job_label", "Job / Project"))
+                )
+                preset_labor_title = (
+                    (preset_for_preview.labor_title or "").strip()
+                    if preset_for_preview
+                    else (u.custom_labor_title or custom_base.get("labor_title", "Services"))
+                )
+                preset_labor_desc = (
+                    (preset_for_preview.labor_desc_label or "").strip()
+                    if preset_for_preview
+                    else (u.custom_labor_desc_label or custom_base.get("labor_desc_label", "Service Description"))
+                )
+                preset_parts_title = (
+                    (preset_for_preview.parts_title or "").strip()
+                    if preset_for_preview
+                    else (u.custom_parts_title or custom_base.get("parts_title", "Items"))
+                )
+                preset_parts_name = (
+                    (preset_for_preview.parts_name_label or "").strip()
+                    if preset_for_preview
+                    else (u.custom_parts_name_label or custom_base.get("parts_name_label", "Item Name"))
+                )
+                preset_fees_label = (
+                    (preset_for_preview.shop_supplies_label or "").strip()
+                    if preset_for_preview
+                    else (u.custom_shop_supplies_label or custom_base.get("shop_supplies_label", "Additional Fees"))
+                )
                 custom_cfg_override = {
                     "profession_label": _arg_text(
                         "custom_profession_name",
-                        (u.custom_profession_name or custom_base.get("label", "Custom")),
+                        preset_label,
                     ),
-                    "job_label": _arg_text("custom_job_label", (u.custom_job_label or custom_base.get("job_label", "Job / Project"))),
-                    "labor_title": _arg_text("custom_labor_title", (u.custom_labor_title or custom_base.get("labor_title", "Services"))),
-                    "labor_desc_label": _arg_text("custom_labor_desc_label", (u.custom_labor_desc_label or custom_base.get("labor_desc_label", "Service Description"))),
-                    "parts_title": _arg_text("custom_parts_title", (u.custom_parts_title or custom_base.get("parts_title", "Items"))),
-                    "parts_name_label": _arg_text("custom_parts_name_label", (u.custom_parts_name_label or custom_base.get("parts_name_label", "Item Name"))),
-                    "shop_supplies_label": _arg_text("custom_shop_supplies_label", (u.custom_shop_supplies_label or custom_base.get("shop_supplies_label", "Additional Fees"))),
-                    "show_job": _arg_bool("custom_show_job", getattr(u, "custom_show_job", True)),
-                    "show_labor": _arg_bool("custom_show_labor", getattr(u, "custom_show_labor", True)),
-                    "show_parts": _arg_bool("custom_show_parts", getattr(u, "custom_show_parts", True)),
-                    "show_shop_supplies": _arg_bool("custom_show_shop_supplies", getattr(u, "custom_show_shop_supplies", True)),
-                    "show_notes": _arg_bool("custom_show_notes", getattr(u, "custom_show_notes", True)),
+                    "job_label": _arg_text("custom_job_label", preset_job_label),
+                    "labor_title": _arg_text("custom_labor_title", preset_labor_title),
+                    "labor_desc_label": _arg_text("custom_labor_desc_label", preset_labor_desc),
+                    "parts_title": _arg_text("custom_parts_title", preset_parts_title),
+                    "parts_name_label": _arg_text("custom_parts_name_label", preset_parts_name),
+                    "shop_supplies_label": _arg_text("custom_shop_supplies_label", preset_fees_label),
+                    "show_job": _arg_bool("custom_show_job", bool(getattr(preset_for_preview, "show_job", getattr(u, "custom_show_job", True)))),
+                    "show_labor": _arg_bool("custom_show_labor", bool(getattr(preset_for_preview, "show_labor", getattr(u, "custom_show_labor", True)))),
+                    "show_parts": _arg_bool("custom_show_parts", bool(getattr(preset_for_preview, "show_parts", getattr(u, "custom_show_parts", True)))),
+                    "show_shop_supplies": _arg_bool("custom_show_shop_supplies", bool(getattr(preset_for_preview, "show_shop_supplies", getattr(u, "custom_show_shop_supplies", True)))),
+                    "show_notes": _arg_bool("custom_show_notes", bool(getattr(preset_for_preview, "show_notes", getattr(u, "custom_show_notes", True)))),
                 }
 
             builder_cfg_override = {

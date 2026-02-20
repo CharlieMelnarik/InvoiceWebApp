@@ -182,6 +182,11 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="EmailTemplate.template_key.asc()",
     )
+    custom_profession_presets: Mapped[list["CustomProfessionPreset"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="CustomProfessionPreset.name.asc(), CustomProfessionPreset.id.asc()",
+    )
 
     schedule_events: Mapped[list["ScheduleEvent"]] = relationship(
         back_populates="user",
@@ -254,6 +259,38 @@ class ScheduleEvent(Base):
     )
     customer: Mapped[Optional["Customer"]] = relationship(back_populates="schedule_events")
     invoice: Mapped[Optional["Invoice"]] = relationship()
+
+
+class CustomProfessionPreset(Base):
+    __tablename__ = "custom_profession_presets"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_custom_profession_presets_user_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    job_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    labor_title: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    labor_desc_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    parts_title: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    parts_name_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    shop_supplies_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    show_job: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    show_labor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    show_parts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    show_shop_supplies: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    show_notes: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="custom_profession_presets")
 
 
 # -----------------------------
