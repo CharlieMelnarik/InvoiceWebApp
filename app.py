@@ -1482,6 +1482,109 @@ def _send_schedule_summary_email(to_email: str, subject: str, body_text: str) ->
     print(f"[SCHEDULE SUMMARY] Sent email to {to_email}", flush=True)
 
 
+def _send_contact_us_email(
+    *,
+    contact_to_email: str,
+    category: str,
+    subject: str,
+    message: str,
+    actor: User,
+    owner: User,
+) -> None:
+    host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
+    user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
+    password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
+    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    if not all([host, port, user, password, mail_from]):
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+
+    to_email = (contact_to_email or "").strip().lower()
+    if not _looks_like_email(to_email):
+        raise RuntimeError("Contact destination email is invalid.")
+
+    actor_username = (getattr(actor, "username", None) or "").strip()
+    actor_email = (getattr(actor, "email", None) or "").strip()
+    actor_phone = _format_phone_display(getattr(actor, "phone", None) or "")
+    actor_business = (getattr(actor, "business_name", None) or "").strip()
+    actor_created = getattr(actor, "created_at", None)
+    actor_created_str = actor_created.strftime("%Y-%m-%d %H:%M:%S UTC") if actor_created else "Unknown"
+    actor_tier = _normalize_plan_tier(getattr(actor, "subscription_tier", None))
+    actor_status = (getattr(actor, "subscription_status", None) or "").strip() or "unknown"
+    actor_is_employee = bool(getattr(actor, "is_employee", False))
+    actor_owner_id = getattr(actor, "account_owner_id", None)
+
+    owner_username = (getattr(owner, "username", None) or "").strip()
+    owner_business = (getattr(owner, "business_name", None) or "").strip()
+
+    cat_clean = (category or "General").strip()[:80]
+    subj_clean = (subject or "").strip()[:180]
+    msg_clean = (message or "").strip()[:10000]
+
+    mail_subject = f"[InvoiceRunner Contact] {cat_clean}: {subj_clean or '(No subject)'}"
+    text_body = (
+        "A Contact Us message was submitted from InvoiceRunner.\n\n"
+        f"Category: {cat_clean}\n"
+        f"Subject: {subj_clean or '(No subject)'}\n\n"
+        "User Details\n"
+        f"- User ID: {getattr(actor, 'id', 'unknown')}\n"
+        f"- Username: {actor_username or 'N/A'}\n"
+        f"- Email: {actor_email or 'N/A'}\n"
+        f"- Phone: {actor_phone or 'N/A'}\n"
+        f"- Business Name: {actor_business or 'N/A'}\n"
+        f"- Is Employee: {'Yes' if actor_is_employee else 'No'}\n"
+        f"- Account Owner ID: {actor_owner_id if actor_owner_id is not None else 'N/A'}\n"
+        f"- Owner User ID (scope): {getattr(owner, 'id', 'unknown')}\n"
+        f"- Owner Username: {owner_username or 'N/A'}\n"
+        f"- Owner Business Name: {owner_business or 'N/A'}\n"
+        f"- Subscription Tier: {actor_tier}\n"
+        f"- Subscription Status: {actor_status}\n"
+        f"- Account Created: {actor_created_str}\n\n"
+        "Message\n"
+        f"{msg_clean}\n"
+    )
+
+    html_body = (
+        "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.45;\">"
+        "<p><strong>A Contact Us message was submitted from InvoiceRunner.</strong></p>"
+        f"<p><strong>Category:</strong> {html.escape(cat_clean)}<br>"
+        f"<strong>Subject:</strong> {html.escape(subj_clean or '(No subject)')}</p>"
+        "<h3 style=\"margin:14px 0 6px 0;font-size:15px;\">User Details</h3>"
+        "<ul style=\"margin:0 0 10px 18px;padding:0;\">"
+        f"<li><strong>User ID:</strong> {getattr(actor, 'id', 'unknown')}</li>"
+        f"<li><strong>Username:</strong> {html.escape(actor_username or 'N/A')}</li>"
+        f"<li><strong>Email:</strong> {html.escape(actor_email or 'N/A')}</li>"
+        f"<li><strong>Phone:</strong> {html.escape(actor_phone or 'N/A')}</li>"
+        f"<li><strong>Business Name:</strong> {html.escape(actor_business or 'N/A')}</li>"
+        f"<li><strong>Is Employee:</strong> {'Yes' if actor_is_employee else 'No'}</li>"
+        f"<li><strong>Account Owner ID:</strong> {actor_owner_id if actor_owner_id is not None else 'N/A'}</li>"
+        f"<li><strong>Owner User ID (scope):</strong> {getattr(owner, 'id', 'unknown')}</li>"
+        f"<li><strong>Owner Username:</strong> {html.escape(owner_username or 'N/A')}</li>"
+        f"<li><strong>Owner Business Name:</strong> {html.escape(owner_business or 'N/A')}</li>"
+        f"<li><strong>Subscription Tier:</strong> {html.escape(actor_tier)}</li>"
+        f"<li><strong>Subscription Status:</strong> {html.escape(actor_status)}</li>"
+        f"<li><strong>Account Created:</strong> {html.escape(actor_created_str)}</li>"
+        "</ul>"
+        "<h3 style=\"margin:14px 0 6px 0;font-size:15px;\">Message</h3>"
+        f"<pre style=\"white-space:pre-wrap;background:#f7f7f7;border:1px solid #ddd;padding:10px;border-radius:8px;\">{html.escape(msg_clean)}</pre>"
+        "</div>"
+    )
+
+    msg = EmailMessage()
+    msg["Subject"] = mail_subject
+    msg["From"] = mail_from
+    msg["To"] = to_email
+    if actor_email and _looks_like_email(actor_email):
+        msg["Reply-To"] = actor_email
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, password)
+        smtp.send_message(msg)
+
+
 def _ensure_customer_email_templates(session, owner: User | None) -> bool:
     if not owner:
         return False
@@ -3469,6 +3572,116 @@ def create_app():
     def logout():
         logout_user()
         return redirect(url_for("login"))
+
+    @app.route("/contact-us", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def contact_us():
+        with db_session() as s:
+            actor = s.get(User, _current_actor_user_id_int())
+            owner = s.get(User, _current_user_id_int())
+            if not actor or not owner:
+                abort(403)
+
+            actor_is_employee = bool(getattr(actor, "is_employee", False))
+            actor_tier = _normalize_plan_tier(getattr(actor, "subscription_tier", None))
+            actor_status = (getattr(actor, "subscription_status", None) or "").strip() or "unknown"
+
+            if request.method == "POST":
+                category = (request.form.get("category") or "General").strip()
+                subject = (request.form.get("subject") or "").strip()
+                message = (request.form.get("message") or "").strip()
+
+                allowed_categories = {
+                    "General",
+                    "Bug Report",
+                    "Billing",
+                    "Feature Request",
+                    "Account Access",
+                    "Other",
+                }
+                if category not in allowed_categories:
+                    category = "General"
+
+                if not subject:
+                    flash("Please enter a subject.", "error")
+                    return render_template(
+                        "contact_us.html",
+                        actor=actor,
+                        owner=owner,
+                        actor_is_employee=actor_is_employee,
+                        actor_tier=actor_tier,
+                        actor_status=actor_status,
+                        form_data={"category": category, "subject": subject, "message": message},
+                    )
+                if not message:
+                    flash("Please enter a message.", "error")
+                    return render_template(
+                        "contact_us.html",
+                        actor=actor,
+                        owner=owner,
+                        actor_is_employee=actor_is_employee,
+                        actor_tier=actor_tier,
+                        actor_status=actor_status,
+                        form_data={"category": category, "subject": subject, "message": message},
+                    )
+                if len(subject) > 180:
+                    flash("Subject must be 180 characters or fewer.", "error")
+                    return render_template(
+                        "contact_us.html",
+                        actor=actor,
+                        owner=owner,
+                        actor_is_employee=actor_is_employee,
+                        actor_tier=actor_tier,
+                        actor_status=actor_status,
+                        form_data={"category": category, "subject": subject, "message": message},
+                    )
+                if len(message) > 10000:
+                    flash("Message is too long (max 10,000 characters).", "error")
+                    return render_template(
+                        "contact_us.html",
+                        actor=actor,
+                        owner=owner,
+                        actor_is_employee=actor_is_employee,
+                        actor_tier=actor_tier,
+                        actor_status=actor_status,
+                        form_data={"category": category, "subject": subject, "message": message},
+                    )
+
+                try:
+                    _send_contact_us_email(
+                        contact_to_email="cmmelnarik@gmail.com",
+                        category=category,
+                        subject=subject,
+                        message=message,
+                        actor=actor,
+                        owner=owner,
+                    )
+                except Exception as exc:
+                    print(f"[CONTACT US] SMTP ERROR actor={getattr(actor, 'id', 'unknown')}: {repr(exc)}", flush=True)
+                    flash("Could not send your message right now. Please try again.", "error")
+                    return render_template(
+                        "contact_us.html",
+                        actor=actor,
+                        owner=owner,
+                        actor_is_employee=actor_is_employee,
+                        actor_tier=actor_tier,
+                        actor_status=actor_status,
+                        form_data={"category": category, "subject": subject, "message": message},
+                    )
+
+                flash("Message sent to InvoiceRunner. Thank you.", "success")
+                return redirect(url_for("contact_us"))
+
+            return render_template(
+                "contact_us.html",
+                actor=actor,
+                owner=owner,
+                actor_is_employee=actor_is_employee,
+                actor_tier=actor_tier,
+                actor_status=actor_status,
+                form_data={"category": "General", "subject": "", "message": ""},
+            )
 
     # -----------------------------
     # User Settings

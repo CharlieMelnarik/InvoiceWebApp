@@ -280,6 +280,9 @@
       border-bottom: 1px solid rgba(255, 255, 255, 0.12);
       display: flex;
       justify-content: center;
+      align-items: center;
+      min-height: 84px;
+      box-sizing: border-box;
     }
     .app-sidebar-brand img {
       width: auto;
@@ -371,6 +374,10 @@
       padding: 0.5rem 0.65rem;
       background: rgba(255, 255, 255, 0.08);
     }
+    .app-contact {
+      margin-top: 0.4rem;
+      margin-bottom: 0.55rem;
+    }
     .app-logout:hover {
       background: rgba(255, 255, 255, 0.18);
       color: #fff;
@@ -413,10 +420,7 @@
       flex: 0 0 270px;
     }
     body.sidebar-collapsed .app-sidebar-brand {
-      padding: 0.85rem 0.35rem 0.65rem;
-    }
-    body.sidebar-collapsed.sidebar-hover-expand .app-sidebar-brand {
-      padding: 1rem 1rem 0.8rem;
+      padding: 1rem 0.35rem 0.8rem;
     }
     body.sidebar-collapsed .app-sidebar-brand .brand-full {
       display: none;
@@ -434,15 +438,12 @@
       height: 52px;
     }
     body.sidebar-collapsed .app-nav {
-      padding: 0.75rem 0.35rem;
-    }
-    body.sidebar-collapsed.sidebar-hover-expand .app-nav {
       padding: 0.9rem 0.75rem;
     }
     body.sidebar-collapsed .app-nav-link {
       justify-content: center;
       gap: 0;
-      padding: 0.62rem 0.3rem;
+      padding: 0.82rem 0.3rem;
     }
     body.sidebar-collapsed.sidebar-hover-expand .app-nav-link {
       justify-content: flex-start;
@@ -457,10 +458,12 @@
       display: inline;
     }
     body.sidebar-collapsed .app-user,
+    body.sidebar-collapsed .app-contact,
     body.sidebar-collapsed .app-logout {
       display: none;
     }
     body.sidebar-collapsed.sidebar-hover-expand .app-user,
+    body.sidebar-collapsed.sidebar-hover-expand .app-contact,
     body.sidebar-collapsed.sidebar-hover-expand .app-logout {
       display: block;
     }
@@ -618,6 +621,7 @@
         <button type="button" class="sidebar-collapse-btn" id="sidebarCollapseBtn">Hide Menu</button>
         <div class="app-user">{{ current_user.username }}</div>
         <a class="app-logout" href="{{ url_for('logout') }}">Logout</a>
+        <a class="app-logout app-contact" href="{{ url_for('contact_us') }}">Contact Us</a>
       </div>
     </aside>
 

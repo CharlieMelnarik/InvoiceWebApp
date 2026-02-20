@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% set title = "Contact Us" %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Contact Us</h1>
+    <div class="small-muted">Send questions, comments, or concerns directly to InvoiceRunner support.</div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="form-panel">
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label req">Category</label>
+            <select class="form-select" name="category" required>
+              {% set cat = (form_data.category if form_data else 'General') %}
+              {% for option in ["General", "Bug Report", "Billing", "Feature Request", "Account Access", "Other"] %}
+                <option value="{{ option }}" {% if cat == option %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label req">Subject</label>
+            <input
+              class="form-control"
+              name="subject"
+              maxlength="180"
+              placeholder="Short summary of your message"
+              value="{{ form_data.subject if form_data else '' }}"
+              required
+            >
+          </div>
+          <div class="col-12">
+            <label class="form-label req">Message</label>
+            <textarea
+              class="form-control"
+              name="message"
+              rows="10"
+              maxlength="10000"
+              placeholder="Describe your question or issue..."
+              required
+            >{{ form_data.message if form_data else '' }}</textarea>
+          </div>
+          <div class="col-12 d-flex justify-content-end">
+            <button class="btn btn-primary" type="submit">Send to InvoiceRunner</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">Account Info Included</div>
+      <div class="card-body">
+        <div class="small-muted">The following details are sent with your message:</div>
+        <ul class="mb-0 mt-2">
+          <li>User ID / Username</li>
+          <li>Email and phone</li>
+          <li>Business name</li>
+          <li>Employee status</li>
+          <li>Owner account linkage</li>
+          <li>Plan tier and subscription status</li>
+        </ul>
+        <hr>
+        <div class="small-muted">Current session</div>
+        <div><strong>User:</strong> {{ actor.username }}</div>
+        <div><strong>Email:</strong> {{ actor.email or "Not set" }}</div>
+        <div><strong>Plan:</strong> {{ actor_tier|capitalize }}</div>
+        <div><strong>Status:</strong> {{ actor_status }}</div>
+        <div><strong>Role:</strong> {{ "Employee" if actor_is_employee else "Owner" }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
