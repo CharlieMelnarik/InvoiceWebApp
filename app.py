@@ -31,7 +31,7 @@ from flask_login import (
     login_required, current_user
 )
 from sqlalchemy import text, or_
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
@@ -349,6 +349,27 @@ def _parse_iso_date_or_today(s: str | None) -> date:
             return datetime.fromisoformat(raw).date()
         except Exception:
             return datetime.utcnow().date()
+
+
+def _coerce_to_date(value) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return date.fromisoformat(raw[:10])
+        except Exception:
+            try:
+                return datetime.fromisoformat(raw).date()
+            except Exception:
+                return None
+    return None
 
 
 def _parse_dt_local(s: str) -> datetime | None:
@@ -1141,19 +1162,22 @@ def _business_expense_breakdown_for_period(
     start_dt, end_dt = _expense_period_bounds(target_year, target_month)
     start_date = start_dt.date()
     end_date = end_dt.date()
-    entry_rows = (
-        session.query(
-            BusinessExpenseEntry.expense_id,
-            BusinessExpenseEntry.amount,
-            BusinessExpenseEntry.expense_date,
-            BusinessExpenseEntry.created_at,
-        )
-        .filter(BusinessExpenseEntry.user_id == user_id)
-        .all()
-    )
+    entry_rows = session.execute(
+        text(
+            """
+            SELECT
+              expense_id,
+              amount,
+              COALESCE(CAST(expense_date AS TEXT), CAST(created_at AS TEXT)) AS effective_date
+            FROM business_expense_entries
+            WHERE user_id = :uid
+            """
+        ),
+        {"uid": user_id},
+    ).fetchall()
     totals_by_expense_id = {}
-    for exp_id, amount, expense_date, created_at in entry_rows:
-        effective_date = expense_date or (created_at.date() if created_at else None)
+    for exp_id, amount, effective_raw in entry_rows:
+        effective_date = _coerce_to_date(effective_raw)
         if not effective_date:
             continue
         if not (start_date <= effective_date < end_date):
@@ -9325,12 +9349,21 @@ def create_app():
             total_business_expenses = sum(float(r["amount"] or 0.0) for r in expense_rows)
 
             expense_entries = (
-                s.query(BusinessExpenseEntry.expense_date, BusinessExpenseEntry.created_at, BusinessExpenseEntry.amount)
-                .filter(BusinessExpenseEntry.user_id == uid)
-                .all()
+                s.execute(
+                    text(
+                        """
+                        SELECT
+                          COALESCE(CAST(expense_date AS TEXT), CAST(created_at AS TEXT)) AS effective_date,
+                          amount
+                        FROM business_expense_entries
+                        WHERE user_id = :uid
+                        """
+                    ),
+                    {"uid": uid},
+                ).fetchall()
             )
-            for expense_date, created_at, amount in expense_entries:
-                effective_date = expense_date or (created_at.date() if created_at else None)
+            for effective_raw, amount in expense_entries:
+                effective_date = _coerce_to_date(effective_raw)
                 if not effective_date:
                     continue
                 y = int(effective_date.year)
@@ -9555,11 +9588,34 @@ def create_app():
                 abort(404)
             entries = (
                 s.query(BusinessExpenseEntry)
+                .options(defer(BusinessExpenseEntry.expense_date))
                 .filter(BusinessExpenseEntry.expense_id == exp.id, BusinessExpenseEntry.user_id == uid)
-                .order_by(BusinessExpenseEntry.expense_date.desc(), BusinessExpenseEntry.id.desc())
+                .order_by(text("COALESCE(expense_date, created_at) DESC"), BusinessExpenseEntry.id.desc())
                 .all()
             )
-            return render_template("business_expense_category.html", exp=exp, entries=entries)
+            date_rows = s.execute(
+                text(
+                    """
+                    SELECT
+                      id,
+                      COALESCE(CAST(expense_date AS TEXT), CAST(created_at AS TEXT)) AS effective_date
+                    FROM business_expense_entries
+                    WHERE expense_id = :expense_id AND user_id = :uid
+                    """
+                ),
+                {"expense_id": exp.id, "uid": uid},
+            ).fetchall()
+            date_map = {int(r[0]): (r[1] or "") for r in date_rows}
+            for e in entries:
+                parsed_date = _coerce_to_date(date_map.get(int(e.id)))
+                e.expense_date_value = parsed_date.isoformat() if parsed_date else ""
+            categories = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.user_id == uid)
+                .order_by(BusinessExpense.is_custom.asc(), BusinessExpense.sort_order.asc(), BusinessExpense.id.asc())
+                .all()
+            )
+            return render_template("business_expense_category.html", exp=exp, entries=entries, categories=categories)
 
     @app.post("/business-expenses/<int:expense_id>/entries/<int:entry_id>/date")
     @login_required
@@ -9590,6 +9646,58 @@ def create_app():
             s.commit()
             flash("Expense date updated.", "success")
             return redirect(url_for("business_expense_category", expense_id=expense_id))
+
+    @app.post("/business-expenses/<int:expense_id>/entries/<int:entry_id>/move")
+    @login_required
+    @subscription_required
+    def business_expense_entry_move(expense_id: int, entry_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            exp = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.id == expense_id, BusinessExpense.user_id == uid)
+                .first()
+            )
+            if not exp:
+                abort(404)
+            entry = (
+                s.query(BusinessExpenseEntry)
+                .filter(
+                    BusinessExpenseEntry.id == entry_id,
+                    BusinessExpenseEntry.expense_id == expense_id,
+                    BusinessExpenseEntry.user_id == uid,
+                )
+                .first()
+            )
+            if not entry:
+                flash("Expense entry not found.", "error")
+                return redirect(url_for("business_expense_category", expense_id=expense_id))
+
+            target_raw = (request.form.get("target_expense_id") or "").strip()
+            if not target_raw.isdigit():
+                flash("Choose a valid destination category.", "error")
+                return redirect(url_for("business_expense_category", expense_id=expense_id))
+            target_expense_id = int(target_raw)
+            if target_expense_id == int(expense_id):
+                flash("That item is already in this category.", "info")
+                return redirect(url_for("business_expense_category", expense_id=expense_id))
+
+            target = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.id == target_expense_id, BusinessExpense.user_id == uid)
+                .first()
+            )
+            if not target:
+                flash("Destination category not found.", "error")
+                return redirect(url_for("business_expense_category", expense_id=expense_id))
+
+            source_expense_id = int(entry.expense_id)
+            entry.expense_id = target_expense_id
+            _recalc_business_expense_amount(s, source_expense_id)
+            _recalc_business_expense_amount(s, target_expense_id)
+            s.commit()
+            flash(f"Moved entry to {target.label}.", "success")
+            return redirect(url_for("business_expense_category", expense_id=target_expense_id))
 
     @app.post("/business-expenses/<int:expense_id>/entries/<int:entry_id>/delete")
     @login_required
