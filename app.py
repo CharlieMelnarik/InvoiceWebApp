@@ -9095,7 +9095,7 @@ def create_app():
         daily_month = max(1, min(12, daily_month))
         days_in_daily_month = calendar.monthrange(target_year, daily_month)[1]
 
-        def _parse_date_from_datein(date_in: str, fallback_dt: datetime | None = None):
+        def _parse_date_from_datein(date_in: str):
             s = (date_in or "").strip()
             if s:
                 for fmt in ("%m/%d/%Y", "%m-%d-%Y", "%Y-%m-%d", "%B %d, %Y", "%b %d, %Y"):
@@ -9103,7 +9103,7 @@ def create_app():
                         return datetime.strptime(s, fmt)
                     except Exception:
                         pass
-            return fallback_dt or now_utc
+            return None
 
         monthly_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         monthly_invoiced = [0.0] * 12
@@ -9140,10 +9140,13 @@ def create_app():
             )
 
             for inv in invs:
-                inv_dt = _parse_date_from_datein(inv.date_in, inv.created_at)
-                inv_year = int(inv_dt.year)
-                inv_month = int(inv_dt.month)
-                inv_day = int(inv_dt.day)
+                inv_year = _parse_year_from_datein(inv.date_in)
+                if inv_year is None:
+                    # Keep chart logic aligned with Financial Summary (which filters by parsed invoice date).
+                    continue
+                inv_dt = _parse_date_from_datein(inv.date_in)
+                inv_month = int(inv_dt.month) if inv_dt else (_parse_month_from_datein(inv.date_in) or 0)
+                inv_day = int(inv_dt.day) if inv_dt else 0
                 year_candidates.add(inv_year)
                 _ensure_year_bucket(inv_year)
 
@@ -9157,12 +9160,12 @@ def create_app():
                 yearly_agg[inv_year]["paid_income"] += recognized_income
                 yearly_agg[inv_year]["outstanding"] += outstanding_amount
 
-                if inv_year == target_year:
+                if inv_year == target_year and 1 <= inv_month <= 12:
                     idx = max(0, min(11, inv_month - 1))
                     monthly_invoiced[idx] += invoice_total
                     monthly_paid_income[idx] += recognized_income
                     monthly_outstanding[idx] += outstanding_amount
-                if inv_year == target_year and inv_month == daily_month:
+                if inv_year == target_year and inv_month == daily_month and inv_day >= 1:
                     didx = max(0, min(days_in_daily_month - 1, inv_day - 1))
                     daily_invoiced[didx] += invoice_total
                     daily_paid_income[didx] += recognized_income
