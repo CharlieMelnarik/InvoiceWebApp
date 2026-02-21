@@ -6,6 +6,17 @@
   .expense-card .card-body { padding: 0.75rem; }
   .expense-item-input { padding-top: 0.35rem; padding-bottom: 0.35rem; }
 </style>
+<script>
+  function confirmCustomCategoryDelete(formEl) {
+    const rowDelete = formEl.querySelector('input[name^="custom_delete_"]');
+    if (!rowDelete || !rowDelete.checked) return true;
+    const categoryLabel = formEl.getAttribute("data-category-label") || "";
+    const label = (categoryLabel || "this category").trim();
+    return window.confirm(
+      `Delete "${label}"?\n\nThis will permanently delete the category and ALL items/splits inside it.`
+    );
+  }
+</script>
 
 <div class="page-header">
   <div>
@@ -142,7 +153,12 @@
           </form>
 
           {% if row.is_custom %}
-            <form method="post" class="row g-2 align-items-end mt-1">
+            <form
+              method="post"
+              class="row g-2 align-items-end mt-1"
+              data-category-label="{{ row.label or '' }}"
+              onsubmit="return confirmCustomCategoryDelete(this);"
+            >
               <input type="hidden" name="action" value="save_categories">
               <div class="col-8">
                 <label class="form-label small-muted mb-1">Custom Category Name</label>
