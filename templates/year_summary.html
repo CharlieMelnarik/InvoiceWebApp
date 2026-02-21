@@ -158,4 +158,162 @@
     {% endif %}
   </div>
 </div>
+
+<div class="card shadow-sm mt-3 mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <h2 class="h5 fw-bold mb-0">Income & Expense Charts</h2>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Chart period">
+        <button type="button" class="btn btn-outline-primary active" data-chart-scope="daily">Daily</button>
+        <button type="button" class="btn btn-outline-primary" data-chart-scope="monthly">Monthly</button>
+        <button type="button" class="btn btn-outline-primary" data-chart-scope="yearly">Yearly</button>
+      </div>
+    </div>
+    <div class="small-muted mb-3">
+      Compare paid income, invoiced totals, expenses, and outstanding balances.
+      <span id="chartScopeLabel" class="fw-semibold"></span>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-12 col-xl-8">
+        <div class="border rounded p-2 bg-white">
+          <canvas id="incomeExpenseTrendChart" height="180"></canvas>
+        </div>
+      </div>
+      <div class="col-12 col-xl-4">
+        <div class="border rounded p-2 bg-white">
+          <canvas id="expenseBreakdownChart" height="180"></canvas>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="border rounded p-2 bg-white">
+          <canvas id="invoicedOutstandingChart" height="145"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  (function () {
+    const chartData = {{ chart_data|tojson }};
+    const scopeButtons = document.querySelectorAll("[data-chart-scope]");
+    const scopeLabel = document.getElementById("chartScopeLabel");
+
+    function money(v) {
+      const n = Number(v || 0);
+      return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+    }
+
+    function scopeNet(scope) {
+      const income = scope.paid_income || [];
+      const expenses = scope.expenses || [];
+      return income.map((v, i) => Number(v || 0) - Number(expenses[i] || 0));
+    }
+
+    const trendCtx = document.getElementById("incomeExpenseTrendChart");
+    const barsCtx = document.getElementById("invoicedOutstandingChart");
+    const expenseCtx = document.getElementById("expenseBreakdownChart");
+    if (!trendCtx || !barsCtx || !expenseCtx || !window.Chart) return;
+
+    const trendChart = new Chart(trendCtx, {
+      type: "line",
+      data: {
+        labels: [],
+        datasets: [
+          { label: "Paid Income", data: [], borderColor: "#0f766e", backgroundColor: "rgba(15,118,110,0.15)", tension: 0.25, fill: true },
+          { label: "Expenses", data: [], borderColor: "#b45309", backgroundColor: "rgba(180,83,9,0.12)", tension: 0.25, fill: true },
+          { label: "Net", data: [], borderColor: "#1d4ed8", backgroundColor: "rgba(29,78,216,0.1)", tension: 0.25, fill: false },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}` } },
+          legend: { position: "top" },
+        },
+        scales: { y: { ticks: { callback: (v) => money(v) } } },
+      },
+    });
+
+    const invoicedOutstandingChart = new Chart(barsCtx, {
+      type: "bar",
+      data: {
+        labels: [],
+        datasets: [
+          { label: "Invoiced Total", data: [], backgroundColor: "rgba(29,78,216,0.65)", borderColor: "#1d4ed8", borderWidth: 1 },
+          { label: "Outstanding", data: [], backgroundColor: "rgba(217,119,6,0.65)", borderColor: "#d97706", borderWidth: 1 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}` } },
+          legend: { position: "top" },
+        },
+        scales: { y: { ticks: { callback: (v) => money(v) } } },
+      },
+    });
+
+    const expenseBreakdownChart = new Chart(expenseCtx, {
+      type: "doughnut",
+      data: {
+        labels: chartData.expense_breakdown.labels || ["No expense data"],
+        datasets: [{
+          data: (chartData.expense_breakdown.values && chartData.expense_breakdown.values.length)
+            ? chartData.expense_breakdown.values
+            : [1],
+          backgroundColor: (chartData.expense_breakdown.values && chartData.expense_breakdown.values.length)
+            ? ["#1d4ed8", "#0f766e", "#b45309", "#7c3aed", "#dc2626", "#0891b2", "#65a30d", "#374151"]
+            : ["#cbd5e1"],
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const v = Number(ctx.parsed || 0);
+                if (!(chartData.expense_breakdown.values && chartData.expense_breakdown.values.length)) {
+                  return "No expense data";
+                }
+                return `${ctx.label}: ${money(v)}`;
+              },
+            },
+          },
+        },
+      },
+    });
+
+    function setScope(scopeKey) {
+      const scope = chartData[scopeKey] || chartData.monthly;
+      scopeButtons.forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.chartScope === scopeKey);
+      });
+      scopeLabel.textContent = `(${scope.scope_label || ""})`;
+
+      trendChart.data.labels = scope.labels || [];
+      trendChart.data.datasets[0].data = scope.paid_income || [];
+      trendChart.data.datasets[1].data = scope.expenses || [];
+      trendChart.data.datasets[2].data = scopeNet(scope);
+      trendChart.update();
+
+      invoicedOutstandingChart.data.labels = scope.labels || [];
+      invoicedOutstandingChart.data.datasets[0].data = scope.invoiced || [];
+      invoicedOutstandingChart.data.datasets[1].data = scope.outstanding || [];
+      invoicedOutstandingChart.update();
+    }
+
+    scopeButtons.forEach((btn) => {
+      btn.addEventListener("click", () => setScope(btn.dataset.chartScope || "monthly"));
+    });
+    setScope("daily");
+  })();
+</script>
 {% endblock %}

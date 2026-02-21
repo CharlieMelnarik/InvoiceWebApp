@@ -217,6 +217,9 @@
     <a class="settings-jump-link" href="#section-account">Account</a>
     <a class="settings-jump-link" href="#section-invoice">Invoice Defaults</a>
     {% if not is_employee_account %}
+      <a class="settings-jump-link" href="#section-data-backup">Data Backup</a>
+    {% endif %}
+    {% if not is_employee_account %}
       <a class="settings-jump-link" href="#customProfessionCard">Custom Profession</a>
     {% endif %}
     {% if pro_features_enabled and not is_employee_account %}
@@ -289,6 +292,64 @@
           </div>
         </div>
       </section>
+
+      {% if not is_employee_account %}
+      <section class="settings-card" id="section-data-backup">
+        <div class="settings-card-head">
+          <h5>Data Backup (CSV)</h5>
+        </div>
+        <div class="settings-help">Download a full account backup as a ZIP containing CSV files for customers, invoices/estimates, line items, expenses, schedules, templates, and settings.</div>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          <input class="form-control form-control-sm" style="max-width:260px;" type="password" name="backup_export_password" placeholder="Current password">
+          <button class="btn btn-outline-primary btn-sm" type="submit" formaction="{{ url_for('settings_export_backup') }}" formmethod="post">
+            Download Backup ZIP
+          </button>
+        </div>
+
+        <div class="border rounded p-3 bg-white">
+          <div class="fw-semibold mb-1">Restore From Backup ZIP</div>
+          <div class="small-muted mb-2">
+            This will overwrite your current account data and restore from the selected backup file.
+          </div>
+          <div class="small-muted mb-2">
+            Use the original compressed backup <span class="mono">.zip</span> file (not an extracted folder).
+          </div>
+          <div class="row g-2">
+            <div class="col-12">
+              <label class="form-label compact-label mb-1">Backup File (.zip)</label>
+              <input class="form-control" type="file" name="restore_backup_file" accept=".zip,application/zip">
+            </div>
+            <div class="col-12">
+              <label class="form-label compact-label mb-1">Type RESTORE to confirm</label>
+              <input class="form-control" type="text" name="restore_phrase" placeholder="RESTORE">
+            </div>
+            <div class="col-12">
+              <label class="form-label compact-label mb-1">Current Password</label>
+              <input class="form-control" type="password" name="backup_restore_password" placeholder="Current password">
+            </div>
+            <div class="col-12">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="restoreOverwriteConfirm" name="restore_overwrite_confirm" value="1">
+                <label class="form-check-label" for="restoreOverwriteConfirm">
+                  I understand this will overwrite my current data.
+                </label>
+              </div>
+            </div>
+            <div class="col-12">
+              <button
+                class="btn btn-outline-danger btn-sm"
+                type="submit"
+                name="restore_backup_now"
+                value="1"
+                onclick="return confirm('Final confirmation: restore backup and overwrite your current account data?');"
+              >
+                Restore Backup ZIP
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+      {% endif %}
 
       {% if not is_employee_account %}
         <section class="settings-card span-2" id="customProfessionCard">

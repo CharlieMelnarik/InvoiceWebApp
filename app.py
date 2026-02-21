@@ -6,6 +6,8 @@ import re
 import io
 import math
 import html
+import csv
+import calendar
 import zipfile
 import smtplib
 import uuid
@@ -4028,6 +4030,682 @@ def create_app():
                     flash("Employee settings saved.", "success")
                     return redirect(url_for("settings"))
 
+                if request.form.get("restore_backup_now") == "1":
+                    provided_password = request.form.get("backup_restore_password") or ""
+                    if not check_password_hash(u.password_hash, provided_password):
+                        _audit_log(
+                            s,
+                            event="backup.restore",
+                            result="blocked",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details="password_check_failed",
+                        )
+                        s.commit()
+                        flash("Current password is required to restore a backup.", "error")
+                        return _render_settings()
+                    if (request.form.get("restore_overwrite_confirm") or "").strip() != "1":
+                        _audit_log(
+                            s,
+                            event="backup.restore",
+                            result="blocked",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details="overwrite_confirm_missing",
+                        )
+                        s.commit()
+                        flash("Please confirm overwrite before restoring backup.", "error")
+                        return _render_settings()
+                    if (request.form.get("restore_phrase") or "").strip().upper() != "RESTORE":
+                        _audit_log(
+                            s,
+                            event="backup.restore",
+                            result="blocked",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details="restore_phrase_missing",
+                        )
+                        s.commit()
+                        flash('Type "RESTORE" to confirm backup restore.', "error")
+                        return _render_settings()
+
+                    now_utc = datetime.utcnow()
+                    last_restore_success = (
+                        s.query(AuditLog.created_at)
+                        .filter(
+                            AuditLog.user_id == u.id,
+                            AuditLog.event == "backup.restore",
+                            AuditLog.result == "success",
+                        )
+                        .order_by(AuditLog.created_at.desc())
+                        .first()
+                    )
+                    if last_restore_success and last_restore_success[0]:
+                        elapsed = (now_utc - last_restore_success[0]).total_seconds()
+                        if elapsed < 300:
+                            _audit_log(
+                                s,
+                                event="backup.restore",
+                                result="blocked",
+                                user_id=u.id,
+                                username=u.username,
+                                email=u.email,
+                                details=f"rate_limited:{int(elapsed)}s",
+                            )
+                            s.commit()
+                            flash("Please wait a few minutes before restoring again.", "error")
+                            return _render_settings()
+
+                    backup_file = request.files.get("restore_backup_file")
+                    backup_name = (getattr(backup_file, "filename", "") or "").strip()
+                    if not backup_file or not backup_name:
+                        _audit_log(
+                            s,
+                            event="backup.restore",
+                            result="blocked",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details="missing_file",
+                        )
+                        s.commit()
+                        flash("Please choose a backup ZIP file.", "error")
+                        return _render_settings()
+                    if not backup_name.lower().endswith(".zip"):
+                        _audit_log(
+                            s,
+                            event="backup.restore",
+                            result="blocked",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details="invalid_extension",
+                        )
+                        s.commit()
+                        flash("Backup file must be a .zip export from InvoiceRunner.", "error")
+                        return _render_settings()
+
+                    def _csv_bool(v, default=False):
+                        raw = (v or "").strip().lower()
+                        if raw in ("1", "true", "yes", "on"):
+                            return True
+                        if raw in ("0", "false", "no", "off"):
+                            return False
+                        return bool(default)
+
+                    def _csv_int(v, default=None):
+                        raw = (v or "").strip()
+                        if raw == "":
+                            return default
+                        try:
+                            return int(float(raw))
+                        except Exception:
+                            return default
+
+                    def _csv_float(v, default=None):
+                        raw = (v or "").strip()
+                        if raw == "":
+                            return default
+                        try:
+                            return float(raw)
+                        except Exception:
+                            return default
+
+                    def _csv_dt(v):
+                        raw = (v or "").strip()
+                        if not raw:
+                            return None
+                        try:
+                            return datetime.fromisoformat(raw)
+                        except Exception:
+                            return None
+
+                    def _csv_str(v):
+                        raw = (v or "").strip()
+                        return raw or None
+
+                    def _zip_csv_rows(zf: zipfile.ZipFile, name: str):
+                        target = (name or "").strip().lower()
+                        if not target:
+                            return []
+                        names = zf.namelist()
+                        matched_name = None
+                        for n in names:
+                            ln = (n or "").strip().lower()
+                            if ln == target or ln.endswith("/" + target):
+                                matched_name = n
+                                break
+                        if not matched_name:
+                            return []
+                        try:
+                            with zf.open(matched_name, "r") as fh:
+                                text = fh.read().decode("utf-8-sig")
+                        except Exception:
+                            return []
+                        if not text.strip():
+                            return []
+                        return list(csv.DictReader(io.StringIO(text)))
+
+                    try:
+                        blob = backup_file.read()
+                        if not blob:
+                            _audit_log(
+                                s,
+                                event="backup.restore",
+                                result="blocked",
+                                user_id=u.id,
+                                username=u.username,
+                                email=u.email,
+                                details="empty_file",
+                            )
+                            s.commit()
+                            flash("Backup file is empty.", "error")
+                            return _render_settings()
+                        if len(blob) > (25 * 1024 * 1024):
+                            _audit_log(
+                                s,
+                                event="backup.restore",
+                                result="blocked",
+                                user_id=u.id,
+                                username=u.username,
+                                email=u.email,
+                                details=f"zip_too_large:{len(blob)}",
+                            )
+                            s.commit()
+                            flash("Backup ZIP is too large (max 25MB).", "error")
+                            return _render_settings()
+                        with zipfile.ZipFile(io.BytesIO(blob), "r") as zf:
+                            info_list = zf.infolist()
+                            if len(info_list) > 200:
+                                _audit_log(
+                                    s,
+                                    event="backup.restore",
+                                    result="blocked",
+                                    user_id=u.id,
+                                    username=u.username,
+                                    email=u.email,
+                                    details=f"too_many_files:{len(info_list)}",
+                                )
+                                s.commit()
+                                flash("Backup ZIP contains too many files.", "error")
+                                return _render_settings()
+                            total_uncompressed = 0
+                            for zi in info_list:
+                                name = (zi.filename or "").replace("\\", "/")
+                                if name.startswith("/") or ".." in name.split("/"):
+                                    _audit_log(
+                                        s,
+                                        event="backup.restore",
+                                        result="blocked",
+                                        user_id=u.id,
+                                        username=u.username,
+                                        email=u.email,
+                                        details="unsafe_zip_path",
+                                    )
+                                    s.commit()
+                                    flash("Backup ZIP contains unsafe file paths.", "error")
+                                    return _render_settings()
+                                if zi.file_size > (20 * 1024 * 1024):
+                                    _audit_log(
+                                        s,
+                                        event="backup.restore",
+                                        result="blocked",
+                                        user_id=u.id,
+                                        username=u.username,
+                                        email=u.email,
+                                        details=f"entry_too_large:{zi.filename}",
+                                    )
+                                    s.commit()
+                                    flash("Backup ZIP contains an unexpectedly large file.", "error")
+                                    return _render_settings()
+                                total_uncompressed += int(zi.file_size or 0)
+                                if total_uncompressed > (120 * 1024 * 1024):
+                                    _audit_log(
+                                        s,
+                                        event="backup.restore",
+                                        result="blocked",
+                                        user_id=u.id,
+                                        username=u.username,
+                                        email=u.email,
+                                        details=f"uncompressed_too_large:{total_uncompressed}",
+                                    )
+                                    s.commit()
+                                    flash("Backup ZIP expands to too much data.", "error")
+                                    return _render_settings()
+                                if zi.compress_size > 0:
+                                    ratio = float(zi.file_size) / float(zi.compress_size)
+                                    if ratio > 200.0 and zi.file_size > (2 * 1024 * 1024):
+                                        _audit_log(
+                                            s,
+                                            event="backup.restore",
+                                            result="blocked",
+                                            user_id=u.id,
+                                            username=u.username,
+                                            email=u.email,
+                                            details=f"suspicious_compression_ratio:{zi.filename}",
+                                        )
+                                        s.commit()
+                                        flash("Backup ZIP failed safety checks.", "error")
+                                        return _render_settings()
+
+                            owner_rows = _zip_csv_rows(zf, "owner_settings.csv")
+                            employee_rows = _zip_csv_rows(zf, "employees.csv")
+                            customer_rows = _zip_csv_rows(zf, "customers.csv")
+                            invoice_rows = _zip_csv_rows(zf, "invoices_and_estimates.csv")
+                            part_rows = _zip_csv_rows(zf, "invoice_parts.csv")
+                            labor_rows = _zip_csv_rows(zf, "invoice_labor.csv")
+                            expense_rows = _zip_csv_rows(zf, "business_expense_categories.csv")
+                            entry_rows = _zip_csv_rows(zf, "business_expense_entries.csv")
+                            split_rows = _zip_csv_rows(zf, "business_expense_entry_splits.csv")
+                            schedule_rows = _zip_csv_rows(zf, "schedule_events.csv")
+                            preset_rows = _zip_csv_rows(zf, "custom_profession_presets.csv")
+                            design_rows = _zip_csv_rows(zf, "invoice_design_templates.csv")
+                            email_template_rows = _zip_csv_rows(zf, "email_templates.csv")
+                    except Exception:
+                        _audit_log(
+                            s,
+                            event="backup.restore",
+                            result="fail",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details="zip_read_failed",
+                        )
+                        s.commit()
+                        flash("Could not read backup ZIP. Please use a valid InvoiceRunner backup file.", "error")
+                        return _render_settings()
+
+                    if not owner_rows:
+                        _audit_log(
+                            s,
+                            event="backup.restore",
+                            result="blocked",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details="owner_settings_missing",
+                        )
+                        s.commit()
+                        flash("Backup file is missing owner settings data.", "error")
+                        return _render_settings()
+
+                    owner_row = owner_rows[0]
+                    old_owner_id = _csv_int(owner_row.get("id"), 0) or 0
+
+                    # Wipe current owner-scoped data first.
+                    s.query(ScheduleEvent).filter(ScheduleEvent.user_id == u.id).delete(synchronize_session=False)
+                    s.query(Invoice).filter(Invoice.user_id == u.id).delete(synchronize_session=False)
+                    s.query(Customer).filter(Customer.user_id == u.id).delete(synchronize_session=False)
+                    s.query(BusinessExpense).filter(BusinessExpense.user_id == u.id).delete(synchronize_session=False)
+                    s.query(CustomProfessionPreset).filter(CustomProfessionPreset.user_id == u.id).delete(synchronize_session=False)
+                    s.query(InvoiceDesignTemplate).filter(InvoiceDesignTemplate.user_id == u.id).delete(synchronize_session=False)
+                    s.query(EmailTemplate).filter(EmailTemplate.user_id == u.id).delete(synchronize_session=False)
+                    s.query(User).filter(User.account_owner_id == u.id, User.is_employee.is_(True)).delete(synchronize_session=False)
+                    s.flush()
+
+                    employee_id_map: dict[int, int] = {}
+                    for row in employee_rows:
+                        old_id = _csv_int(row.get("id"), None)
+                        username = (row.get("username") or "").strip()
+                        password_hash = (row.get("password_hash") or "").strip()
+                        if not username or not password_hash:
+                            continue
+                        emp = User(
+                            username=username,
+                            email=_csv_str(row.get("email")),
+                            password_hash=password_hash,
+                            is_employee=True,
+                            account_owner_id=u.id,
+                        )
+                        created_at = _csv_dt(row.get("created_at"))
+                        updated_at = _csv_dt(row.get("updated_at"))
+                        if created_at:
+                            emp.created_at = created_at
+                        if updated_at:
+                            emp.updated_at = updated_at
+                        s.add(emp)
+                        s.flush()
+                        if old_id:
+                            employee_id_map[int(old_id)] = int(emp.id)
+
+                    customer_id_map: dict[int, int] = {}
+                    for row in customer_rows:
+                        old_id = _csv_int(row.get("id"), None)
+                        cust = Customer(
+                            user_id=u.id,
+                            name=(row.get("name") or "").strip() or "Customer",
+                            email=_csv_str(row.get("email")),
+                            phone=_csv_str(row.get("phone")),
+                            address=_csv_str(row.get("address")),
+                            address_line1=_csv_str(row.get("address_line1")),
+                            address_line2=_csv_str(row.get("address_line2")),
+                            city=_csv_str(row.get("city")),
+                            state=_csv_str(row.get("state")),
+                            postal_code=_csv_str(row.get("postal_code")),
+                            next_service_dt=_csv_dt(row.get("next_service_dt")),
+                            service_interval_days=_csv_int(row.get("service_interval_days"), None),
+                            default_service_minutes=_csv_int(row.get("default_service_minutes"), 60) or 60,
+                            service_title=_csv_str(row.get("service_title")),
+                            service_notes=_csv_str(row.get("service_notes")),
+                            recurring_horizon_dt=_csv_dt(row.get("recurring_horizon_dt")),
+                        )
+                        created_at = _csv_dt(row.get("created_at"))
+                        updated_at = _csv_dt(row.get("updated_at"))
+                        if created_at:
+                            cust.created_at = created_at
+                        if updated_at:
+                            cust.updated_at = updated_at
+                        s.add(cust)
+                        s.flush()
+                        if old_id:
+                            customer_id_map[int(old_id)] = int(cust.id)
+
+                    invoice_id_map: dict[int, int] = {}
+                    for row in invoice_rows:
+                        old_id = _csv_int(row.get("id"), None)
+                        old_customer_id = _csv_int(row.get("customer_id"), None)
+                        old_creator_id = _csv_int(row.get("created_by_user_id"), None)
+                        creator_id = u.id
+                        if old_creator_id and old_creator_id != old_owner_id:
+                            creator_id = employee_id_map.get(old_creator_id, u.id)
+                        inv = Invoice(
+                            user_id=u.id,
+                            created_by_user_id=creator_id,
+                            customer_id=customer_id_map.get(old_customer_id) if old_customer_id else None,
+                            invoice_number=(row.get("invoice_number") or "").strip() or f"{datetime.utcnow().year}{uuid.uuid4().hex[:6]}",
+                            display_number=_csv_str(row.get("display_number")),
+                            is_estimate=_csv_bool(row.get("is_estimate"), False),
+                            invoice_template=_csv_str(row.get("invoice_template")),
+                            pdf_template=_csv_str(row.get("pdf_template")),
+                            tax_rate=_csv_float(row.get("tax_rate"), None),
+                            tax_override=_csv_float(row.get("tax_override"), None),
+                            customer_email=_csv_str(row.get("customer_email")),
+                            customer_phone=_csv_str(row.get("customer_phone")),
+                            name=(row.get("name") or "").strip() or "Customer",
+                            vehicle=(row.get("vehicle") or "").strip() or "Job",
+                            hours=_csv_float(row.get("hours"), 0.0) or 0.0,
+                            price_per_hour=_csv_float(row.get("price_per_hour"), 0.0) or 0.0,
+                            shop_supplies=_csv_float(row.get("shop_supplies"), 0.0) or 0.0,
+                            parts_markup_percent=_csv_float(row.get("parts_markup_percent"), 0.0) or 0.0,
+                            notes=(row.get("notes") or "").strip(),
+                            useful_info=_csv_str(row.get("useful_info")),
+                            converted_from_estimate=_csv_bool(row.get("converted_from_estimate"), False),
+                            converted_to_invoice=_csv_bool(row.get("converted_to_invoice"), False),
+                            paid=_csv_float(row.get("paid"), 0.0) or 0.0,
+                            paid_processing_fee=_csv_float(row.get("paid_processing_fee"), 0.0) or 0.0,
+                            date_in=(row.get("date_in") or "").strip(),
+                            payment_reminder_before_sent_at=_csv_dt(row.get("payment_reminder_before_sent_at")),
+                            payment_reminder_due_today_sent_at=_csv_dt(row.get("payment_reminder_due_today_sent_at")),
+                            payment_reminder_after_sent_at=_csv_dt(row.get("payment_reminder_after_sent_at")),
+                            payment_reminder_last_sent_at=_csv_dt(row.get("payment_reminder_last_sent_at")),
+                            pdf_generated_at=_csv_dt(row.get("pdf_generated_at")),
+                        )
+                        created_at = _csv_dt(row.get("created_at"))
+                        updated_at = _csv_dt(row.get("updated_at"))
+                        if created_at:
+                            inv.created_at = created_at
+                        if updated_at:
+                            inv.updated_at = updated_at
+                        s.add(inv)
+                        s.flush()
+                        if old_id:
+                            invoice_id_map[int(old_id)] = int(inv.id)
+
+                    for row in part_rows:
+                        old_invoice_id = _csv_int(row.get("invoice_id"), None)
+                        new_invoice_id = invoice_id_map.get(old_invoice_id) if old_invoice_id else None
+                        if not new_invoice_id:
+                            continue
+                        s.add(
+                            InvoicePart(
+                                invoice_id=new_invoice_id,
+                                part_name=(row.get("part_name") or "").strip(),
+                                part_price=_csv_float(row.get("part_price"), 0.0) or 0.0,
+                            )
+                        )
+
+                    for row in labor_rows:
+                        old_invoice_id = _csv_int(row.get("invoice_id"), None)
+                        new_invoice_id = invoice_id_map.get(old_invoice_id) if old_invoice_id else None
+                        if not new_invoice_id:
+                            continue
+                        s.add(
+                            InvoiceLabor(
+                                invoice_id=new_invoice_id,
+                                labor_desc=(row.get("labor_desc") or "").strip(),
+                                labor_time_hours=_csv_float(row.get("labor_time_hours"), 0.0) or 0.0,
+                            )
+                        )
+
+                    expense_id_map: dict[int, int] = {}
+                    for row in expense_rows:
+                        old_id = _csv_int(row.get("id"), None)
+                        ex = BusinessExpense(
+                            user_id=u.id,
+                            label=(row.get("label") or "").strip(),
+                            amount=_csv_float(row.get("amount"), 0.0) or 0.0,
+                            is_custom=_csv_bool(row.get("is_custom"), False),
+                            sort_order=_csv_int(row.get("sort_order"), 0) or 0,
+                        )
+                        created_at = _csv_dt(row.get("created_at"))
+                        updated_at = _csv_dt(row.get("updated_at"))
+                        if created_at:
+                            ex.created_at = created_at
+                        if updated_at:
+                            ex.updated_at = updated_at
+                        s.add(ex)
+                        s.flush()
+                        if old_id:
+                            expense_id_map[int(old_id)] = int(ex.id)
+
+                    entry_id_map: dict[int, int] = {}
+                    for row in entry_rows:
+                        old_id = _csv_int(row.get("id"), None)
+                        old_expense_id = _csv_int(row.get("expense_id"), None)
+                        new_expense_id = expense_id_map.get(old_expense_id) if old_expense_id else None
+                        if not new_expense_id:
+                            continue
+                        ent = BusinessExpenseEntry(
+                            expense_id=new_expense_id,
+                            user_id=u.id,
+                            item_desc=(row.get("item_desc") or "").strip(),
+                            amount=_csv_float(row.get("amount"), 0.0) or 0.0,
+                            created_at=_csv_dt(row.get("created_at")) or datetime.utcnow(),
+                        )
+                        s.add(ent)
+                        s.flush()
+                        if old_id:
+                            entry_id_map[int(old_id)] = int(ent.id)
+
+                    for row in split_rows:
+                        old_entry_id = _csv_int(row.get("entry_id"), None)
+                        new_entry_id = entry_id_map.get(old_entry_id) if old_entry_id else None
+                        if not new_entry_id:
+                            continue
+                        s.add(
+                            BusinessExpenseEntrySplit(
+                                entry_id=new_entry_id,
+                                user_id=u.id,
+                                item_desc=(row.get("item_desc") or "").strip(),
+                                amount=_csv_float(row.get("amount"), 0.0) or 0.0,
+                                created_at=_csv_dt(row.get("created_at")) or datetime.utcnow(),
+                            )
+                        )
+
+                    preset_id_map: dict[int, int] = {}
+                    for row in preset_rows:
+                        old_id = _csv_int(row.get("id"), None)
+                        pr = CustomProfessionPreset(
+                            user_id=u.id,
+                            name=(row.get("name") or "").strip()[:120] or "Custom Profession",
+                            job_label=_csv_str(row.get("job_label")),
+                            labor_title=_csv_str(row.get("labor_title")),
+                            labor_desc_label=_csv_str(row.get("labor_desc_label")),
+                            parts_title=_csv_str(row.get("parts_title")),
+                            parts_name_label=_csv_str(row.get("parts_name_label")),
+                            shop_supplies_label=_csv_str(row.get("shop_supplies_label")),
+                            show_job=_csv_bool(row.get("show_job"), True),
+                            show_labor=_csv_bool(row.get("show_labor"), True),
+                            show_parts=_csv_bool(row.get("show_parts"), True),
+                            show_shop_supplies=_csv_bool(row.get("show_shop_supplies"), True),
+                            show_notes=_csv_bool(row.get("show_notes"), True),
+                        )
+                        created_at = _csv_dt(row.get("created_at"))
+                        updated_at = _csv_dt(row.get("updated_at"))
+                        if created_at:
+                            pr.created_at = created_at
+                        if updated_at:
+                            pr.updated_at = updated_at
+                        s.add(pr)
+                        s.flush()
+                        if old_id:
+                            preset_id_map[int(old_id)] = int(pr.id)
+
+                    for row in design_rows:
+                        t = InvoiceDesignTemplate(
+                            user_id=u.id,
+                            name=(row.get("name") or "").strip()[:120] or "Template",
+                            design_json=(row.get("design_json") or "{}"),
+                            is_active=_csv_bool(row.get("is_active"), False),
+                        )
+                        created_at = _csv_dt(row.get("created_at"))
+                        updated_at = _csv_dt(row.get("updated_at"))
+                        if created_at:
+                            t.created_at = created_at
+                        if updated_at:
+                            t.updated_at = updated_at
+                        s.add(t)
+
+                    for row in email_template_rows:
+                        t = EmailTemplate(
+                            user_id=u.id,
+                            template_key=(row.get("template_key") or "").strip()[:64] or f"template_{uuid.uuid4().hex[:8]}",
+                            name=(row.get("name") or "").strip()[:120] or "Email Template",
+                            subject=(row.get("subject") or "").strip()[:255] or "Message",
+                            html_body=(row.get("html_body") or "").strip() or "<p>Hello,</p>",
+                        )
+                        created_at = _csv_dt(row.get("created_at"))
+                        updated_at = _csv_dt(row.get("updated_at"))
+                        if created_at:
+                            t.created_at = created_at
+                        if updated_at:
+                            t.updated_at = updated_at
+                        s.add(t)
+
+                    for row in schedule_rows:
+                        old_customer_id = _csv_int(row.get("customer_id"), None)
+                        old_invoice_id = _csv_int(row.get("invoice_id"), None)
+                        old_creator_id = _csv_int(row.get("created_by_user_id"), None)
+                        creator_id = u.id
+                        if old_creator_id and old_creator_id != old_owner_id:
+                            creator_id = employee_id_map.get(old_creator_id, u.id)
+                        ev = ScheduleEvent(
+                            user_id=u.id,
+                            created_by_user_id=creator_id,
+                            customer_id=customer_id_map.get(old_customer_id) if old_customer_id else None,
+                            invoice_id=invoice_id_map.get(old_invoice_id) if old_invoice_id else None,
+                            title=_csv_str(row.get("title")),
+                            notes=_csv_str(row.get("notes")),
+                            start_dt=_csv_dt(row.get("start_dt")) or datetime.utcnow(),
+                            end_dt=_csv_dt(row.get("end_dt")) or datetime.utcnow(),
+                            status=(row.get("status") or "scheduled").strip() or "scheduled",
+                            event_type=(row.get("event_type") or "appointment").strip() or "appointment",
+                            is_auto=_csv_bool(row.get("is_auto"), False),
+                            recurring_token=_csv_str(row.get("recurring_token")),
+                        )
+                        created_at = _csv_dt(row.get("created_at"))
+                        updated_at = _csv_dt(row.get("updated_at"))
+                        if created_at:
+                            ev.created_at = created_at
+                        if updated_at:
+                            ev.updated_at = updated_at
+                        s.add(ev)
+
+                    owner_bool_fields = {
+                        "custom_show_job", "custom_show_labor", "custom_show_parts", "custom_show_shop_supplies",
+                        "custom_show_notes", "invoice_builder_enabled", "invoice_builder_compact_mode",
+                        "show_business_name", "show_business_phone", "show_business_address", "show_business_email",
+                        "payment_fee_auto_enabled", "payment_reminders_enabled",
+                        "payment_reminder_before_enabled", "payment_reminder_due_today_enabled",
+                        "payment_reminder_after_enabled", "late_fee_enabled",
+                    }
+                    owner_int_fields = {
+                        "schedule_summary_tz_offset_minutes", "payment_due_days",
+                        "payment_reminder_days_before", "payment_reminder_days_after", "late_fee_frequency_days",
+                    }
+                    owner_float_fields = {
+                        "tax_rate", "default_hourly_rate", "default_parts_markup", "payment_fee_percent",
+                        "payment_fee_fixed", "stripe_fee_percent", "stripe_fee_fixed",
+                        "late_fee_fixed", "late_fee_percent",
+                    }
+                    owner_dt_fields = {"trial_ends_at", "current_period_end", "schedule_summary_last_sent", "payment_reminder_last_run_at"}
+                    skip_owner_fields = {"id", "username", "password_hash", "created_at", "updated_at"}
+                    for key, value in owner_row.items():
+                        if key in skip_owner_fields or not hasattr(u, key):
+                            continue
+                        if key in owner_bool_fields:
+                            setattr(u, key, _csv_bool(value, False))
+                        elif key in owner_int_fields:
+                            setattr(u, key, _csv_int(value, getattr(u, key, 0) or 0))
+                        elif key in owner_float_fields:
+                            setattr(u, key, _csv_float(value, getattr(u, key, 0.0) or 0.0))
+                        elif key in owner_dt_fields:
+                            setattr(u, key, _csv_dt(value))
+                        else:
+                            setattr(u, key, _csv_str(value))
+
+                    raw_invoice_template = (owner_row.get("invoice_template") or "").strip()
+                    preset_id = _custom_preset_id_from_key(raw_invoice_template)
+                    if preset_id and preset_id in preset_id_map:
+                        u.invoice_template = f"custom_preset:{preset_id_map[preset_id]}"
+                    elif raw_invoice_template:
+                        u.invoice_template = raw_invoice_template
+                    u.address = _format_user_address_legacy(
+                        u.address_line1,
+                        u.address_line2,
+                        u.city,
+                        u.state,
+                        u.postal_code,
+                    )
+
+                    try:
+                        s.commit()
+                    except IntegrityError:
+                        s.rollback()
+                        _audit_log(
+                            s,
+                            event="backup.restore",
+                            result="fail",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details="integrity_conflict",
+                        )
+                        s.commit()
+                        flash(
+                            "Backup restore failed due to conflicting unique data (for example usernames, emails, or invoice numbers).",
+                            "error",
+                        )
+                        return _render_settings()
+                    _audit_log(
+                        s,
+                        event="backup.restore",
+                        result="success",
+                        user_id=u.id,
+                        username=u.username,
+                        email=u.email,
+                        details=(
+                            f"rows:customers={len(customer_rows)},invoices={len(invoice_rows)},"
+                            f"expenses={len(expense_rows)},schedule={len(schedule_rows)}"
+                        ),
+                    )
+                    s.commit()
+                    flash("Backup restore complete. Your account data has been replaced from the selected backup.", "success")
+                    return redirect(url_for("settings"))
+
                 new_email = _normalize_email(request.form.get("email") or "")
                 if not _looks_like_email(new_email):
                     flash("Please enter a valid email address.", "error")
@@ -4555,6 +5233,291 @@ def create_app():
                 mimetype="application/pdf",
                 as_attachment=False,
                 download_name="invoice-preview.pdf",
+            )
+
+    @app.post("/settings/export/backup")
+    @login_required
+    @owner_required
+    def settings_export_backup():
+        def _norm_csv(v):
+            if v is None:
+                return ""
+            if isinstance(v, datetime):
+                return v.isoformat()
+            if isinstance(v, bool):
+                return "1" if v else "0"
+            return str(v)
+
+        def _csv_bytes(headers: list[str], rows: list[list]):
+            sio = io.StringIO(newline="")
+            writer = csv.writer(sio)
+            writer.writerow(headers)
+            for row in rows:
+                writer.writerow([_norm_csv(v) for v in row])
+            return sio.getvalue().encode("utf-8")
+
+        uid = _current_user_id_int()
+        with db_session() as s:
+            owner = s.get(User, uid)
+            if not owner:
+                abort(404)
+            provided_password = request.form.get("backup_export_password") or ""
+            if not check_password_hash(owner.password_hash, provided_password):
+                _audit_log(
+                    s,
+                    event="backup.export",
+                    result="blocked",
+                    user_id=owner.id,
+                    username=owner.username,
+                    email=owner.email,
+                    details="password_check_failed",
+                )
+                s.commit()
+                flash("Current password is required to download a backup.", "error")
+                return redirect(url_for("settings"))
+
+            now_utc = datetime.utcnow()
+            last_export_success = (
+                s.query(AuditLog.created_at)
+                .filter(
+                    AuditLog.user_id == owner.id,
+                    AuditLog.event == "backup.export",
+                    AuditLog.result == "success",
+                )
+                .order_by(AuditLog.created_at.desc())
+                .first()
+            )
+            if last_export_success and last_export_success[0]:
+                elapsed = (now_utc - last_export_success[0]).total_seconds()
+                if elapsed < 60:
+                    _audit_log(
+                        s,
+                        event="backup.export",
+                        result="blocked",
+                        user_id=owner.id,
+                        username=owner.username,
+                        email=owner.email,
+                        details=f"rate_limited:{int(elapsed)}s",
+                    )
+                    s.commit()
+                    flash("Please wait before downloading another backup.", "error")
+                    return redirect(url_for("settings"))
+
+            customers = (
+                s.query(Customer)
+                .filter(Customer.user_id == uid)
+                .order_by(Customer.id.asc())
+                .all()
+            )
+            invoices = (
+                s.query(Invoice)
+                .filter(Invoice.user_id == uid)
+                .order_by(Invoice.id.asc())
+                .all()
+            )
+            invoice_ids = [int(i.id) for i in invoices]
+
+            parts = []
+            labor_items = []
+            if invoice_ids:
+                parts = (
+                    s.query(InvoicePart)
+                    .filter(InvoicePart.invoice_id.in_(invoice_ids))
+                    .order_by(InvoicePart.invoice_id.asc(), InvoicePart.id.asc())
+                    .all()
+                )
+                labor_items = (
+                    s.query(InvoiceLabor)
+                    .filter(InvoiceLabor.invoice_id.in_(invoice_ids))
+                    .order_by(InvoiceLabor.invoice_id.asc(), InvoiceLabor.id.asc())
+                    .all()
+                )
+
+            expenses = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.user_id == uid)
+                .order_by(BusinessExpense.sort_order.asc(), BusinessExpense.id.asc())
+                .all()
+            )
+            entries = (
+                s.query(BusinessExpenseEntry)
+                .filter(BusinessExpenseEntry.user_id == uid)
+                .order_by(BusinessExpenseEntry.id.asc())
+                .all()
+            )
+            splits = (
+                s.query(BusinessExpenseEntrySplit)
+                .filter(BusinessExpenseEntrySplit.user_id == uid)
+                .order_by(BusinessExpenseEntrySplit.id.asc())
+                .all()
+            )
+            schedule_events = (
+                s.query(ScheduleEvent)
+                .filter(ScheduleEvent.user_id == uid)
+                .order_by(ScheduleEvent.start_dt.asc(), ScheduleEvent.id.asc())
+                .all()
+            )
+            employee_users = (
+                s.query(User)
+                .filter(User.account_owner_id == uid, User.is_employee.is_(True))
+                .order_by(User.id.asc())
+                .all()
+            )
+            custom_presets = (
+                s.query(CustomProfessionPreset)
+                .filter(CustomProfessionPreset.user_id == uid)
+                .order_by(CustomProfessionPreset.name.asc(), CustomProfessionPreset.id.asc())
+                .all()
+            )
+            design_templates = (
+                s.query(InvoiceDesignTemplate)
+                .filter(InvoiceDesignTemplate.user_id == uid)
+                .order_by(InvoiceDesignTemplate.id.asc())
+                .all()
+            )
+            email_templates = (
+                s.query(EmailTemplate)
+                .filter(EmailTemplate.user_id == uid)
+                .order_by(EmailTemplate.template_key.asc(), EmailTemplate.id.asc())
+                .all()
+            )
+
+            owner_fields = [
+                "id", "username", "email", "invoice_template", "pdf_template", "tax_rate",
+                "default_hourly_rate", "default_parts_markup", "payment_fee_auto_enabled",
+                "payment_fee_percent", "payment_fee_fixed", "stripe_fee_percent", "stripe_fee_fixed",
+                "business_name", "phone", "address", "address_line1", "address_line2", "city", "state",
+                "postal_code", "show_business_name", "show_business_phone", "show_business_address",
+                "show_business_email", "subscription_status", "subscription_tier", "trial_ends_at",
+                "current_period_end", "schedule_summary_frequency", "schedule_summary_time",
+                "schedule_summary_last_sent", "schedule_summary_tz_offset_minutes",
+                "payment_reminders_enabled", "payment_due_days", "payment_reminder_before_enabled",
+                "payment_reminder_due_today_enabled", "payment_reminder_after_enabled",
+                "payment_reminder_days_before", "payment_reminder_days_after",
+                "payment_reminder_last_run_at", "late_fee_enabled", "late_fee_mode", "late_fee_fixed",
+                "late_fee_percent", "late_fee_frequency_days", "custom_profession_name",
+                "custom_job_label", "custom_labor_title", "custom_labor_desc_label",
+                "custom_parts_title", "custom_parts_name_label", "custom_shop_supplies_label",
+                "custom_show_job", "custom_show_labor", "custom_show_parts", "custom_show_shop_supplies",
+                "custom_show_notes", "invoice_builder_enabled", "invoice_builder_accent_color",
+                "invoice_builder_header_style", "invoice_builder_compact_mode", "created_at", "updated_at",
+            ]
+            customer_fields = [
+                "id", "user_id", "name", "email", "phone", "address", "address_line1", "address_line2",
+                "city", "state", "postal_code", "next_service_dt", "service_interval_days",
+                "default_service_minutes", "service_title", "service_notes", "recurring_horizon_dt",
+                "created_at", "updated_at",
+            ]
+            invoice_fields = [
+                "id", "user_id", "created_by_user_id", "customer_id", "invoice_number", "display_number",
+                "is_estimate", "invoice_template", "pdf_template", "tax_rate", "tax_override",
+                "customer_email", "customer_phone", "name", "vehicle", "hours", "price_per_hour",
+                "shop_supplies", "parts_markup_percent", "notes", "useful_info",
+                "converted_from_estimate", "converted_to_invoice", "paid", "paid_processing_fee", "date_in",
+                "payment_reminder_before_sent_at", "payment_reminder_due_today_sent_at",
+                "payment_reminder_after_sent_at", "payment_reminder_last_sent_at",
+                "pdf_generated_at", "created_at", "updated_at",
+            ]
+            part_fields = ["id", "invoice_id", "part_name", "part_price"]
+            labor_fields = ["id", "invoice_id", "labor_desc", "labor_time_hours"]
+            expense_fields = ["id", "user_id", "label", "amount", "is_custom", "sort_order", "created_at", "updated_at"]
+            entry_fields = ["id", "expense_id", "user_id", "item_desc", "amount", "created_at"]
+            split_fields = ["id", "entry_id", "user_id", "item_desc", "amount", "created_at"]
+            schedule_fields = [
+                "id", "user_id", "created_by_user_id", "customer_id", "invoice_id", "title", "notes",
+                "start_dt", "end_dt", "status", "event_type", "is_auto", "recurring_token", "created_at", "updated_at",
+            ]
+            employee_fields = [
+                "id", "account_owner_id", "username", "email", "password_hash", "is_employee", "created_at", "updated_at",
+            ]
+            custom_preset_fields = [
+                "id", "user_id", "name", "job_label", "labor_title", "labor_desc_label", "parts_title",
+                "parts_name_label", "shop_supplies_label", "show_job", "show_labor", "show_parts",
+                "show_shop_supplies", "show_notes", "created_at", "updated_at",
+            ]
+            design_fields = ["id", "user_id", "name", "design_json", "is_active", "created_at", "updated_at"]
+            email_template_fields = ["id", "user_id", "template_key", "name", "subject", "html_body", "created_at", "updated_at"]
+
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(
+                    "README.txt",
+                    (
+                        "InvoiceRunner CSV backup export\n\n"
+                        "This archive contains account-scoped data exported as CSV files for future restore/import tools.\n"
+                        "IDs are preserved intentionally to support relationship mapping during import.\n"
+                    ),
+                )
+
+                zf.writestr(
+                    "owner_settings.csv",
+                    _csv_bytes(owner_fields, [[getattr(owner, f, None) for f in owner_fields]]),
+                )
+                zf.writestr(
+                    "employees.csv",
+                    _csv_bytes(employee_fields, [[getattr(e, f, None) for f in employee_fields] for e in employee_users]),
+                )
+                zf.writestr(
+                    "customers.csv",
+                    _csv_bytes(customer_fields, [[getattr(c, f, None) for f in customer_fields] for c in customers]),
+                )
+                zf.writestr(
+                    "invoices_and_estimates.csv",
+                    _csv_bytes(invoice_fields, [[getattr(i, f, None) for f in invoice_fields] for i in invoices]),
+                )
+                zf.writestr(
+                    "invoice_parts.csv",
+                    _csv_bytes(part_fields, [[getattr(p, f, None) for f in part_fields] for p in parts]),
+                )
+                zf.writestr(
+                    "invoice_labor.csv",
+                    _csv_bytes(labor_fields, [[getattr(l, f, None) for f in labor_fields] for l in labor_items]),
+                )
+                zf.writestr(
+                    "business_expense_categories.csv",
+                    _csv_bytes(expense_fields, [[getattr(e, f, None) for f in expense_fields] for e in expenses]),
+                )
+                zf.writestr(
+                    "business_expense_entries.csv",
+                    _csv_bytes(entry_fields, [[getattr(e, f, None) for f in entry_fields] for e in entries]),
+                )
+                zf.writestr(
+                    "business_expense_entry_splits.csv",
+                    _csv_bytes(split_fields, [[getattr(sp, f, None) for f in split_fields] for sp in splits]),
+                )
+                zf.writestr(
+                    "schedule_events.csv",
+                    _csv_bytes(schedule_fields, [[getattr(ev, f, None) for f in schedule_fields] for ev in schedule_events]),
+                )
+                zf.writestr(
+                    "custom_profession_presets.csv",
+                    _csv_bytes(custom_preset_fields, [[getattr(p, f, None) for f in custom_preset_fields] for p in custom_presets]),
+                )
+                zf.writestr(
+                    "invoice_design_templates.csv",
+                    _csv_bytes(design_fields, [[getattr(t, f, None) for f in design_fields] for t in design_templates]),
+                )
+                zf.writestr(
+                    "email_templates.csv",
+                    _csv_bytes(email_template_fields, [[getattr(t, f, None) for f in email_template_fields] for t in email_templates]),
+                )
+            zip_buf.seek(0)
+            ts = _user_local_now(owner).strftime("%Y%m%d_%H%M%S")
+            _audit_log(
+                s,
+                event="backup.export",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"rows:customers={len(customers)},invoices={len(invoices)},expenses={len(expenses)}",
+            )
+            s.commit()
+            return send_file(
+                zip_buf,
+                mimetype="application/zip",
+                as_attachment=True,
+                download_name=f"invoicerunner_backup_user_{uid}_{ts}.zip",
             )
 
     @app.get("/settings/invoice-builder")
@@ -8126,6 +9089,45 @@ def create_app():
         total_business_expenses = 0.0
 
         unpaid = []
+        now_utc = datetime.utcnow()
+        default_daily_month = now_utc.month if target_year == now_utc.year else 1
+        daily_month = target_month or default_daily_month
+        daily_month = max(1, min(12, daily_month))
+        days_in_daily_month = calendar.monthrange(target_year, daily_month)[1]
+
+        def _parse_date_from_datein(date_in: str, fallback_dt: datetime | None = None):
+            s = (date_in or "").strip()
+            if s:
+                for fmt in ("%m/%d/%Y", "%m-%d-%Y", "%Y-%m-%d", "%B %d, %Y", "%b %d, %Y"):
+                    try:
+                        return datetime.strptime(s, fmt)
+                    except Exception:
+                        pass
+            return fallback_dt or now_utc
+
+        monthly_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        monthly_invoiced = [0.0] * 12
+        monthly_paid_income = [0.0] * 12
+        monthly_expenses = [0.0] * 12
+        monthly_outstanding = [0.0] * 12
+
+        daily_labels = [str(d) for d in range(1, days_in_daily_month + 1)]
+        daily_invoiced = [0.0] * days_in_daily_month
+        daily_paid_income = [0.0] * days_in_daily_month
+        daily_expenses = [0.0] * days_in_daily_month
+        daily_outstanding = [0.0] * days_in_daily_month
+
+        year_candidates = {target_year}
+        yearly_agg = {}
+
+        def _ensure_year_bucket(y: int):
+            if y not in yearly_agg:
+                yearly_agg[y] = {
+                    "invoiced": 0.0,
+                    "paid_income": 0.0,
+                    "expenses": 0.0,
+                    "outstanding": 0.0,
+                }
 
         with db_session() as s:
             invs = (
@@ -8138,6 +9140,34 @@ def create_app():
             )
 
             for inv in invs:
+                inv_dt = _parse_date_from_datein(inv.date_in, inv.created_at)
+                inv_year = int(inv_dt.year)
+                inv_month = int(inv_dt.month)
+                inv_day = int(inv_dt.day)
+                year_candidates.add(inv_year)
+                _ensure_year_bucket(inv_year)
+
+                invoice_total = float(inv.invoice_total() or 0.0)
+                paid = float(inv.paid or 0.0)
+                recognized_income, late_fee_income = _paid_invoice_income_components(inv, eps=EPS)
+                fully_paid = recognized_income > 0.0
+                outstanding_amount = 0.0 if fully_paid else max(0.0, invoice_total - paid)
+
+                yearly_agg[inv_year]["invoiced"] += invoice_total
+                yearly_agg[inv_year]["paid_income"] += recognized_income
+                yearly_agg[inv_year]["outstanding"] += outstanding_amount
+
+                if inv_year == target_year:
+                    idx = max(0, min(11, inv_month - 1))
+                    monthly_invoiced[idx] += invoice_total
+                    monthly_paid_income[idx] += recognized_income
+                    monthly_outstanding[idx] += outstanding_amount
+                if inv_year == target_year and inv_month == daily_month:
+                    didx = max(0, min(days_in_daily_month - 1, inv_day - 1))
+                    daily_invoiced[didx] += invoice_total
+                    daily_paid_income[didx] += recognized_income
+                    daily_outstanding[didx] += outstanding_amount
+
                 yr = _parse_year_from_datein(inv.date_in)
                 if yr != target_year:
                     continue
@@ -8189,7 +9219,43 @@ def create_app():
             expense_rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
             total_business_expenses = sum(float(r["amount"] or 0.0) for r in expense_rows)
 
+            expense_entries = (
+                s.query(BusinessExpenseEntry.created_at, BusinessExpenseEntry.amount)
+                .filter(BusinessExpenseEntry.user_id == uid)
+                .all()
+            )
+            for created_at, amount in expense_entries:
+                if not created_at:
+                    continue
+                y = int(created_at.year)
+                m = int(created_at.month)
+                d = int(created_at.day)
+                val = float(amount or 0.0)
+                year_candidates.add(y)
+                _ensure_year_bucket(y)
+                yearly_agg[y]["expenses"] += val
+                if y == target_year:
+                    midx = max(0, min(11, m - 1))
+                    monthly_expenses[midx] += val
+                    if m == daily_month:
+                        didx = max(0, min(days_in_daily_month - 1, d - 1))
+                        daily_expenses[didx] += val
+
         profit_paid_labor_only = total_labor_raw - labor_unpaid_raw
+
+        year_list = sorted(year_candidates)
+        if not year_list:
+            year_list = [target_year]
+        if len(year_list) > 7:
+            year_list = year_list[-7:]
+        yearly_labels = [str(y) for y in year_list]
+        yearly_invoiced = [float(yearly_agg.get(y, {}).get("invoiced", 0.0)) for y in year_list]
+        yearly_paid_income = [float(yearly_agg.get(y, {}).get("paid_income", 0.0)) for y in year_list]
+        yearly_expenses = [float(yearly_agg.get(y, {}).get("expenses", 0.0)) for y in year_list]
+        yearly_outstanding = [float(yearly_agg.get(y, {}).get("outstanding", 0.0)) for y in year_list]
+
+        expense_breakdown_labels = [str(r.get("label") or "Other") for r in expense_rows if float(r.get("amount") or 0.0) > 0.0]
+        expense_breakdown_values = [float(r.get("amount") or 0.0) for r in expense_rows if float(r.get("amount") or 0.0) > 0.0]
 
         context = {
             "year": year_text,
@@ -8209,6 +9275,37 @@ def create_app():
             "profit_paid_labor_only": profit_paid_labor_only,
             "total_business_expenses": total_business_expenses,
             "unpaid": unpaid,
+            "chart_data": {
+                "daily": {
+                    "labels": daily_labels,
+                    "invoiced": [round(v, 2) for v in daily_invoiced],
+                    "paid_income": [round(v, 2) for v in daily_paid_income],
+                    "expenses": [round(v, 2) for v in daily_expenses],
+                    "outstanding": [round(v, 2) for v in daily_outstanding],
+                    "scope_label": f'{monthly_labels[daily_month - 1]} {target_year}',
+                },
+                "monthly": {
+                    "labels": monthly_labels,
+                    "invoiced": [round(v, 2) for v in monthly_invoiced],
+                    "paid_income": [round(v, 2) for v in monthly_paid_income],
+                    "expenses": [round(v, 2) for v in monthly_expenses],
+                    "outstanding": [round(v, 2) for v in monthly_outstanding],
+                    "scope_label": str(target_year),
+                },
+                "yearly": {
+                    "labels": yearly_labels,
+                    "invoiced": [round(v, 2) for v in yearly_invoiced],
+                    "paid_income": [round(v, 2) for v in yearly_paid_income],
+                    "expenses": [round(v, 2) for v in yearly_expenses],
+                    "outstanding": [round(v, 2) for v in yearly_outstanding],
+                    "scope_label": f"{yearly_labels[0]}-{yearly_labels[-1]}" if yearly_labels else str(target_year),
+                },
+                "expense_breakdown": {
+                    "labels": expense_breakdown_labels,
+                    "values": [round(v, 2) for v in expense_breakdown_values],
+                    "scope_label": _summary_period_label(str(target_month) if target_month else "", year_text),
+                },
+            },
             "money": _money,
         }
         return render_template("year_summary.html", **context)
