@@ -5607,6 +5607,7 @@ def create_app():
             flash("Pro plan is not configured yet.", "error")
             return redirect(url_for("billing"))
 
+        base = _base_url()
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
             if not u:
@@ -5614,6 +5615,7 @@ def create_app():
             status = (getattr(u, "subscription_status", None) or "").strip().lower()
             tier = _normalize_plan_tier(getattr(u, "subscription_tier", None))
             sub_id = (getattr(u, "stripe_subscription_id", None) or "").strip()
+            cust_id = (getattr(u, "stripe_customer_id", None) or "").strip()
 
             if tier == "pro" and status in ("trialing", "active", "past_due"):
                 flash("Your account is already on Pro.", "info")
@@ -5623,6 +5625,9 @@ def create_app():
                 return redirect(url_for("billing"))
             if not sub_id:
                 flash("Subscription record not found. Open billing portal to manage plan.", "error")
+                return redirect(url_for("billing"))
+            if not cust_id:
+                flash("Billing profile missing. Open billing portal to refresh your account.", "error")
                 return redirect(url_for("billing"))
 
             try:
@@ -5636,19 +5641,54 @@ def create_app():
                     flash("Subscription item is missing. Open billing portal to manage plan.", "error")
                     return redirect(url_for("billing"))
 
-                updated = stripe.Subscription.modify(
-                    sub_id,
-                    cancel_at_period_end=False,
-                    proration_behavior="create_prorations",
-                    items=[{"id": item_id, "price": STRIPE_PRICE_ID_PRO}],
-                    metadata={"plan_tier": "pro"},
+                # Stripe-hosted confirmation step: user must confirm the plan change in Stripe.
+                try:
+                    portal = stripe.billing_portal.Session.create(
+                        customer=cust_id,
+                        return_url=f"{base}{url_for('billing')}",
+                        flow_data={
+                            "type": "subscription_update_confirm",
+                            "after_completion": {
+                                "type": "redirect",
+                                "redirect": {"return_url": f"{base}{url_for('billing_success')}"},
+                            },
+                            "subscription_update_confirm": {
+                                "subscription": sub_id,
+                                "items": [{"id": item_id, "price": STRIPE_PRICE_ID_PRO}],
+                                "proration_behavior": "create_prorations",
+                            },
+                        },
+                    )
+                except Exception:
+                    # Fallback to normal portal if account's portal config/API doesn't support confirm flow.
+                    portal = stripe.billing_portal.Session.create(
+                        customer=cust_id,
+                        return_url=f"{base}{url_for('billing')}",
+                    )
+                    flash("Confirm your Pro upgrade in Stripe Billing.", "info")
+
+                _audit_log(
+                    s,
+                    event="billing.upgrade_pro",
+                    result="success",
+                    user_id=u.id,
+                    username=u.username,
+                    email=u.email,
+                    details=f"stripe_portal_session={portal.get('id', '')}",
                 )
-                u.subscription_tier = "pro"
-                u.subscription_status = (updated.get("status") or status or "").lower() or u.subscription_status
                 s.commit()
-                flash("Plan upgraded to Pro.", "success")
-                return redirect(url_for("billing"))
+                return redirect(portal.url, code=303)
             except Exception as e:
+                _audit_log(
+                    s,
+                    event="billing.upgrade_pro",
+                    result="fail",
+                    user_id=u.id,
+                    username=u.username,
+                    email=u.email,
+                    details=f"stripe_upgrade_flow_failed:{type(e).__name__}",
+                )
+                s.commit()
                 flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
                 return redirect(url_for("billing"))
 
