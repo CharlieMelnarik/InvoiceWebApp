@@ -30,7 +30,7 @@
         </button>
       </form>
       {% if (tier or subscription_tier or "basic") == "basic" and pro_price_configured %}
-        <form method="post" action="{{ url_for('billing_upgrade_pro') }}" class="d-inline ms-2" onsubmit="return confirm('Are you sure you want to upgrade to Pro? You will be charged the prorated amount for the rest of the month now.');">
+        <form method="post" action="{{ url_for('billing_upgrade_pro') }}" class="d-inline ms-2">
           <button class="btn btn-success">
             Upgrade to Pro
           </button>
