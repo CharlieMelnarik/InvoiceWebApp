@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     Float,
     DateTime,
+    Date,
     ForeignKey,
     UniqueConstraint,
     select,
@@ -649,6 +650,7 @@ class BusinessExpenseEntry(Base):
     )
     item_desc: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    expense_date: Mapped[date] = mapped_column(Date, nullable=False, default=date.today)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     expense: Mapped["BusinessExpense"] = relationship(back_populates="entries")

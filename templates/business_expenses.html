@@ -70,7 +70,7 @@
           <form method="post" class="row g-2 align-items-end mb-1">
             <input type="hidden" name="action" value="add_entry">
             <input type="hidden" name="expense_id" value="{{ row.id }}">
-            <div class="col-8">
+            <div class="col-12 col-md-6">
               <label class="form-label small-muted mb-1">Item</label>
               <input
                 class="form-control form-control-sm expense-item-input"
@@ -79,9 +79,13 @@
                 required
               >
             </div>
-            <div class="col-4">
+            <div class="col-6 col-md-3">
               <label class="form-label small-muted mb-1">Amount ($)</label>
               <input class="form-control form-control-sm expense-item-input" name="item_amount" inputmode="decimal" placeholder="ex. 12.00" required>
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small-muted mb-1">Date (optional)</label>
+              <input class="form-control form-control-sm expense-item-input" type="date" name="item_date">
             </div>
             <div class="col-12 d-grid">
               <button class="btn btn-sm btn-primary" type="submit">Save Entry</button>

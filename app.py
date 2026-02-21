@@ -16,7 +16,7 @@ import json
 import urllib.parse
 import urllib.request
 from email.message import EmailMessage
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from pathlib import Path
 from functools import wraps
 from werkzeug.utils import secure_filename
@@ -336,6 +336,19 @@ def _parse_iso_dt(s: str) -> datetime:
         raise ValueError("Missing datetime")
     s = s.replace(" ", "T")
     return datetime.fromisoformat(s)
+
+
+def _parse_iso_date_or_today(s: str | None) -> date:
+    raw = (s or "").strip()
+    if not raw:
+        return datetime.utcnow().date()
+    try:
+        return date.fromisoformat(raw)
+    except Exception:
+        try:
+            return datetime.fromisoformat(raw).date()
+        except Exception:
+            return datetime.utcnow().date()
 
 
 def _parse_dt_local(s: str) -> datetime | None:
@@ -1126,17 +1139,25 @@ def _business_expense_breakdown_for_period(
 ) -> list[dict]:
     rows = _business_expense_rows(session, user_id, ensure_defaults=True)
     start_dt, end_dt = _expense_period_bounds(target_year, target_month)
+    start_date = start_dt.date()
+    end_date = end_dt.date()
     entry_rows = (
-        session.query(BusinessExpenseEntry.expense_id, BusinessExpenseEntry.amount)
-        .filter(
-            BusinessExpenseEntry.user_id == user_id,
-            BusinessExpenseEntry.created_at >= start_dt,
-            BusinessExpenseEntry.created_at < end_dt,
+        session.query(
+            BusinessExpenseEntry.expense_id,
+            BusinessExpenseEntry.amount,
+            BusinessExpenseEntry.expense_date,
+            BusinessExpenseEntry.created_at,
         )
+        .filter(BusinessExpenseEntry.user_id == user_id)
         .all()
     )
     totals_by_expense_id = {}
-    for exp_id, amount in entry_rows:
+    for exp_id, amount, expense_date, created_at in entry_rows:
+        effective_date = expense_date or (created_at.date() if created_at else None)
+        if not effective_date:
+            continue
+        if not (start_date <= effective_date < end_date):
+            continue
         totals_by_expense_id[int(exp_id)] = float(totals_by_expense_id.get(int(exp_id), 0.0)) + float(amount or 0.0)
     out = []
     for row in rows:
@@ -3051,6 +3072,43 @@ def _migrate_invoice_created_by(engine):
         pass
 
 
+def _migrate_business_expense_entry_date(engine):
+    if not _table_exists(engine, "business_expense_entries"):
+        return
+    if not _column_exists(engine, "business_expense_entries", "expense_date"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE business_expense_entries ADD COLUMN expense_date DATE"))
+    try:
+        with engine.begin() as conn:
+            # Postgres path.
+            conn.execute(text(
+                "UPDATE business_expense_entries "
+                "SET expense_date = CAST(created_at AS DATE) "
+                "WHERE expense_date IS NULL AND created_at IS NOT NULL"
+            ))
+            conn.execute(text(
+                "UPDATE business_expense_entries "
+                "SET expense_date = CURRENT_DATE "
+                "WHERE expense_date IS NULL"
+            ))
+    except Exception:
+        # SQLite fallback.
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE business_expense_entries "
+                    "SET expense_date = date(created_at) "
+                    "WHERE expense_date IS NULL AND created_at IS NOT NULL"
+                ))
+                conn.execute(text(
+                    "UPDATE business_expense_entries "
+                    "SET expense_date = date('now') "
+                    "WHERE expense_date IS NULL"
+                ))
+        except Exception:
+            pass
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -3119,6 +3177,7 @@ def create_app():
     _migrate_schedule_event_created_by(engine)
     _migrate_customer_schedule_fields(engine)
     _migrate_customer_address_fields(engine)
+    _migrate_business_expense_entry_date(engine)
 
     SessionLocal = make_session_factory(engine)
 
@@ -4184,6 +4243,18 @@ def create_app():
                         except Exception:
                             return None
 
+                    def _csv_date(v):
+                        raw = (v or "").strip()
+                        if not raw:
+                            return None
+                        try:
+                            return date.fromisoformat(raw)
+                        except Exception:
+                            try:
+                                return datetime.fromisoformat(raw).date()
+                            except Exception:
+                                return None
+
                     def _csv_str(v):
                         raw = (v or "").strip()
                         return raw or None
@@ -4534,6 +4605,10 @@ def create_app():
                             user_id=u.id,
                             item_desc=(row.get("item_desc") or "").strip(),
                             amount=_csv_float(row.get("amount"), 0.0) or 0.0,
+                            expense_date=(
+                                _csv_date(row.get("expense_date"))
+                                or (_csv_dt(row.get("created_at")) or datetime.utcnow()).date()
+                            ),
                             created_at=_csv_dt(row.get("created_at")) or datetime.utcnow(),
                         )
                         s.add(ent)
@@ -5443,7 +5518,7 @@ def create_app():
             part_fields = ["id", "invoice_id", "part_name", "part_price"]
             labor_fields = ["id", "invoice_id", "labor_desc", "labor_time_hours"]
             expense_fields = ["id", "user_id", "label", "amount", "is_custom", "sort_order", "created_at", "updated_at"]
-            entry_fields = ["id", "expense_id", "user_id", "item_desc", "amount", "created_at"]
+            entry_fields = ["id", "expense_id", "user_id", "item_desc", "amount", "expense_date", "created_at"]
             split_fields = ["id", "entry_id", "user_id", "item_desc", "amount", "created_at"]
             schedule_fields = [
                 "id", "user_id", "created_by_user_id", "customer_id", "invoice_id", "title", "notes",
@@ -9250,16 +9325,17 @@ def create_app():
             total_business_expenses = sum(float(r["amount"] or 0.0) for r in expense_rows)
 
             expense_entries = (
-                s.query(BusinessExpenseEntry.created_at, BusinessExpenseEntry.amount)
+                s.query(BusinessExpenseEntry.expense_date, BusinessExpenseEntry.created_at, BusinessExpenseEntry.amount)
                 .filter(BusinessExpenseEntry.user_id == uid)
                 .all()
             )
-            for created_at, amount in expense_entries:
-                if not created_at:
+            for expense_date, created_at, amount in expense_entries:
+                effective_date = expense_date or (created_at.date() if created_at else None)
+                if not effective_date:
                     continue
-                y = int(created_at.year)
-                m = int(created_at.month)
-                d = int(created_at.day)
+                y = int(effective_date.year)
+                m = int(effective_date.month)
+                d = int(effective_date.day)
                 val = float(amount or 0.0)
                 year_candidates.add(y)
                 _ensure_year_bucket(y)
@@ -9357,6 +9433,7 @@ def create_app():
                     expense_id_raw = (request.form.get("expense_id") or "").strip()
                     item_desc = (request.form.get("item_desc") or "").strip()
                     item_amount_raw = (request.form.get("item_amount") or "").strip()
+                    item_date_raw = (request.form.get("item_date") or "").strip()
                     if not expense_id_raw.isdigit():
                         flash("Invalid expense category.", "error")
                         return redirect(url_for("business_expenses"))
@@ -9373,12 +9450,14 @@ def create_app():
                         return redirect(url_for("business_expenses"))
 
                     item_amount = _to_float(item_amount_raw, 0.0)
+                    item_date = _parse_iso_date_or_today(item_date_raw)
                     s.add(
                         BusinessExpenseEntry(
                             expense_id=exp.id,
                             user_id=uid,
                             item_desc=item_desc[:200],
                             amount=item_amount,
+                            expense_date=item_date,
                         )
                     )
                     _recalc_business_expense_amount(s, exp.id)
@@ -9477,10 +9556,40 @@ def create_app():
             entries = (
                 s.query(BusinessExpenseEntry)
                 .filter(BusinessExpenseEntry.expense_id == exp.id, BusinessExpenseEntry.user_id == uid)
-                .order_by(BusinessExpenseEntry.created_at.desc(), BusinessExpenseEntry.id.desc())
+                .order_by(BusinessExpenseEntry.expense_date.desc(), BusinessExpenseEntry.id.desc())
                 .all()
             )
             return render_template("business_expense_category.html", exp=exp, entries=entries)
+
+    @app.post("/business-expenses/<int:expense_id>/entries/<int:entry_id>/date")
+    @login_required
+    @subscription_required
+    def business_expense_entry_update_date(expense_id: int, entry_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            exp = (
+                s.query(BusinessExpense)
+                .filter(BusinessExpense.id == expense_id, BusinessExpense.user_id == uid)
+                .first()
+            )
+            if not exp:
+                abort(404)
+            entry = (
+                s.query(BusinessExpenseEntry)
+                .filter(
+                    BusinessExpenseEntry.id == entry_id,
+                    BusinessExpenseEntry.expense_id == expense_id,
+                    BusinessExpenseEntry.user_id == uid,
+                )
+                .first()
+            )
+            if not entry:
+                flash("Expense entry not found.", "error")
+                return redirect(url_for("business_expense_category", expense_id=expense_id))
+            entry.expense_date = _parse_iso_date_or_today(request.form.get("expense_date"))
+            s.commit()
+            flash("Expense date updated.", "success")
+            return redirect(url_for("business_expense_category", expense_id=expense_id))
 
     @app.post("/business-expenses/<int:expense_id>/entries/<int:entry_id>/delete")
     @login_required
@@ -10159,6 +10268,7 @@ def create_app():
                             user_id=uid,
                             item_desc=(it["item_desc"] or "")[:200],
                             amount=float(it["amount"] or 0.0),
+                            expense_date=datetime.utcnow().date(),
                         )
                     )
                     touched_expense_ids.add(cat_id)
