@@ -7,6 +7,7 @@ import io
 import math
 import html
 import csv
+import hashlib
 import calendar
 import zipfile
 import smtplib
@@ -2871,6 +2872,70 @@ def _migrate_user_security_fields(engine):
             conn.execute(text("UPDATE users SET password_reset_required = FALSE WHERE password_reset_required IS NULL"))
 
 
+def _migrate_user_referral_fields(engine):
+    if not _table_exists(engine, "users"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "users", "referral_code"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_code VARCHAR(32)")
+    if not _column_exists(engine, "users", "referred_by_user_id"):
+        stmts.append("ALTER TABLE users ADD COLUMN referred_by_user_id INTEGER")
+    if not _column_exists(engine, "users", "referred_by_code"):
+        stmts.append("ALTER TABLE users ADD COLUMN referred_by_code VARCHAR(32)")
+    if not _column_exists(engine, "users", "referred_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN referred_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "signup_ip"):
+        stmts.append("ALTER TABLE users ADD COLUMN signup_ip VARCHAR(64)")
+    if not _column_exists(engine, "users", "signup_user_agent_hash"):
+        stmts.append("ALTER TABLE users ADD COLUMN signup_user_agent_hash VARCHAR(64)")
+    if not _column_exists(engine, "users", "first_paid_card_fingerprint"):
+        stmts.append("ALTER TABLE users ADD COLUMN first_paid_card_fingerprint VARCHAR(128)")
+    if not _column_exists(engine, "users", "referral_first_paid_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_first_paid_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "referral_reward_granted_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_reward_granted_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "referral_reward_amount_cents"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_reward_amount_cents INTEGER")
+    if not _column_exists(engine, "users", "referral_reward_blocked_reason"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_reward_blocked_reason VARCHAR(255)")
+    if not _column_exists(engine, "users", "referral_credit_cents_pending"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_credit_cents_pending INTEGER")
+    if not _column_exists(engine, "users", "referral_credit_cents_earned_total"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_credit_cents_earned_total INTEGER")
+    if not _column_exists(engine, "users", "referral_credit_cents_applied_total"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_credit_cents_applied_total INTEGER")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE users SET referral_reward_amount_cents = 0 WHERE referral_reward_amount_cents IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET referral_credit_cents_pending = 0 WHERE referral_credit_cents_pending IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET referral_credit_cents_earned_total = 0 WHERE referral_credit_cents_earned_total IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET referral_credit_cents_applied_total = 0 WHERE referral_credit_cents_applied_total IS NULL"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS users_referred_by_idx ON users (referred_by_user_id)"
+            ))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_unique "
+                "ON users (LOWER(referral_code)) WHERE referral_code IS NOT NULL"
+            ))
+    except Exception:
+        pass
+
+
 def _migrate_customers(engine):
     if not _table_exists(engine, "invoices"):
         return
@@ -3189,6 +3254,7 @@ def create_app():
     _migrate_user_billing_fields(engine)
     _migrate_user_employee_fields(engine)
     _migrate_user_security_fields(engine)
+    _migrate_user_referral_fields(engine)
     _migrate_customers(engine)
     _migrate_customers_unique_name_ci(engine)
     _migrate_invoice_customer_id(engine)
@@ -3546,10 +3612,110 @@ def create_app():
     STRIPE_PRICE_ID_PRO = app.config.get("STRIPE_PRICE_ID_PRO") or os.getenv("STRIPE_PRICE_ID_PRO")
     STRIPE_PUBLISHABLE_KEY = app.config.get("STRIPE_PUBLISHABLE_KEY") or os.getenv("STRIPE_PUBLISHABLE_KEY")
     STRIPE_WEBHOOK_SECRET = app.config.get("STRIPE_WEBHOOK_SECRET") or os.getenv("STRIPE_WEBHOOK_SECRET")
+    REFERRAL_MIN_ACTIVE_DAYS = int(os.getenv("REFERRAL_MIN_ACTIVE_DAYS", "14"))
+    REFERRAL_MAX_CREDITS_PER_YEAR = int(os.getenv("REFERRAL_MAX_CREDITS_PER_YEAR", "12"))
+    REFERRAL_CREDIT_BASIC_CENTS = int(os.getenv("REFERRAL_CREDIT_BASIC_CENTS", "999"))
+    REFERRAL_CREDIT_PRO_CENTS = int(os.getenv("REFERRAL_CREDIT_PRO_CENTS", "2499"))
 
     def _base_url():
         base = (current_app.config.get("APP_BASE_URL") or "").rstrip("/")
         return base or request.host_url.rstrip("/")
+
+    def _normalize_referral_code(raw: str | None) -> str:
+        code = re.sub(r"[^A-Za-z0-9]", "", (raw or "").strip().upper())
+        return code[:32]
+
+    def _signup_user_agent_hash() -> str | None:
+        ua = (request.headers.get("User-Agent") or "").strip()
+        if not ua:
+            return None
+        return hashlib.sha256(ua.encode("utf-8")).hexdigest()[:64]
+
+    def _generate_unique_referral_code(session) -> str:
+        for _ in range(50):
+            code = uuid.uuid4().hex[:8].upper()
+            exists = (
+                session.query(User.id)
+                .filter(text("lower(referral_code) = :c"))
+                .params(c=code.lower())
+                .first()
+            )
+            if not exists:
+                return code
+        return uuid.uuid4().hex[:10].upper()
+
+    def _ensure_referral_code(session, user: User | None) -> str:
+        if not user:
+            return ""
+        code = _normalize_referral_code(getattr(user, "referral_code", None))
+        if code:
+            user.referral_code = code
+            return code
+        code = _generate_unique_referral_code(session)
+        user.referral_code = code
+        return code
+
+    def _credit_amount_for_tier(tier: str) -> int:
+        return REFERRAL_CREDIT_PRO_CENTS if _normalize_plan_tier(tier) == "pro" else REFERRAL_CREDIT_BASIC_CENTS
+
+    def _apply_customer_balance_credit(customer_id: str, amount_cents: int, *, reason: str, metadata: dict | None = None) -> bool:
+        cid = (customer_id or "").strip()
+        cents = int(amount_cents or 0)
+        if not cid or cents <= 0:
+            return False
+        try:
+            # Negative amount credits the customer and reduces a future invoice.
+            stripe.Customer.create_balance_transaction(
+                cid,
+                amount=-cents,
+                currency="usd",
+                description=reason[:200],
+                metadata=(metadata or {}),
+            )
+            return True
+        except Exception as exc:
+            print(f"[REFERRAL] balance credit failed customer={cid}: {exc!r}", flush=True)
+            return False
+
+    def _apply_pending_referral_credit_for_user(session, user: User | None) -> int:
+        if not user:
+            return 0
+        pending = int(getattr(user, "referral_credit_cents_pending", 0) or 0)
+        cust_id = (getattr(user, "stripe_customer_id", None) or "").strip()
+        if pending <= 0 or not cust_id:
+            return 0
+        ok = _apply_customer_balance_credit(
+            cust_id,
+            pending,
+            reason="InvoiceRunner referral credit",
+            metadata={"type": "referral_pending_credit", "app_user_id": str(user.id)},
+        )
+        if not ok:
+            return 0
+        user.referral_credit_cents_pending = 0
+        user.referral_credit_cents_applied_total = int(getattr(user, "referral_credit_cents_applied_total", 0) or 0) + pending
+        return pending
+
+    def _extract_card_fingerprint_from_invoice_paid_obj(invoice_obj: dict) -> str:
+        try:
+            charge_id = (invoice_obj.get("charge") or "").strip()
+            if charge_id:
+                ch = stripe.Charge.retrieve(charge_id)
+                fp = (((ch.get("payment_method_details") or {}).get("card") or {}).get("fingerprint") or "").strip()
+                if fp:
+                    return fp[:128]
+            pi_id = (invoice_obj.get("payment_intent") or "").strip()
+            if pi_id:
+                pi = stripe.PaymentIntent.retrieve(pi_id)
+                latest_charge = (pi.get("latest_charge") or "").strip()
+                if latest_charge:
+                    ch = stripe.Charge.retrieve(latest_charge)
+                    fp = (((ch.get("payment_method_details") or {}).get("card") or {}).get("fingerprint") or "").strip()
+                    if fp:
+                        return fp[:128]
+        except Exception as exc:
+            print(f"[REFERRAL] card fingerprint extract failed: {exc!r}", flush=True)
+        return ""
 
     # -----------------------------
     # Auth routes
@@ -3649,6 +3815,14 @@ def create_app():
         if current_user.is_authenticated:
             return redirect(url_for("customers_list"))
         turnstile_site_key = _turnstile_site_key()
+        referral_code_prefill = _normalize_referral_code(request.args.get("ref") or request.form.get("referral_code") or "")
+
+        def _render_register():
+            return render_template(
+                "register.html",
+                turnstile_site_key=turnstile_site_key,
+                referral_code=referral_code_prefill,
+            )
 
         if request.method == "POST":
             username = (request.form.get("username") or "").strip()
@@ -3670,35 +3844,35 @@ def create_app():
                         )
                         s.commit()
                     flash("Captcha verification failed. Please try again.", "error")
-                    return render_template("register.html", turnstile_site_key=turnstile_site_key)
+                    return _render_register()
 
             if not username or len(username) < 3:
                 with db_session() as s:
                     _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="invalid_username")
                     s.commit()
                 flash("Username must be at least 3 characters.", "error")
-                return render_template("register.html", turnstile_site_key=turnstile_site_key)
+                return _render_register()
 
             if not _looks_like_email(email):
                 with db_session() as s:
                     _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="invalid_email")
                     s.commit()
                 flash("A valid email address is required.", "error")
-                return render_template("register.html", turnstile_site_key=turnstile_site_key)
+                return _render_register()
 
             if not password or len(password) < 6:
                 with db_session() as s:
                     _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="short_password")
                     s.commit()
                 flash("Password must be at least 6 characters.", "error")
-                return render_template("register.html", turnstile_site_key=turnstile_site_key)
+                return _render_register()
 
             if password != confirm:
                 with db_session() as s:
                     _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="password_mismatch")
                     s.commit()
                 flash("Passwords do not match.", "error")
-                return render_template("register.html", turnstile_site_key=turnstile_site_key)
+                return _render_register()
 
             with db_session() as s:
                 taken_user = s.query(User).filter(User.username == username).first()
@@ -3706,7 +3880,7 @@ def create_app():
                     _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="username_taken")
                     s.commit()
                     flash("That username is already taken.", "error")
-                    return render_template("register.html", turnstile_site_key=turnstile_site_key)
+                    return _render_register()
 
                 taken_email = (
                     s.query(User)
@@ -3719,18 +3893,51 @@ def create_app():
                     _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="email_taken")
                     s.commit()
                     flash("That email is already registered to another main account.", "error")
-                    return render_template("register.html", turnstile_site_key=turnstile_site_key)
+                    return _render_register()
 
-                u = User(username=username, email=email, password_hash=generate_password_hash(password))
+                referrer = None
+                if referral_code_prefill:
+                    referrer = (
+                        s.query(User)
+                        .filter(User.is_employee.is_(False))
+                        .filter(text("lower(referral_code) = :code"))
+                        .params(code=referral_code_prefill.lower())
+                        .first()
+                    )
+                    if not referrer:
+                        flash("Referral code not found. You can still create your account.", "info")
+                        referral_code_prefill = ""
+
+                signup_ip = _client_ip()
+                signup_ua_hash = _signup_user_agent_hash()
+                referred_by_id = None
+                referred_by_code = None
+                referred_at = None
+                if referrer and (referrer.email or "").strip().lower() != email:
+                    referred_by_id = int(referrer.id)
+                    referred_by_code = referral_code_prefill
+                    referred_at = datetime.utcnow()
+
+                u = User(
+                    username=username,
+                    email=email,
+                    password_hash=generate_password_hash(password),
+                    signup_ip=signup_ip,
+                    signup_user_agent_hash=signup_ua_hash,
+                    referred_by_user_id=referred_by_id,
+                    referred_by_code=referred_by_code,
+                    referred_at=referred_at,
+                )
                 s.add(u)
                 s.flush()
+                _ensure_referral_code(s, u)
                 _audit_log(s, event="auth.register", result="success", user_id=u.id, username=u.username, email=u.email)
                 s.commit()
 
                 login_user(AppUser(u.id, u.username, scope_user_id=u.id, is_employee=False))
                 return redirect(url_for("customers_list"))
 
-        return render_template("register.html", turnstile_site_key=turnstile_site_key)
+        return _render_register()
 
     @app.route("/forgot-password", methods=["GET", "POST"])
     def forgot_password():
@@ -6448,6 +6655,14 @@ def create_app():
         connect_charges_enabled = False
         connect_payouts_enabled = False
         connect_details_submitted = False
+        referral_code = ""
+        referral_link = ""
+        referral_pending_count = 0
+        referral_confirmed_count = 0
+        referral_blocked_count = 0
+        referral_credit_pending_cents = 0
+        referral_credit_earned_cents = 0
+        referral_credit_applied_cents = 0
 
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
@@ -6463,6 +6678,37 @@ def create_app():
                 connect_charges_enabled = bool(getattr(u, "stripe_connect_charges_enabled", False))
                 connect_payouts_enabled = bool(getattr(u, "stripe_connect_payouts_enabled", False))
                 connect_details_submitted = bool(getattr(u, "stripe_connect_details_submitted", False))
+                referral_code = _ensure_referral_code(s, u)
+                referral_link = f"{_base_url()}{url_for('register')}?ref={referral_code}"
+                referral_pending_count = (
+                    s.query(User.id)
+                    .filter(
+                        User.referred_by_user_id == u.id,
+                        User.referred_at.isnot(None),
+                        User.referral_reward_granted_at.is_(None),
+                        User.referral_reward_blocked_reason.is_(None),
+                    )
+                    .count()
+                )
+                referral_confirmed_count = (
+                    s.query(User.id)
+                    .filter(
+                        User.referred_by_user_id == u.id,
+                        User.referral_reward_granted_at.isnot(None),
+                    )
+                    .count()
+                )
+                referral_blocked_count = (
+                    s.query(User.id)
+                    .filter(
+                        User.referred_by_user_id == u.id,
+                        User.referral_reward_blocked_reason.isnot(None),
+                    )
+                    .count()
+                )
+                referral_credit_pending_cents = int(getattr(u, "referral_credit_cents_pending", 0) or 0)
+                referral_credit_earned_cents = int(getattr(u, "referral_credit_cents_earned_total", 0) or 0)
+                referral_credit_applied_cents = int(getattr(u, "referral_credit_cents_applied_total", 0) or 0)
 
         return render_template(
             "billing.html",
@@ -6480,6 +6726,14 @@ def create_app():
             connect_details_submitted=connect_details_submitted,
             connect_ready=connect_ok,
             connect_message=connect_message,
+            referral_code=referral_code,
+            referral_link=referral_link,
+            referral_pending_count=referral_pending_count,
+            referral_confirmed_count=referral_confirmed_count,
+            referral_blocked_count=referral_blocked_count,
+            referral_credit_pending_cents=referral_credit_pending_cents,
+            referral_credit_earned_cents=referral_credit_earned_cents,
+            referral_credit_applied_cents=referral_credit_applied_cents,
         )
 
     @app.route("/billing/checkout", methods=["POST"])
@@ -6572,6 +6826,19 @@ def create_app():
                     s.commit()
                     flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
                     return redirect(url_for("billing"))
+
+            applied_pending_cents = _apply_pending_referral_credit_for_user(s, u)
+            if applied_pending_cents > 0:
+                _audit_log(
+                    s,
+                    event="billing.referral_credit_apply",
+                    result="success",
+                    user_id=u.id,
+                    username=u.username,
+                    email=u.email,
+                    details=f"applied_cents={applied_pending_cents}",
+                )
+                s.commit()
 
             subscription_data = {"metadata": {"plan_tier": plan_tier}}
             trial_used_for_plan = bool(
@@ -7133,6 +7400,133 @@ def create_app():
                             u.trial_used_at = now_utc
 
                     s.commit()
+
+            elif etype == "invoice.paid":
+                sub_id = (obj.get("subscription") or "").strip()
+                cust_id = (obj.get("customer") or "").strip()
+                paid_total = int(obj.get("amount_paid") or 0)
+                if paid_total <= 0:
+                    s.commit()
+                    return ("ok", 200)
+
+                u = None
+                if sub_id:
+                    u = s.query(User).filter(User.stripe_subscription_id == sub_id).first()
+                if not u and cust_id:
+                    u = s.query(User).filter(User.stripe_customer_id == cust_id).first()
+                if not u:
+                    s.commit()
+                    return ("ok", 200)
+                if bool(getattr(u, "is_employee", False)):
+                    s.commit()
+                    return ("ok", 200)
+
+                now_utc = datetime.utcnow()
+                card_fingerprint = _extract_card_fingerprint_from_invoice_paid_obj(obj)
+                if card_fingerprint and not (getattr(u, "first_paid_card_fingerprint", None) or "").strip():
+                    u.first_paid_card_fingerprint = card_fingerprint
+
+                if not getattr(u, "referral_first_paid_at", None):
+                    u.referral_first_paid_at = now_utc
+
+                referrer_id = int(getattr(u, "referred_by_user_id", 0) or 0)
+                if (
+                    referrer_id > 0
+                    and not getattr(u, "referral_reward_granted_at", None)
+                    and not (getattr(u, "referral_reward_blocked_reason", None) or "").strip()
+                ):
+                    referrer = s.get(User, referrer_id)
+                    block_reason = None
+                    if not referrer or bool(getattr(referrer, "is_employee", False)):
+                        block_reason = "invalid_referrer"
+                    elif int(referrer.id) == int(u.id):
+                        block_reason = "self_referral"
+                    elif (getattr(u, "email", None) or "").strip().lower() == (getattr(referrer, "email", None) or "").strip().lower():
+                        block_reason = "same_email"
+                    elif (
+                        (getattr(u, "signup_ip", None) or "").strip()
+                        and (getattr(referrer, "signup_ip", None) or "").strip()
+                        and (getattr(u, "signup_ip", None) or "").strip() == (getattr(referrer, "signup_ip", None) or "").strip()
+                    ):
+                        block_reason = "same_signup_ip"
+                    elif (
+                        (getattr(u, "signup_user_agent_hash", None) or "").strip()
+                        and (getattr(referrer, "signup_user_agent_hash", None) or "").strip()
+                        and (getattr(u, "signup_user_agent_hash", None) or "").strip()
+                        == (getattr(referrer, "signup_user_agent_hash", None) or "").strip()
+                    ):
+                        block_reason = "same_signup_device"
+                    elif (
+                        card_fingerprint
+                        and (getattr(referrer, "first_paid_card_fingerprint", None) or "").strip()
+                        and card_fingerprint == (getattr(referrer, "first_paid_card_fingerprint", None) or "").strip()
+                    ):
+                        block_reason = "same_payment_card"
+                    elif getattr(u, "referred_at", None) and now_utc < (u.referred_at + timedelta(days=max(0, REFERRAL_MIN_ACTIVE_DAYS))):
+                        # Keep pending until min active period is reached; do not block permanently.
+                        block_reason = None
+                    else:
+                        start_year = datetime(now_utc.year, 1, 1)
+                        end_year = datetime(now_utc.year + 1, 1, 1)
+                        yearly_grants = (
+                            s.query(User.id)
+                            .filter(
+                                User.referred_by_user_id == referrer.id,
+                                User.referral_reward_granted_at >= start_year,
+                                User.referral_reward_granted_at < end_year,
+                            )
+                            .count()
+                        )
+                        if yearly_grants >= max(1, REFERRAL_MAX_CREDITS_PER_YEAR):
+                            block_reason = "referrer_yearly_cap_reached"
+
+                    if block_reason:
+                        u.referral_reward_blocked_reason = block_reason[:255]
+                    else:
+                        min_days_ok = True
+                        if getattr(u, "referred_at", None):
+                            min_days_ok = now_utc >= (u.referred_at + timedelta(days=max(0, REFERRAL_MIN_ACTIVE_DAYS)))
+                        if min_days_ok:
+                            credit_cents = _credit_amount_for_tier(_normalize_plan_tier(getattr(u, "subscription_tier", None)))
+                            credit_cents = max(0, int(credit_cents))
+                            if credit_cents > 0 and referrer:
+                                referrer.referral_credit_cents_earned_total = int(
+                                    getattr(referrer, "referral_credit_cents_earned_total", 0) or 0
+                                ) + credit_cents
+                                applied = 0
+                                if (getattr(referrer, "stripe_customer_id", None) or "").strip():
+                                    if _apply_customer_balance_credit(
+                                        (referrer.stripe_customer_id or "").strip(),
+                                        credit_cents,
+                                        reason="InvoiceRunner referral reward",
+                                        metadata={"referrer_user_id": str(referrer.id), "referred_user_id": str(u.id)},
+                                    ):
+                                        applied = credit_cents
+                                if applied > 0:
+                                    referrer.referral_credit_cents_applied_total = int(
+                                        getattr(referrer, "referral_credit_cents_applied_total", 0) or 0
+                                    ) + applied
+                                else:
+                                    referrer.referral_credit_cents_pending = int(
+                                        getattr(referrer, "referral_credit_cents_pending", 0) or 0
+                                    ) + credit_cents
+
+                                u.referral_reward_granted_at = now_utc
+                                u.referral_reward_amount_cents = credit_cents
+                                _audit_log(
+                                    s,
+                                    event="referral.reward",
+                                    result="success",
+                                    user_id=referrer.id,
+                                    username=referrer.username,
+                                    email=referrer.email,
+                                    details=(
+                                        f"referred_user_id={u.id};credit_cents={credit_cents};"
+                                        f"applied={'yes' if applied > 0 else 'no'}"
+                                    ),
+                                )
+
+                s.commit()
 
             elif etype == "invoice.payment_failed":
                 cust = obj.get("customer")

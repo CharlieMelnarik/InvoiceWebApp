@@ -154,6 +154,22 @@ class User(Base):
     late_fee_percent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     late_fee_frequency_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
 
+    # Referral program
+    referral_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    referred_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    referred_by_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    referred_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    signup_ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    signup_user_agent_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    first_paid_card_fingerprint: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    referral_first_paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    referral_reward_granted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    referral_reward_amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    referral_reward_blocked_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    referral_credit_cents_pending: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    referral_credit_cents_earned_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    referral_credit_cents_applied_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

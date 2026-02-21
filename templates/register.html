@@ -10,6 +10,12 @@
         <p class="small-muted mb-3">Each user only sees their own invoices.</p>
 
         <form method="post">
+          {% if referral_code %}
+            <input type="hidden" name="referral_code" value="{{ referral_code }}">
+            <div class="alert alert-info py-2 small">
+              Referral code applied: <strong>{{ referral_code }}</strong>
+            </div>
+          {% endif %}
           <div class="mb-3">
             <label class="form-label req">Username</label>
             <input class="form-control" name="username" required />
@@ -57,4 +63,3 @@
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   {% endif %}
 {% endblock %}
-

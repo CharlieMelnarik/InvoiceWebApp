@@ -125,6 +125,56 @@
   </div>
 </div>
 
+<div class="card shadow-sm mt-3">
+  <div class="card-body">
+    <h5 class="mb-2">Referral Program</h5>
+    <p class="small-muted mb-3">
+      Share your referral link. When a referred user becomes a paid subscriber and stays active long enough,
+      you earn one month of account credit.
+    </p>
+    <div class="row g-3 align-items-end mb-2">
+      <div class="col-12 col-md-4">
+        <label class="form-label small-muted mb-1">Your Referral Code</label>
+        <input class="form-control form-control-sm mono" type="text" value="{{ referral_code or '' }}" readonly>
+      </div>
+      <div class="col-12 col-md-8">
+        <label class="form-label small-muted mb-1">Your Referral Link</label>
+        <div class="input-group input-group-sm">
+          <input id="referralLinkInput" class="form-control mono" type="text" value="{{ referral_link or '' }}" readonly>
+          <button class="btn btn-outline-secondary" type="button" id="copyReferralBtn">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-2 mt-1">
+      <div class="col-6 col-md-2">
+        <div class="small-muted">Pending</div>
+        <div class="fw-semibold">{{ referral_pending_count or 0 }}</div>
+      </div>
+      <div class="col-6 col-md-2">
+        <div class="small-muted">Confirmed</div>
+        <div class="fw-semibold">{{ referral_confirmed_count or 0 }}</div>
+      </div>
+      <div class="col-6 col-md-2">
+        <div class="small-muted">Blocked</div>
+        <div class="fw-semibold">{{ referral_blocked_count or 0 }}</div>
+      </div>
+      <div class="col-6 col-md-2">
+        <div class="small-muted">Earned</div>
+        <div class="fw-semibold">${{ '%.2f'|format((referral_credit_earned_cents or 0) / 100.0) }}</div>
+      </div>
+      <div class="col-6 col-md-2">
+        <div class="small-muted">Applied</div>
+        <div class="fw-semibold">${{ '%.2f'|format((referral_credit_applied_cents or 0) / 100.0) }}</div>
+      </div>
+      <div class="col-6 col-md-2">
+        <div class="small-muted">Pending Credit</div>
+        <div class="fw-semibold">${{ '%.2f'|format((referral_credit_pending_cents or 0) / 100.0) }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% if pro_features_enabled %}
   <div class="card shadow-sm mt-3">
     <div class="card-body">
@@ -193,6 +243,24 @@
         btn.innerHTML =
           '<span class="spinner-border spinner-border-sm btn-loading-spinner me-2" role="status" aria-hidden="true"></span>Loading...';
       });
+    });
+  })();
+  (function () {
+    const copyBtn = document.getElementById("copyReferralBtn");
+    const input = document.getElementById("referralLinkInput");
+    if (!copyBtn || !input) return;
+    copyBtn.addEventListener("click", async function () {
+      const val = (input.value || "").trim();
+      if (!val) return;
+      try {
+        await navigator.clipboard.writeText(val);
+        const old = copyBtn.textContent;
+        copyBtn.textContent = "Copied!";
+        setTimeout(() => { copyBtn.textContent = old; }, 1200);
+      } catch (_e) {
+        input.focus();
+        input.select();
+      }
     });
   })();
 </script>
