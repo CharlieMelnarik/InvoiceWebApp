@@ -3182,45 +3182,59 @@ def create_app():
         link invoice.customer_id to that customer.
         """
         with db_session() as s:
-            invs = (
-                s.query(Invoice)
+            inv_rows = (
+                s.query(Invoice.id, Invoice.user_id, Invoice.name)
                 .filter(Invoice.customer_id.is_(None))
                 .filter(Invoice.user_id.isnot(None))
                 .all()
             )
-            if not invs:
+            if not inv_rows:
                 return
 
-            cache = {}
+            cache_customer_id: dict[tuple[int, str], int] = {}
             changed = 0
+            skipped_race = 0
 
-            for inv in invs:
-                user_id = inv.user_id
-                cname = (inv.name or "").strip()
+            for inv_id, user_id, raw_name in inv_rows:
+                cname = (raw_name or "").strip()
                 if not cname:
                     continue
 
                 key = (user_id, cname.lower())
-                cust = cache.get(key)
-                if not cust:
-                    cust = (
-                        s.query(Customer)
+                cust_id = cache_customer_id.get(key)
+                if not cust_id:
+                    cust_id = (
+                        s.query(Customer.id)
                         .filter(Customer.user_id == user_id)
                         .filter(text("lower(name) = :n")).params(n=cname.lower())
-                        .first()
+                        .scalar()
                     )
-                    if not cust:
+                    if not cust_id:
                         cust = Customer(user_id=user_id, name=cname)
                         s.add(cust)
                         s.flush()
-                    cache[key] = cust
+                        cust_id = int(cust.id)
+                    cache_customer_id[key] = int(cust_id)
 
-                inv.customer_id = cust.id
-                changed += 1
+                # Bulk update by id avoids stale ORM state if another worker modified/deleted the row.
+                matched = (
+                    s.query(Invoice)
+                    .filter(Invoice.id == inv_id, Invoice.customer_id.is_(None))
+                    .update({"customer_id": int(cust_id)}, synchronize_session=False)
+                )
+                if matched:
+                    changed += int(matched)
+                else:
+                    skipped_race += 1
 
             s.commit()
             if changed:
                 print(f"[MIGRATE] Backfilled customers for {changed} invoices", flush=True)
+            if skipped_race:
+                print(
+                    f"[MIGRATE] Customer backfill skipped {skipped_race} invoice row(s) changed/deleted by another worker",
+                    flush=True,
+                )
 
     _backfill_customers_from_invoices()
 
