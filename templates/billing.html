@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  .btn .btn-loading-spinner {
+    width: 0.95rem;
+    height: 0.95rem;
+    border-width: 0.14em;
+    vertical-align: -0.1em;
+  }
+</style>
 
 <div class="page-header">
   <div>
@@ -24,19 +32,19 @@
       <p class="mb-3">
         Your subscription is <strong>{{ billing_status }}</strong> on the <strong>{{ (tier or subscription_tier or "basic")|capitalize }}</strong> plan.
       </p>
-      <form method="post" action="{{ url_for('billing_portal') }}" class="d-inline">
+      <form method="post" action="{{ url_for('billing_portal') }}" class="d-inline js-stripe-loading-form">
         <button class="btn btn-primary">
           Manage billing
         </button>
       </form>
       {% if (tier or subscription_tier or "basic") == "basic" and pro_price_configured %}
-        <form method="post" action="{{ url_for('billing_upgrade_pro') }}" class="d-inline ms-2">
+        <form method="post" action="{{ url_for('billing_upgrade_pro') }}" class="d-inline ms-2 js-stripe-loading-form">
           <button class="btn btn-success">
             Upgrade to Pro
           </button>
         </form>
       {% elif (tier or subscription_tier or "basic") == "pro" and basic_price_configured %}
-        <form method="post" action="{{ url_for('billing_downgrade_basic') }}" class="d-inline ms-2" onsubmit="return confirm('Are you sure you want to downgrade to Basic? Stripe may apply prorated credits or charges now.');">
+        <form method="post" action="{{ url_for('billing_downgrade_basic') }}" class="d-inline ms-2 js-stripe-loading-form" onsubmit="return confirm('Are you sure you want to downgrade to Basic? Stripe may apply prorated credits or charges now.');">
           <button class="btn btn-outline-warning">
             Downgrade to Basic
           </button>
@@ -69,7 +77,7 @@
           {% elif is_subscribed %}
             <div class="small-muted">Already subscribed. Switch plans in Stripe billing.</div>
           {% else %}
-            <form method="post" action="{{ url_for('billing_checkout') }}">
+            <form method="post" action="{{ url_for('billing_checkout') }}" class="js-stripe-loading-form">
               <input type="hidden" name="plan" value="basic">
               <button class="btn btn-outline-primary" type="submit">
                 {% if basic_trial_used %}
@@ -99,7 +107,7 @@
           {% elif is_subscribed %}
             <div class="small-muted">Already subscribed. Switch plans in Stripe billing.</div>
           {% else %}
-            <form method="post" action="{{ url_for('billing_checkout') }}">
+            <form method="post" action="{{ url_for('billing_checkout') }}" class="js-stripe-loading-form">
               <input type="hidden" name="plan" value="pro">
               <button class="btn btn-primary" type="submit">
                 {% if pro_trial_used %}
@@ -149,17 +157,17 @@
         {% endif %}
 
         <div class="d-flex flex-wrap gap-2">
-          <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline">
+          <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline js-stripe-loading-form">
             <button class="btn btn-outline-primary">
               {% if connect_ready %}Update Connect setup{% else %}Finish Connect setup{% endif %}
             </button>
           </form>
-          <form method="post" action="{{ url_for('billing_connect_dashboard') }}" class="d-inline">
+          <form method="post" action="{{ url_for('billing_connect_dashboard') }}" class="d-inline js-stripe-loading-form">
             <button class="btn btn-outline-secondary">Open Stripe Dashboard</button>
           </form>
         </div>
       {% else %}
-        <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline">
+        <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline js-stripe-loading-form">
           <button class="btn btn-primary">Connect Stripe Account</button>
         </form>
         {% if connect_message %}
@@ -170,4 +178,22 @@
   </div>
 {% endif %}
 
+<script>
+  (function () {
+    const forms = document.querySelectorAll(".js-stripe-loading-form");
+    forms.forEach((form) => {
+      form.addEventListener("submit", function (event) {
+        if (event.defaultPrevented) return;
+        const btn = form.querySelector("button[type='submit'], button:not([type])");
+        if (!btn || btn.dataset.loadingApplied === "1") return;
+        btn.dataset.loadingApplied = "1";
+        btn.disabled = true;
+        const original = btn.innerHTML;
+        btn.dataset.originalHtml = original;
+        btn.innerHTML =
+          '<span class="spinner-border spinner-border-sm btn-loading-spinner me-2" role="status" aria-hidden="true"></span>Loading...';
+      });
+    });
+  })();
+</script>
 {% endblock %}
