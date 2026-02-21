@@ -2,6 +2,17 @@
 {% set title = exp.label ~ " Items" %}
 
 {% block content %}
+<style>
+  @keyframes expenseRowFlash {
+    0% { background-color: rgba(59, 130, 246, 0.28); }
+    50% { background-color: rgba(59, 130, 246, 0.16); }
+    100% { background-color: transparent; }
+  }
+  .expense-row-highlight td {
+    animation: expenseRowFlash 2.1s ease-out 1;
+  }
+</style>
+{% set highlight_entry_id = (request.args.get('highlight_entry_id') or '')|string %}
 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
   <div>
     <h1 class="h3 fw-bold mb-1">{{ exp.label }} Items</h1>
@@ -33,7 +44,8 @@
           </thead>
           <tbody>
             {% for e in entries %}
-              <tr>
+              {% set is_highlight = (highlight_entry_id and highlight_entry_id == (e.id|string)) %}
+              <tr id="entry-{{ e.id }}" class="{% if is_highlight %}expense-row-highlight{% endif %}">
                 <td>{{ e.item_desc }}</td>
                 <td class="text-end mono">${{ '%.2f'|format(e.amount or 0) }}</td>
                 <td class="text-end">

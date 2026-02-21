@@ -2,6 +2,17 @@
 {% set title = "Split Entry" %}
 
 {% block content %}
+<style>
+  @keyframes splitRowFlash {
+    0% { background-color: rgba(16, 185, 129, 0.26); }
+    50% { background-color: rgba(16, 185, 129, 0.14); }
+    100% { background-color: transparent; }
+  }
+  .split-row-highlight td {
+    animation: splitRowFlash 2.1s ease-out 1;
+  }
+</style>
+{% set highlight_split_id = (request.args.get('highlight_split_id') or '')|string %}
 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
   <div>
     <h1 class="h3 fw-bold mb-1">Split Entry</h1>
@@ -83,7 +94,8 @@
           </thead>
           <tbody>
             {% for r in split_items %}
-              <tr>
+              {% set is_highlight = (highlight_split_id and highlight_split_id == (r.id|string)) %}
+              <tr id="split-{{ r.id }}" class="{% if is_highlight %}split-row-highlight{% endif %}">
                 <td>{{ r.item_desc }}</td>
                 <td class="text-end mono">${{ '%.2f'|format(r.amount or 0) }}</td>
                 <td class="text-end small-muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>

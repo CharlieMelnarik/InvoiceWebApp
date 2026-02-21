@@ -9609,13 +9609,20 @@ def create_app():
                     .limit(200)
                     .all()
                 )
-                for _eid, item_desc, amount, cid, label in entry_hits:
+                for eid, item_desc, amount, cid, label in entry_hits:
                     search_results.append(
                         {
                             "kind": "entry",
                             "title": (item_desc or "").strip() or "Expense Item",
                             "subtitle": f"{(label or '').strip() or 'Category'} • ${float(amount or 0.0):.2f}",
-                            "href": url_for("business_expense_category", expense_id=int(cid)),
+                            "href": (
+                                url_for(
+                                    "business_expense_category",
+                                    expense_id=int(cid),
+                                    highlight_entry_id=int(eid),
+                                )
+                                + f"#entry-{int(eid)}"
+                            ),
                             "action_label": "View In Category",
                         }
                     )
@@ -9646,16 +9653,20 @@ def create_app():
                     .limit(200)
                     .all()
                 )
-                for _sid, item_desc, amount, entry_id, cid, label in split_hits:
+                for sid, item_desc, amount, entry_id, cid, label in split_hits:
                     search_results.append(
                         {
                             "kind": "split",
                             "title": (item_desc or "").strip() or "Split Item",
                             "subtitle": f"{(label or '').strip() or 'Category'} • ${float(amount or 0.0):.2f}",
-                            "href": url_for(
-                                "business_expense_entry_split",
-                                expense_id=int(cid),
-                                entry_id=int(entry_id),
+                            "href": (
+                                url_for(
+                                    "business_expense_entry_split",
+                                    expense_id=int(cid),
+                                    entry_id=int(entry_id),
+                                    highlight_split_id=int(sid),
+                                )
+                                + f"#split-{int(sid)}"
                             ),
                             "action_label": "Open Split",
                         }
