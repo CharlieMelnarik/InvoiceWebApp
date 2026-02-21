@@ -2143,11 +2143,27 @@ def _migrate_user_profile_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN state VARCHAR(50)")
     if not _column_exists(engine, "users", "postal_code"):
         stmts.append("ALTER TABLE users ADD COLUMN postal_code VARCHAR(20)")
+    if not _column_exists(engine, "users", "show_business_name"):
+        stmts.append("ALTER TABLE users ADD COLUMN show_business_name BOOLEAN")
+    if not _column_exists(engine, "users", "show_business_phone"):
+        stmts.append("ALTER TABLE users ADD COLUMN show_business_phone BOOLEAN")
+    if not _column_exists(engine, "users", "show_business_address"):
+        stmts.append("ALTER TABLE users ADD COLUMN show_business_address BOOLEAN")
+    if not _column_exists(engine, "users", "show_business_email"):
+        stmts.append("ALTER TABLE users ADD COLUMN show_business_email BOOLEAN")
 
     if stmts:
         with engine.begin() as conn:
             for st in stmts:
                 conn.execute(text(st))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET show_business_name = TRUE WHERE show_business_name IS NULL"))
+            conn.execute(text("UPDATE users SET show_business_phone = TRUE WHERE show_business_phone IS NULL"))
+            conn.execute(text("UPDATE users SET show_business_address = TRUE WHERE show_business_address IS NULL"))
+            conn.execute(text("UPDATE users SET show_business_email = TRUE WHERE show_business_email IS NULL"))
+    except Exception:
+        pass
 
 
 def _migrate_user_email(engine):
@@ -4289,6 +4305,10 @@ def create_app():
                 u.city = (request.form.get("city") or "").strip() or None
                 u.state = (request.form.get("state") or "").strip().upper() or None
                 u.postal_code = (request.form.get("postal_code") or "").strip() or None
+                u.show_business_name = (request.form.get("show_business_name") == "1")
+                u.show_business_phone = (request.form.get("show_business_phone") == "1")
+                u.show_business_address = (request.form.get("show_business_address") == "1")
+                u.show_business_email = (request.form.get("show_business_email") == "1")
                 u.address = _format_user_address_legacy(
                     u.address_line1,
                     u.address_line2,
@@ -4432,6 +4452,11 @@ def create_app():
                 "header_style": _arg_text("invoice_builder_header_style", (getattr(u, "invoice_builder_header_style", None) or "classic")).lower(),
                 "compact_mode": _arg_bool("invoice_builder_compact_mode", bool(getattr(u, "invoice_builder_compact_mode", False))) if pro_enabled else False,
             }
+            # Live preview should reflect unsaved checkbox state from Settings.
+            u.show_business_name = _arg_bool("show_business_name", bool(getattr(u, "show_business_name", True)))
+            u.show_business_phone = _arg_bool("show_business_phone", bool(getattr(u, "show_business_phone", True)))
+            u.show_business_address = _arg_bool("show_business_address", bool(getattr(u, "show_business_address", True)))
+            u.show_business_email = _arg_bool("show_business_email", bool(getattr(u, "show_business_email", True)))
 
             preview_no = f"PV{uid}{uuid.uuid4().hex[:18]}".upper()
             preview_display_no = f"{_user_local_now(u).strftime('%Y')}PREVIEW"

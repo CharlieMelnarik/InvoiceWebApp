@@ -19,10 +19,13 @@
 {% set show_shop_supplies = _tmpl.get('show_shop_supplies', True) %}
 
 {% set job_placeholder = _tmpl.get('job_placeholder', '') %}
-{% set part_placeholder = _tmpl.get('parts_placeholder', 'e.g. Item') %}
-{% set labor_placeholder = _tmpl.get('labor_placeholder', 'e.g. Service performed') %}
+{% set part_placeholder = _tmpl.get('parts_placeholder', 'ex. Item') %}
+{% set labor_placeholder = _tmpl.get('labor_placeholder', 'ex. Service performed') %}
 {% set _picker_invoice_id = inv.id if mode == "edit" and doc_type == "invoice" else "" %}
 {% set _picker_estimate_id = inv.id if mode == "edit" and doc_type == "estimate" else "" %}
+{% set _default_hourly_rate = (user_default_hourly_rate if user_default_hourly_rate is defined and (user_default_hourly_rate|float) != 0 else '') %}
+{% set _default_parts_markup = (user_default_parts_markup if user_default_parts_markup is defined and (user_default_parts_markup|float) != 0 else '') %}
+{% set _default_tax_rate = (user_tax_rate if user_tax_rate is defined and (user_tax_rate|float) != 0 else '') %}
 
 {% if mode == "edit" %}
   {% set _cust_id = (inv.customer_id|string) %}
@@ -149,7 +152,8 @@
         <div class="col-6 col-md-3">
           <label class="form-label">Rate / Hour</label>
           <input class="form-control" name="price_per_hour" inputmode="decimal"
-                 value="{% if mode=='edit' %}{{ inv.price_per_hour }}{% else %}{{ (form.price_per_hour if form else (user_default_hourly_rate if user_default_hourly_rate is defined else '')) }}{% endif %}">
+                 value="{% if mode=='edit' %}{{ inv.price_per_hour }}{% else %}{{ (form.price_per_hour if form else _default_hourly_rate) }}{% endif %}"
+                 placeholder="ex. 95.00">
         </div>
       {% endif %}
 
@@ -157,21 +161,24 @@
       <div class="col-6 col-md-3">
         <label class="form-label">{{ shop_supplies_label }}</label>
         <input class="form-control" name="shop_supplies" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ inv.shop_supplies }}{% else %}{{ (form.shop_supplies if form else '0') }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.shop_supplies }}{% else %}{{ (form.shop_supplies if form else '') }}{% endif %}"
+               placeholder="ex. 12.00">
       </div>
       {% endif %}
 
       <div class="col-6 col-md-3">
         <label class="form-label">Parts Markup (%)</label>
         <input class="form-control" name="parts_markup_percent" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ inv.parts_markup_percent }}{% else %}{{ (form.parts_markup_percent if form else (user_default_parts_markup if user_default_parts_markup is defined else '0')) }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.parts_markup_percent }}{% else %}{{ (form.parts_markup_percent if form else _default_parts_markup) }}{% endif %}"
+               placeholder="ex. 10.0">
         <div class="small-muted mt-1">Applies to each part price (shown on web only).</div>
       </div>
 
       <div class="col-6 col-md-3">
         <label class="form-label">Tax (%)</label>
         <input class="form-control" name="tax_rate" inputmode="decimal"
-               value="{% if mode=='edit' %}{{ inv.tax_rate if inv.tax_rate is not none else '0' }}{% else %}{{ (form.tax_rate if form else (user_tax_rate if user_tax_rate is defined else '0')) }}{% endif %}">
+               value="{% if mode=='edit' %}{{ inv.tax_rate if (inv.tax_rate is not none and (inv.tax_rate|float) != 0) else '' }}{% else %}{{ (form.tax_rate if form else _default_tax_rate) }}{% endif %}"
+               placeholder="ex. 8.25">
       </div>
 
       {% if doc_type != "estimate" %}
@@ -180,7 +187,8 @@
             {% if tmpl_key == "flipping_items" %}Sold for{% else %}Paid{% endif %}
           </label>
           <input class="form-control" name="paid" inputmode="decimal"
-                 value="{% if mode=='edit' %}{{ inv.paid }}{% else %}{{ (form.paid if form else '0') }}{% endif %}">
+                 value="{% if mode=='edit' %}{{ inv.paid }}{% else %}{{ (form.paid if form else '') }}{% endif %}"
+                 placeholder="ex. 250.00">
         </div>
       {% endif %}
 
@@ -248,7 +256,7 @@
 
           <tr>
             <td><input class="form-control" name="part_name" placeholder="{{ part_placeholder }}"></td>
-            <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="0.00"></td>
+            <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="ex. 24.99"></td>
             <td class="text-end">
               <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
             </td>
@@ -294,7 +302,7 @@
 
             <tr>
               <td><input class="form-control" name="labor_desc" placeholder="{{ labor_placeholder }}"></td>
-              <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
+              <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="ex. 1.5 hrs"></td>
               <td class="text-end">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
               </td>
@@ -410,7 +418,7 @@
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input class="form-control" name="part_name" placeholder="{{ parts_name_label|e }}"></td>
-      <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="0.00"></td>
+      <td><input class="form-control" name="part_price" inputmode="decimal" placeholder="ex. 24.99"></td>
       <td class="text-end">
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
       </td>
@@ -458,7 +466,7 @@
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input class="form-control" name="labor_desc" placeholder="{{ labor_desc_label|e }}"></td>
-      <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="0.0"></td>
+      <td><input class="form-control" name="labor_time_hours" inputmode="decimal" placeholder="ex. 1.5 hrs"></td>
       <td class="text-end">
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">Remove</button>
       </td>

@@ -90,6 +90,10 @@ class User(Base):
     city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     state: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    show_business_name: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    show_business_phone: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    show_business_address: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    show_business_email: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     # Stripe billing fields
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

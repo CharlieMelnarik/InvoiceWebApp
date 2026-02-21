@@ -74,6 +74,51 @@ def _owner_address_lines(owner: User | None) -> list[str]:
     return lines or [legacy]
 
 
+def _show_business_name(owner: User | None) -> bool:
+    return bool(getattr(owner, "show_business_name", True)) if owner else True
+
+
+def _show_business_phone(owner: User | None) -> bool:
+    return bool(getattr(owner, "show_business_phone", True)) if owner else True
+
+
+def _show_business_address(owner: User | None) -> bool:
+    return bool(getattr(owner, "show_business_address", True)) if owner else True
+
+
+def _show_business_email(owner: User | None) -> bool:
+    return bool(getattr(owner, "show_business_email", True)) if owner else True
+
+
+def _business_header_name(owner: User | None) -> str:
+    if not _show_business_name(owner):
+        return ""
+    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
+    username = (getattr(owner, "username", None) or "").strip() if owner else ""
+    return (business_name or username or "").strip()
+
+
+def _business_header_display_name(owner: User | None, fallback: str = "InvoiceRunner") -> str:
+    if not _show_business_name(owner):
+        return ""
+    return _business_header_name(owner) or fallback
+
+
+def _business_header_info_lines(owner: User | None) -> list[str]:
+    lines: list[str] = []
+    if _show_business_address(owner):
+        lines.extend(_owner_address_lines(owner))
+    if _show_business_phone(owner):
+        phone = _format_phone((getattr(owner, "phone", None) or "").strip()) if owner else ""
+        if phone:
+            lines.append(phone)
+    if _show_business_email(owner):
+        email = (getattr(owner, "email", None) or "").strip() if owner else ""
+        if email:
+            lines.append(email)
+    return lines
+
+
 def _invoice_due_date_line(inv: Invoice, owner: User | None, *, is_estimate: bool) -> str:
     if is_estimate:
         return ""
@@ -286,9 +331,10 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
     due_date = ""
     if due_line:
         due_date = due_line.replace("Payment due date:", "").strip()
-    business_name = (getattr(owner, "business_name", None) or getattr(owner, "username", None) or "InvoiceRunner").strip()
-    owner_phone = _format_phone((getattr(owner, "phone", None) or "").strip())
-    owner_addr = "\n".join(_owner_address_lines(owner))
+    business_name = (_business_header_name(owner) or "InvoiceRunner").strip()
+    owner_phone = _format_phone((getattr(owner, "phone", None) or "").strip()) if _show_business_phone(owner) else ""
+    owner_addr = "\n".join(_owner_address_lines(owner)) if _show_business_address(owner) else ""
+    owner_email = (getattr(owner, "email", None) or "").strip() if _show_business_email(owner) else ""
     customer_name = (getattr(customer, "name", None) or inv.name or "").strip()
     customer_email = (getattr(inv, "customer_email", None) or getattr(customer, "email", None) or "").strip()
     customer_phone = _format_phone((getattr(inv, "customer_phone", None) or getattr(customer, "phone", None) or "").strip())
@@ -330,6 +376,7 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
         "business_name": business_name,
         "business_phone": owner_phone,
         "business_address": owner_addr,
+        "business_email": owner_email,
         "customer_name": customer_name,
         "customer_email": customer_email,
         "customer_phone": customer_phone,
@@ -1099,25 +1146,22 @@ def _render_modern_pdf(
         except Exception:
             logo_w = 0
 
-    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
-    username = (getattr(owner, "username", None) or "").strip() if owner else ""
-    header_name = business_name or username or ""
-    header_address_lines = _owner_address_lines(owner)
-    header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+    header_name = _business_header_name(owner)
+    header_info_lines = _business_header_info_lines(owner)
 
     left_x = M + (logo_w + 10 if logo_w else 0)
     pdf.setFillColor(colors.white)
     pdf.setFont("Helvetica-Bold", 14)
-    pdf.drawString(left_x, PAGE_H - 0.55 * inch, header_name or "InvoiceRunner")
+    header_display_name = _business_header_display_name(owner, "InvoiceRunner")
+    if header_display_name:
+        pdf.drawString(left_x, PAGE_H - 0.55 * inch, header_display_name)
 
     pdf.setFont("Helvetica", 9)
     info_lines = []
-    for addr_line in header_address_lines:
-        info_lines.extend(_wrap_text(addr_line, "Helvetica", 9, 3.6 * inch))
-    if header_phone:
-        info_lines.append(header_phone)
+    for ln in header_info_lines:
+        info_lines.extend(_wrap_text(ln, "Helvetica", 9, 3.6 * inch))
     info_y = PAGE_H - 0.82 * inch
-    for ln in info_lines[:2]:
+    for ln in info_lines[:4]:
         pdf.drawString(left_x, info_y, ln)
         info_y -= 12
 
@@ -1620,11 +1664,8 @@ def _render_split_panel_pdf(
         except Exception:
             logo_drawn = False
 
-    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
-    username = (getattr(owner, "username", None) or "").strip() if owner else ""
-    header_name = business_name or username or "InvoiceRunner"
-    header_address_lines = _owner_address_lines(owner)
-    header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+    header_name = _business_header_name(owner) or "InvoiceRunner"
+    header_info_lines = _business_header_info_lines(owner)
 
     pdf.setFillColor(rail_text)
     pdf.setFont("Helvetica-Bold", 10)
@@ -1639,12 +1680,10 @@ def _render_split_panel_pdf(
 
     pdf.setFont("Helvetica", 8)
     rail_info = []
-    for addr_line in header_address_lines:
-        rail_info.extend(_wrap_text(addr_line, "Helvetica", 8, rail_w - 20))
-    if header_phone:
-        rail_info.append(header_phone)
+    for ln in header_info_lines:
+        rail_info.extend(_wrap_text(ln, "Helvetica", 8, rail_w - 20))
     info_y = name_y - 6
-    for ln in rail_info[:3]:
+    for ln in rail_info[:4]:
         pdf.drawString(rail_x + 12, info_y, ln)
         info_y -= 11
 
@@ -2137,24 +2176,19 @@ def _render_strip_pdf(
         except Exception:
             logo_w = 0
 
-    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
-    username = (getattr(owner, "username", None) or "").strip() if owner else ""
-    header_name = business_name or username or "InvoiceRunner"
+    header_name = _business_header_name(owner) or "InvoiceRunner"
     pdf.setFont("Helvetica-Bold", 12)
     pdf.setFillColor(header_text)
-    pdf.drawString(M + logo_w, PAGE_H - 0.72 * inch, header_name)
+    pdf.drawString(M + logo_w, PAGE_H - 0.38 * inch, header_name)
 
     pdf.setFont("Helvetica", 9)
     pdf.setFillColor(header_muted)
-    header_address_lines = _owner_address_lines(owner)
-    header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+    header_info_lines = _business_header_info_lines(owner)
     info_lines = []
-    for addr_line in header_address_lines:
-        info_lines.extend(_wrap_text(addr_line, "Helvetica", 9, 3.6 * inch))
-    if header_phone:
-        info_lines.append(header_phone)
-    info_y = PAGE_H - 0.95 * inch
-    for ln in info_lines[:2]:
+    for ln in header_info_lines:
+        info_lines.extend(_wrap_text(ln, "Helvetica", 9, 3.6 * inch))
+    info_y = PAGE_H - 0.60 * inch
+    for ln in info_lines[:4]:
         pdf.drawString(M + logo_w, info_y, ln)
         info_y -= 12
 
@@ -2491,21 +2525,24 @@ def _render_basic_pdf(
         pdf.setFont(font, size)
         pdf.drawRightString(x, y, str(text or ""))
 
-    header_name = ((getattr(owner, "business_name", None) or getattr(owner, "username", None) or "").strip()) if owner else ""
-    header_lines = [ln for ln in _owner_address_lines(owner) if ln]
+    header_name = ((_business_header_name(owner) or "").strip()) if owner else ""
+    header_lines = [ln for ln in _business_header_info_lines(owner) if ln]
     header_phone = _format_phone((getattr(owner, "phone", None) or "").strip()) if owner else ""
 
     left_x = M
     top_y = PAGE_H - M
 
     pdf.setFont("Helvetica-Bold", 14)
-    pdf.drawString(left_x, top_y - 4, header_name or "[Company Name]")
+    header_display_name = _business_header_display_name(owner, "[Company Name]")
+    if header_display_name:
+        pdf.drawString(left_x, top_y - 4, header_display_name)
     pdf.setFont("Helvetica", 9)
     line_y = top_y - 22
-    for ln in (header_lines[:2] or ["[Street Address]", "[City, ST ZIP]"]):
+    for ln in (header_lines[:4] or ["[Street Address]", "[City, ST ZIP]"]):
         pdf.drawString(left_x, line_y, ln)
         line_y -= 12
-    pdf.drawString(left_x, line_y, f"Phone: {header_phone or '(000) 000-0000'}")
+    if not header_lines and _show_business_phone(owner):
+        pdf.drawString(left_x, line_y, f"Phone: {header_phone or '(000) 000-0000'}")
 
     pdf.setFont("Helvetica-Bold", 30)
     right_text(PAGE_W - M, top_y - 8, doc_label)
@@ -2663,8 +2700,8 @@ def _render_simple_pdf(
         pdf.setFillColor(color)
         pdf.drawRightString(x, y, str(text or ""))
 
-    header_name = ((getattr(owner, "business_name", None) or getattr(owner, "username", None) or "").strip()) if owner else ""
-    addr_lines = [ln for ln in _owner_address_lines(owner) if ln]
+    header_name = ((_business_header_name(owner) or "").strip()) if owner else ""
+    addr_lines = [ln for ln in _business_header_info_lines(owner) if ln]
     phone_txt = _format_phone((getattr(owner, "phone", None) or "").strip()) if owner else ""
 
     top_y = PAGE_H - M
@@ -2700,13 +2737,16 @@ def _render_simple_pdf(
 
     comp_x = PAGE_W - M
     comp_y = top_y - 10
-    right_text(comp_x, comp_y, (header_name or "YOUR COMPANY").upper(), "Helvetica-Bold", 12)
+    header_display_name = _business_header_display_name(owner, "YOUR COMPANY")
+    if header_display_name:
+        right_text(comp_x, comp_y, header_display_name.upper(), "Helvetica-Bold", 12)
     pdf.setFont("Helvetica", 11)
     y = comp_y - 20
-    for ln in (addr_lines[:3] or ["1234 Your Street", "City, ST 90210", "United States"]):
+    for ln in (addr_lines[:4] or ["1234 Your Street", "City, ST 90210", "United States"]):
         right_text(comp_x, y, ln, "Helvetica", 11, text_dark)
         y -= 16
-    right_text(comp_x, y, phone_txt or "1-888-123-4567", "Helvetica", 11, text_dark)
+    if not addr_lines and _show_business_phone(owner):
+        right_text(comp_x, y, phone_txt or "1-888-123-4567", "Helvetica", 11, text_dark)
 
     bill_x = M
     bill_y = top_y - 2.15 * inch
@@ -2977,10 +3017,8 @@ def _render_blueprint_pdf(
 
     page_chrome()
 
-    header_name = ((getattr(owner, "business_name", None) or getattr(owner, "username", None) or "").strip()) if owner else ""
-    addr_lines = [ln for ln in _owner_address_lines(owner) if ln]
-    phone_txt = _format_phone((getattr(owner, "phone", None) or "").strip()) if owner else ""
-    info_email = (getattr(owner, "email", None) or "").strip() if owner else ""
+    header_name = ((_business_header_name(owner) or "").strip()) if owner else ""
+    info_lines_all = _business_header_info_lines(owner)
     rail_center = M + rail_w / 2.0
 
     # Logo area (only render when a real logo exists)
@@ -3013,18 +3051,14 @@ def _render_blueprint_pdf(
     pdf.setFont("Helvetica-Bold", 11)
     # If no logo exists, move identity block up so no empty logo space remains.
     name_y = PAGE_H - M - (2.62 * inch if logo_drawn else 2.30 * inch)
-    pdf.drawCentredString(rail_center, name_y, header_name or "Your Business")
+    header_display_name = _business_header_display_name(owner, "Your Business")
+    if header_display_name:
+        pdf.drawCentredString(rail_center, name_y, header_display_name)
     pdf.setFont("Helvetica", 9)
     yy = name_y - 0.20 * inch
-    for ln in (addr_lines[:2] or ["123 Work St", "Somewhere, ST 00000"]):
+    for ln in (info_lines_all[:4] or ["123 Work St", "Somewhere, ST 00000"]):
         pdf.drawCentredString(rail_center, yy, ln)
         yy -= 12
-    if phone_txt:
-        pdf.drawCentredString(rail_center, yy, phone_txt)
-        yy -= 12
-    if info_email:
-        pdf.setFillColor(colors.HexColor("#cbd5e1"))
-        pdf.drawCentredString(rail_center, yy, info_email)
 
     # Header cards (right side)
     top = PAGE_H - M - 0.22 * inch
@@ -3346,23 +3380,22 @@ def _render_luxe_pdf(
             logo_drawn = False
 
     # header text
-    business = ((getattr(owner, "business_name", None) or getattr(owner, "username", None) or "").strip()) if owner else ""
-    owner_phone = _format_phone((getattr(owner, "phone", None) or "").strip()) if owner else ""
-    owner_addr = _owner_address_lines(owner)
+    business = (_business_header_name(owner) or "").strip()
+    owner_info_lines = _business_header_info_lines(owner)
     header_x = chip_x + (chip_w + 16 if logo_drawn else 0)
     pdf.setFillColor(colors.white)
     pdf.setFont("Helvetica-Bold", 23)
     pdf.drawString(header_x, PAGE_H - M - 34, doc_label)
     pdf.setFillColor(colors.HexColor("#eadac6"))
     pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawString(header_x, PAGE_H - M - 52, business or "Your Business")
+    header_display_name = _business_header_display_name(owner, "Your Business")
+    if header_display_name:
+        pdf.drawString(header_x, PAGE_H - M - 52, header_display_name)
     pdf.setFont("Helvetica", 10)
     yy = PAGE_H - M - 68
-    for ln in owner_addr[:2]:
+    for ln in owner_info_lines[:4]:
         pdf.drawString(header_x, yy, ln)
         yy -= 12
-    if owner_phone:
-        pdf.drawString(header_x, yy, owner_phone)
 
     right_text(PAGE_W - M - 14, PAGE_H - M - 28, f"#{display_no}", "Helvetica-Bold", 14, colors.white)
     right_text(PAGE_W - M - 14, PAGE_H - M - 46, f"Issued: {generated_str}", "Helvetica", 10, colors.HexColor("#bfdbfe"))
@@ -3824,12 +3857,8 @@ def generate_and_store_pdf(
         pdf_template_key = "classic"
 
     # Determine header identity lines (left side)
-    business_name = (getattr(owner, "business_name", None) or "").strip() if owner else ""
-    username = (getattr(owner, "username", None) or "").strip() if owner else ""
-    header_name = business_name or username or ""
-
-    header_address_lines = _owner_address_lines(owner)
-    header_phone = (getattr(owner, "phone", None) or "").strip() if owner else ""
+    header_name = _business_header_name(owner)
+    header_info_lines = _business_header_info_lines(owner)
 
     # Owner logo (stored relative to instance/)
     owner_logo_rel = (getattr(owner, "logo_path", None) or "").strip() if owner else ""
@@ -4130,16 +4159,16 @@ def generate_and_store_pdf(
     left_x = M + (logo_w + 10 if logo_w else 0)
     pdf.setFillColor(header_text_color)
     pdf.setFont("Helvetica-Bold", 12)
-    pdf.drawString(left_x, PAGE_H - 0.55 * inch, header_name or "InvoiceRunner")
+    header_display_name = _business_header_display_name(owner, "InvoiceRunner")
+    if header_display_name:
+        pdf.drawString(left_x, PAGE_H - 0.55 * inch, header_display_name)
 
     pdf.setFont("Helvetica", 9)
     info_lines = []
-    for addr_line in header_address_lines:
-        info_lines.extend(_wrap_text(addr_line, "Helvetica", 9, 3.6 * inch))
-    if header_phone:
-        info_lines.append(header_phone)
+    for ln in header_info_lines:
+        info_lines.extend(_wrap_text(ln, "Helvetica", 9, 3.6 * inch))
     info_y = PAGE_H - 0.82 * inch
-    for ln in info_lines[:2]:
+    for ln in info_lines[:4]:
         pdf.drawString(left_x, info_y, ln)
         info_y -= 12
 

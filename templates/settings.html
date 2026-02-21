@@ -277,15 +277,15 @@
         <div class="row g-3">
           <div class="col-md-4">
             <label class="form-label compact-label">Default Tax (%)</label>
-            <input type="text" class="form-control" name="tax_rate" inputmode="decimal" value="{{ u.tax_rate if u.tax_rate is not none else '0' }}" placeholder="0.0">
+            <input type="text" class="form-control" name="tax_rate" inputmode="decimal" value="{{ u.tax_rate if (u.tax_rate is not none and (u.tax_rate|float) != 0) else '' }}" placeholder="ex. 8.25">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Default Hourly Rate</label>
-            <input type="text" class="form-control" name="default_hourly_rate" inputmode="decimal" value="{{ u.default_hourly_rate if u.default_hourly_rate is not none else '0' }}" placeholder="0.00">
+            <input type="text" class="form-control" name="default_hourly_rate" inputmode="decimal" value="{{ u.default_hourly_rate if (u.default_hourly_rate is not none and (u.default_hourly_rate|float) != 0) else '' }}" placeholder="ex. 95.00">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Default Parts Markup (%)</label>
-            <input type="text" class="form-control" name="default_parts_markup" inputmode="decimal" value="{{ u.default_parts_markup if u.default_parts_markup is not none else '0' }}" placeholder="0.0">
+            <input type="text" class="form-control" name="default_parts_markup" inputmode="decimal" value="{{ u.default_parts_markup if (u.default_parts_markup is not none and (u.default_parts_markup|float) != 0) else '' }}" placeholder="ex. 10.0">
           </div>
         </div>
       </section>
@@ -304,7 +304,7 @@
                 name="custom_profession_preset_name"
                 maxlength="120"
                 value="{{ u.custom_profession_name or '' }}"
-                placeholder="e.g. Home Services"
+                placeholder="ex. Home Services"
               >
             </div>
             <div class="col-md-4 d-flex align-items-end">
@@ -316,31 +316,31 @@
           <div class="row g-3">
           <div class="col-md-4">
             <label class="form-label compact-label">Custom Profession Name</label>
-            <input class="form-control" name="custom_profession_name" value="{{ u.custom_profession_name or '' }}" placeholder="e.g. Home Services">
+            <input class="form-control" name="custom_profession_name" value="{{ u.custom_profession_name or '' }}" placeholder="ex. Home Services">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Job Label</label>
-            <input class="form-control" name="custom_job_label" value="{{ u.custom_job_label or '' }}" placeholder="e.g. Service Location">
+            <input class="form-control" name="custom_job_label" value="{{ u.custom_job_label or '' }}" placeholder="ex. Service Location">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Labor Section Title</label>
-            <input class="form-control" name="custom_labor_title" value="{{ u.custom_labor_title or '' }}" placeholder="e.g. Services">
+            <input class="form-control" name="custom_labor_title" value="{{ u.custom_labor_title or '' }}" placeholder="ex. Services">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Labor Description Label</label>
-            <input class="form-control" name="custom_labor_desc_label" value="{{ u.custom_labor_desc_label or '' }}" placeholder="e.g. Service Description">
+            <input class="form-control" name="custom_labor_desc_label" value="{{ u.custom_labor_desc_label or '' }}" placeholder="ex. Service Description">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Parts Section Title</label>
-            <input class="form-control" name="custom_parts_title" value="{{ u.custom_parts_title or '' }}" placeholder="e.g. Materials">
+            <input class="form-control" name="custom_parts_title" value="{{ u.custom_parts_title or '' }}" placeholder="ex. Materials">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Parts Item Label</label>
-            <input class="form-control" name="custom_parts_name_label" value="{{ u.custom_parts_name_label or '' }}" placeholder="e.g. Material Name">
+            <input class="form-control" name="custom_parts_name_label" value="{{ u.custom_parts_name_label or '' }}" placeholder="ex. Material Name">
           </div>
           <div class="col-md-4">
             <label class="form-label compact-label">Additional Fees Label</label>
-            <input class="form-control" name="custom_shop_supplies_label" value="{{ u.custom_shop_supplies_label or '' }}" placeholder="e.g. Travel Fee">
+            <input class="form-control" name="custom_shop_supplies_label" value="{{ u.custom_shop_supplies_label or '' }}" placeholder="ex. Travel Fee">
           </div>
           <div class="col-md-8">
             <label class="form-label compact-label">Show These Sections</label>
@@ -427,6 +427,41 @@
         {% endif %}
       {% endif %}
 
+      <section class="settings-card" id="section-business-header-visibility">
+        <div class="settings-card-head">
+          <h5>Business Header Visibility</h5>
+        </div>
+        <div class="settings-help">Choose what business info appears in invoice/estimate PDF headers.</div>
+        <div class="d-flex flex-wrap gap-3 pt-1">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showBusinessName" name="show_business_name" value="1" {% if u.show_business_name is not defined or u.show_business_name %}checked{% endif %}>
+            <label class="form-check-label" for="showBusinessName">Business Name</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showBusinessPhone" name="show_business_phone" value="1" {% if u.show_business_phone is not defined or u.show_business_phone %}checked{% endif %}>
+            <label class="form-check-label" for="showBusinessPhone">Phone Number</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showBusinessAddress" name="show_business_address" value="1" {% if u.show_business_address is not defined or u.show_business_address %}checked{% endif %}>
+            <label class="form-check-label" for="showBusinessAddress">Address</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showBusinessEmail" name="show_business_email" value="1" {% if u.show_business_email is not defined or u.show_business_email %}checked{% endif %}>
+            <label class="form-check-label" for="showBusinessEmail">Email Address</label>
+          </div>
+        </div>
+      </section>
+
+      {% if pro_features_enabled and not is_employee_account %}
+        <section class="settings-card" id="section-email-editor">
+          <div class="settings-card-head">
+            <h5>Email Editor</h5>
+          </div>
+          <div class="settings-help">Customize customer-facing email messages for invoice, estimate, and payment reminder sends.</div>
+          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('email_templates') }}">Open Customer Email Editor</a>
+        </section>
+      {% endif %}
+
       <section class="settings-card span-2" id="section-preview">
         <div class="settings-card-head">
           <h5>Live PDF Preview & Layout</h5>
@@ -458,16 +493,6 @@
         </div>
       </section>
 
-      {% if pro_features_enabled and not is_employee_account %}
-        <section class="settings-card" id="section-email-editor">
-          <div class="settings-card-head">
-            <h5>Email Editor</h5>
-          </div>
-          <div class="settings-help">Customize customer-facing email messages for invoice, estimate, and payment reminder sends.</div>
-          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('email_templates') }}">Open Customer Email Editor</a>
-        </section>
-      {% endif %}
-
       {% if pro_features_enabled %}
         <section class="settings-card span-2" id="section-payments">
           <div class="settings-card-head">
@@ -477,11 +502,11 @@
           <div class="row g-3">
             <div class="col-md-4">
               <label class="form-label compact-label">Credit Card Processing Fee (%)</label>
-              <input type="text" class="form-control" name="payment_fee_percent" inputmode="decimal" value="{{ u.payment_fee_percent if u.payment_fee_percent is not none else '0' }}" placeholder="e.g. 3.00">
+              <input type="text" class="form-control" name="payment_fee_percent" inputmode="decimal" value="{{ u.payment_fee_percent if (u.payment_fee_percent is not none and (u.payment_fee_percent|float) != 0) else '' }}" placeholder="ex. 3.0">
             </div>
             <div class="col-md-4">
               <label class="form-label compact-label">Credit Card Processing Fee (Fixed $)</label>
-              <input type="text" class="form-control" name="payment_fee_fixed" inputmode="decimal" value="{{ u.payment_fee_fixed if u.payment_fee_fixed is not none else '0' }}" placeholder="e.g. 0.30">
+              <input type="text" class="form-control" name="payment_fee_fixed" inputmode="decimal" value="{{ u.payment_fee_fixed if (u.payment_fee_fixed is not none and (u.payment_fee_fixed|float) != 0) else '' }}" placeholder="ex. 0.30">
             </div>
             <div class="col-md-4 d-flex align-items-end">
               <div class="form-check mb-2">
@@ -494,11 +519,11 @@
             <div class="row g-3">
               <div class="col-md-6">
                 <label class="form-label compact-label">Stripe Processing Fee (%)</label>
-                <input type="text" class="form-control" name="stripe_fee_percent" inputmode="decimal" value="{{ u.stripe_fee_percent if u.stripe_fee_percent is not none else '2.9' }}" placeholder="e.g. 2.90">
+                <input type="text" class="form-control" name="stripe_fee_percent" inputmode="decimal" value="{{ u.stripe_fee_percent if u.stripe_fee_percent is not none else '2.9' }}" placeholder="ex. 2.9">
               </div>
               <div class="col-md-6">
                 <label class="form-label compact-label">Stripe Processing Fixed Fee ($)</label>
-                <input type="text" class="form-control" name="stripe_fee_fixed" inputmode="decimal" value="{{ u.stripe_fee_fixed if u.stripe_fee_fixed is not none else '0.30' }}" placeholder="e.g. 0.30">
+                <input type="text" class="form-control" name="stripe_fee_fixed" inputmode="decimal" value="{{ u.stripe_fee_fixed if u.stripe_fee_fixed is not none else '0.30' }}" placeholder="ex. 0.30">
               </div>
             </div>
           </div>
@@ -567,11 +592,11 @@
             </div>
             <div class="col-md-4" id="lateFeeFixedWrap">
               <label class="form-label compact-label">Late Fee Fixed ($)</label>
-              <input type="text" class="form-control" name="late_fee_fixed" inputmode="decimal" value="{{ u.late_fee_fixed if u.late_fee_fixed is not none else '0' }}" placeholder="25.00">
+              <input type="text" class="form-control" name="late_fee_fixed" inputmode="decimal" value="{{ u.late_fee_fixed if (u.late_fee_fixed is not none and (u.late_fee_fixed|float) != 0) else '' }}" placeholder="ex. 25.00">
             </div>
             <div class="col-md-4" id="lateFeePercentWrap">
               <label class="form-label compact-label">Late Fee Percent (%)</label>
-              <input type="text" class="form-control" name="late_fee_percent" inputmode="decimal" value="{{ u.late_fee_percent if u.late_fee_percent is not none else '0' }}" placeholder="5.00">
+              <input type="text" class="form-control" name="late_fee_percent" inputmode="decimal" value="{{ u.late_fee_percent if (u.late_fee_percent is not none and (u.late_fee_percent|float) != 0) else '' }}" placeholder="ex. 5.0">
             </div>
           </div>
         </section>
@@ -584,7 +609,7 @@
         <div class="settings-help">Shown on invoices and estimates.</div>
         <div class="mb-3">
           <label class="form-label compact-label">Business Name / Your Name</label>
-          <input type="text" class="form-control" name="business_name" value="{{ u.business_name or '' }}" placeholder="e.g. Summit Auto Repair">
+          <input type="text" class="form-control" name="business_name" value="{{ u.business_name or '' }}" placeholder="ex. Summit Auto Repair">
         </div>
         <div class="mb-3">
           <label class="form-label compact-label">Phone Number</label>
@@ -825,6 +850,10 @@
     params.set("custom_show_parts", checkboxVal("custom_show_parts", true) ? "1" : "0");
     params.set("custom_show_shop_supplies", checkboxVal("custom_show_shop_supplies", true) ? "1" : "0");
     params.set("custom_show_notes", checkboxVal("custom_show_notes", true) ? "1" : "0");
+    params.set("show_business_name", checkboxVal("show_business_name", true) ? "1" : "0");
+    params.set("show_business_phone", checkboxVal("show_business_phone", true) ? "1" : "0");
+    params.set("show_business_address", checkboxVal("show_business_address", true) ? "1" : "0");
+    params.set("show_business_email", checkboxVal("show_business_email", true) ? "1" : "0");
     params.set("invoice_builder_enabled", checkboxVal("invoice_builder_enabled", false) ? "1" : "0");
     params.set("invoice_builder_accent_color", inputVal("invoice_builder_accent_color", "#0f172a"));
     params.set("invoice_builder_header_style", inputVal("invoice_builder_header_style", "classic"));
