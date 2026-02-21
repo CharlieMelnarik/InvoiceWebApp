@@ -5640,6 +5640,45 @@ def create_app():
                 if not item_id:
                     flash("Subscription item is missing. Open billing portal to manage plan.", "error")
                     return redirect(url_for("billing"))
+                current_price_id = (((items[0].get("price") or {}).get("id")) or "").strip()
+                current_product_id = (((items[0].get("price") or {}).get("product")) or "").strip()
+
+                # Build allowed product/price map for Stripe's subscription_update flow.
+                # This supports both:
+                # 1) Basic/Pro under one product
+                # 2) Basic/Pro as separate products
+                product_price_map: dict[str, list[str]] = {}
+
+                def _allow_price(price_id: str, product_id: str):
+                    pid = (price_id or "").strip()
+                    prod = (product_id or "").strip()
+                    if not pid or not prod:
+                        return
+                    arr = product_price_map.setdefault(prod, [])
+                    if pid not in arr:
+                        arr.append(pid)
+
+                if current_price_id and current_product_id:
+                    _allow_price(current_price_id, current_product_id)
+
+                try:
+                    pro_price_obj = stripe.Price.retrieve(STRIPE_PRICE_ID_PRO)
+                    _allow_price(STRIPE_PRICE_ID_PRO, (pro_price_obj.get("product") or ""))
+                except Exception:
+                    _allow_price(STRIPE_PRICE_ID_PRO, current_product_id)
+
+                if STRIPE_PRICE_ID_BASIC:
+                    try:
+                        basic_price_obj = stripe.Price.retrieve(STRIPE_PRICE_ID_BASIC)
+                        _allow_price(STRIPE_PRICE_ID_BASIC, (basic_price_obj.get("product") or ""))
+                    except Exception:
+                        _allow_price(STRIPE_PRICE_ID_BASIC, current_product_id)
+
+                products_payload = [
+                    {"product": prod, "prices": prices}
+                    for prod, prices in product_price_map.items()
+                    if prod and prices
+                ]
 
                 # Stripe-hosted confirmation step: user must confirm the plan change in Stripe.
                 try:
@@ -5675,12 +5714,7 @@ def create_app():
                                 "subscription_update": {
                                     "subscription": sub_id,
                                     "default_allowed_updates": ["price"],
-                                    "products": [
-                                        {
-                                            "product": (items[0].get("price") or {}).get("product"),
-                                            "prices": [STRIPE_PRICE_ID_BASIC, STRIPE_PRICE_ID_PRO],
-                                        }
-                                    ],
+                                    "products": products_payload,
                                 },
                             },
                         )
@@ -5701,7 +5735,8 @@ def create_app():
                         s.commit()
                         flash(
                             "Stripe upgrade confirmation flow is not enabled yet. "
-                            "In Stripe Billing Portal settings, enable customer plan switching for subscriptions.",
+                            "In Stripe Billing Portal settings, enable customer plan switching for subscriptions. "
+                            f"(Stripe said: {_stripe_err_msg(update_exc)})",
                             "error",
                         )
                         return redirect(url_for("billing"))
