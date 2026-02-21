@@ -2178,7 +2178,26 @@ def _migrate_user_email(engine):
 
     try:
         with engine.begin() as conn:
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email))"))
+            # Legacy index (global unique email) blocks allowed owner+employee shared-email use case.
+            conn.execute(text("DROP INDEX IF EXISTS users_email_unique"))
+            conn.execute(text("DROP INDEX IF EXISTS users_email_owner_unique"))
+            conn.execute(text("DROP INDEX IF EXISTS users_email_employee_unique"))
+            # Owners: email unique among owner accounts.
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS users_email_owner_unique "
+                    "ON users (LOWER(email)) "
+                    "WHERE email IS NOT NULL AND is_employee = FALSE"
+                )
+            )
+            # Employees: email unique among employee accounts.
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS users_email_employee_unique "
+                    "ON users (LOWER(email)) "
+                    "WHERE email IS NOT NULL AND is_employee = TRUE"
+                )
+            )
     except Exception:
         pass
 
@@ -3157,6 +3176,7 @@ def create_app():
                     already = (
                         s.query(User)
                         .filter(text("lower(email) = :e"))
+                        .filter(User.is_employee.is_(False))
                         .params(e=email)
                         .first()
                     )
@@ -3608,13 +3628,14 @@ def create_app():
                 taken_email = (
                     s.query(User)
                     .filter(text("lower(email) = :e"))
+                    .filter(User.is_employee.is_(False))
                     .params(e=email)
                     .first()
                 )
                 if taken_email:
                     _audit_log(s, event="auth.register", result="fail", username=username, email=email, details="email_taken")
                     s.commit()
-                    flash("That email is already registered.", "error")
+                    flash("That email is already registered to another main account.", "error")
                     return render_template("register.html", turnstile_site_key=turnstile_site_key)
 
                 u = User(username=username, email=email, password_hash=generate_password_hash(password))
@@ -3639,26 +3660,26 @@ def create_app():
 
             if _looks_like_email(email):
                 with db_session() as s:
-                    u = (
+                    users = (
                         s.query(User)
                         .filter(text("lower(email) = :e"))
+                        .order_by(User.is_employee.asc(), User.id.asc())
                         .params(e=email)
-                        .first()
+                        .all()
                     )
-                    if u:
-                        token = make_password_reset_token(u.id)
-
+                    if users:
                         base = (current_app.config.get("APP_BASE_URL") or "").rstrip("/")
                         if not base:
                             base = request.host_url.rstrip("/")
 
-                        reset_url = f"{base}{url_for('reset_password', token=token)}"
-
-                        try:
-                            _send_reset_email(email, reset_url)
-                            print(f"[RESET] Sent reset email to {email}", flush=True)
-                        except Exception as e:
-                            print(f"[RESET] SMTP ERROR for {email}: {repr(e)}", flush=True)
+                        for u in users:
+                            token = make_password_reset_token(u.id)
+                            reset_url = f"{base}{url_for('reset_password', token=token)}"
+                            try:
+                                _send_reset_email(email, reset_url)
+                                print(f"[RESET] Sent reset email to {email} (user_id={u.id})", flush=True)
+                            except Exception as e:
+                                print(f"[RESET] SMTP ERROR for {email} (user_id={u.id}): {repr(e)}", flush=True)
 
             return redirect(url_for("login"))
 
@@ -4715,11 +4736,12 @@ def create_app():
                     taken_email = (
                         s.query(User)
                         .filter(text("lower(email) = :e AND id != :id"))
+                        .filter(User.is_employee.is_(False))
                         .params(e=new_email, id=u.id)
                         .first()
                     )
                     if taken_email:
-                        flash("That email is already in use.", "error")
+                        flash("That email is already in use by another main account.", "error")
                         return _render_settings()
 
                     u.email = new_email
@@ -6113,11 +6135,12 @@ def create_app():
             exists = (
                 s.query(User)
                 .filter(text("lower(email)=:e"))
+                .filter(User.is_employee.is_(True))
                 .params(e=email)
                 .first()
             )
             if exists:
-                flash("That email already has an account.", "error")
+                flash("That email is already used by another employee account.", "error")
                 return redirect(url_for("settings"))
 
             token = make_employee_invite_token(owner.id, email)
@@ -6213,10 +6236,14 @@ def create_app():
                     flash("That username is already taken.", "error")
                     return render_template("employee_invite_accept.html", token=token, invite_email=invite_email, owner=owner)
                 taken_email = (
-                    s.query(User).filter(text("lower(email) = :e")).params(e=invite_email).first()
+                    s.query(User)
+                    .filter(text("lower(email) = :e"))
+                    .filter(User.is_employee.is_(True))
+                    .params(e=invite_email)
+                    .first()
                 )
                 if taken_email:
-                    flash("That email already has an account.", "error")
+                    flash("That email is already used by another employee account.", "error")
                     return redirect(url_for("login"))
 
                 u = User(
