@@ -33,6 +33,55 @@
   </div>
 </div>
 
+<div class="card shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-12 col-md-9">
+        <label class="form-label mb-1">Search Categories, Items, and Splits</label>
+        <input
+          class="form-control form-control-sm"
+          type="text"
+          name="q"
+          value="{{ search_query or '' }}"
+          placeholder="ex. Wiper blade, Supplies, Oil filter"
+        >
+      </div>
+      <div class="col-6 col-md-1 d-grid">
+        <button class="btn btn-sm btn-primary" type="submit">Search</button>
+      </div>
+      <div class="col-6 col-md-2 d-grid">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('business_expenses') }}">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if search_query %}
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="fw-semibold">Search Results</div>
+        <div class="small-muted">{{ (search_results or [])|length }} match(es)</div>
+      </div>
+      {% if search_results %}
+        <div class="list-group list-group-flush">
+          {% for r in search_results %}
+            <div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center gap-2">
+              <div>
+                <div class="fw-semibold">{{ r.title }}</div>
+                <div class="small-muted">{{ r.subtitle }}</div>
+              </div>
+              <a class="btn btn-sm btn-outline-primary" href="{{ r.href }}">{{ r.action_label }}</a>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="small-muted">No matches found for "{{ search_query }}".</div>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+
 <div class="row g-2">
   {% set example_by_category = {
     "advertising": "ex. Facebook ad campaign",

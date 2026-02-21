@@ -30,7 +30,7 @@ from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
     login_required, current_user
 )
-from sqlalchemy import text, or_
+from sqlalchemy import text, or_, func
 from sqlalchemy.orm import selectinload, defer
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -9566,11 +9566,108 @@ def create_app():
             default_rows = [r for r in rows if not r.is_custom]
             custom_rows = [r for r in rows if r.is_custom]
             total_expenses = sum(float(r.amount or 0.0) for r in rows)
+            search_query = (request.args.get("q") or "").strip()
+            search_results: list[dict] = []
+            if search_query:
+                like_q = f"%{search_query.lower()}%"
+
+                category_hits = (
+                    s.query(BusinessExpense.id, BusinessExpense.label)
+                    .filter(BusinessExpense.user_id == uid)
+                    .filter(func.lower(BusinessExpense.label).like(like_q))
+                    .order_by(BusinessExpense.is_custom.asc(), BusinessExpense.sort_order.asc(), BusinessExpense.id.asc())
+                    .all()
+                )
+                for cid, label in category_hits:
+                    search_results.append(
+                        {
+                            "kind": "category",
+                            "title": (label or "").strip() or "Category",
+                            "subtitle": "Category match",
+                            "href": url_for("business_expense_category", expense_id=int(cid)),
+                            "action_label": "Open Category",
+                        }
+                    )
+
+                entry_hits = (
+                    s.query(
+                        BusinessExpenseEntry.id,
+                        BusinessExpenseEntry.item_desc,
+                        BusinessExpenseEntry.amount,
+                        BusinessExpense.id,
+                        BusinessExpense.label,
+                    )
+                    .join(BusinessExpense, BusinessExpense.id == BusinessExpenseEntry.expense_id)
+                    .filter(BusinessExpenseEntry.user_id == uid, BusinessExpense.user_id == uid)
+                    .filter(
+                        or_(
+                            func.lower(BusinessExpenseEntry.item_desc).like(like_q),
+                            func.lower(BusinessExpense.label).like(like_q),
+                        )
+                    )
+                    .order_by(BusinessExpenseEntry.id.desc())
+                    .limit(200)
+                    .all()
+                )
+                for _eid, item_desc, amount, cid, label in entry_hits:
+                    search_results.append(
+                        {
+                            "kind": "entry",
+                            "title": (item_desc or "").strip() or "Expense Item",
+                            "subtitle": f"{(label or '').strip() or 'Category'} • ${float(amount or 0.0):.2f}",
+                            "href": url_for("business_expense_category", expense_id=int(cid)),
+                            "action_label": "View In Category",
+                        }
+                    )
+
+                split_hits = (
+                    s.query(
+                        BusinessExpenseEntrySplit.id,
+                        BusinessExpenseEntrySplit.item_desc,
+                        BusinessExpenseEntrySplit.amount,
+                        BusinessExpenseEntry.id,
+                        BusinessExpense.id,
+                        BusinessExpense.label,
+                    )
+                    .join(BusinessExpenseEntry, BusinessExpenseEntry.id == BusinessExpenseEntrySplit.entry_id)
+                    .join(BusinessExpense, BusinessExpense.id == BusinessExpenseEntry.expense_id)
+                    .filter(
+                        BusinessExpenseEntrySplit.user_id == uid,
+                        BusinessExpenseEntry.user_id == uid,
+                        BusinessExpense.user_id == uid,
+                    )
+                    .filter(
+                        or_(
+                            func.lower(BusinessExpenseEntrySplit.item_desc).like(like_q),
+                            func.lower(BusinessExpense.label).like(like_q),
+                        )
+                    )
+                    .order_by(BusinessExpenseEntrySplit.id.desc())
+                    .limit(200)
+                    .all()
+                )
+                for _sid, item_desc, amount, entry_id, cid, label in split_hits:
+                    search_results.append(
+                        {
+                            "kind": "split",
+                            "title": (item_desc or "").strip() or "Split Item",
+                            "subtitle": f"{(label or '').strip() or 'Category'} • ${float(amount or 0.0):.2f}",
+                            "href": url_for(
+                                "business_expense_entry_split",
+                                expense_id=int(cid),
+                                entry_id=int(entry_id),
+                            ),
+                            "action_label": "Open Split",
+                        }
+                    )
+
             return render_template(
                 "business_expenses.html",
                 default_rows=default_rows,
                 custom_rows=custom_rows,
                 total_expenses=total_expenses,
+                search_query=search_query,
+                search_results=search_results,
             )
 
     @app.route("/business-expenses/<int:expense_id>")
