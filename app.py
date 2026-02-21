@@ -5659,13 +5659,52 @@ def create_app():
                             },
                         },
                     )
-                except Exception:
-                    # Fallback to normal portal if account's portal config/API doesn't support confirm flow.
-                    portal = stripe.billing_portal.Session.create(
-                        customer=cust_id,
-                        return_url=f"{base}{url_for('billing')}",
-                    )
-                    flash("Confirm your Pro upgrade in Stripe Billing.", "info")
+                except Exception as confirm_exc:
+                    # Some Stripe portal configs/accounts don't allow `subscription_update_confirm`.
+                    # Fallback to guided subscription update flow (still explicit user confirmation).
+                    try:
+                        portal = stripe.billing_portal.Session.create(
+                            customer=cust_id,
+                            return_url=f"{base}{url_for('billing')}",
+                            flow_data={
+                                "type": "subscription_update",
+                                "after_completion": {
+                                    "type": "redirect",
+                                    "redirect": {"return_url": f"{base}{url_for('billing_success')}"},
+                                },
+                                "subscription_update": {
+                                    "subscription": sub_id,
+                                    "default_allowed_updates": ["price"],
+                                    "products": [
+                                        {
+                                            "product": (items[0].get("price") or {}).get("product"),
+                                            "prices": [STRIPE_PRICE_ID_BASIC, STRIPE_PRICE_ID_PRO],
+                                        }
+                                    ],
+                                },
+                            },
+                        )
+                    except Exception as update_exc:
+                        _audit_log(
+                            s,
+                            event="billing.upgrade_pro",
+                            result="fail",
+                            user_id=u.id,
+                            username=u.username,
+                            email=u.email,
+                            details=(
+                                "stripe_upgrade_flow_unsupported:"
+                                f"confirm={type(confirm_exc).__name__};"
+                                f"update={type(update_exc).__name__}"
+                            ),
+                        )
+                        s.commit()
+                        flash(
+                            "Stripe upgrade confirmation flow is not enabled yet. "
+                            "In Stripe Billing Portal settings, enable customer plan switching for subscriptions.",
+                            "error",
+                        )
+                        return redirect(url_for("billing"))
 
                 _audit_log(
                     s,
