@@ -9632,6 +9632,7 @@ def create_app():
                 abort(404)
             entry = (
                 s.query(BusinessExpenseEntry)
+                .options(defer(BusinessExpenseEntry.expense_date))
                 .filter(
                     BusinessExpenseEntry.id == entry_id,
                     BusinessExpenseEntry.expense_id == expense_id,
@@ -9662,6 +9663,7 @@ def create_app():
                 abort(404)
             entry = (
                 s.query(BusinessExpenseEntry)
+                .options(defer(BusinessExpenseEntry.expense_date))
                 .filter(
                     BusinessExpenseEntry.id == entry_id,
                     BusinessExpenseEntry.expense_id == expense_id,
@@ -9714,6 +9716,7 @@ def create_app():
                 abort(404)
             entry = (
                 s.query(BusinessExpenseEntry)
+                .options(defer(BusinessExpenseEntry.expense_date))
                 .filter(
                     BusinessExpenseEntry.id == entry_id,
                     BusinessExpenseEntry.expense_id == expense_id,
@@ -9745,6 +9748,7 @@ def create_app():
                 abort(404)
             entry = (
                 s.query(BusinessExpenseEntry)
+                .options(defer(BusinessExpenseEntry.expense_date))
                 .filter(
                     BusinessExpenseEntry.id == entry_id,
                     BusinessExpenseEntry.expense_id == expense_id,
