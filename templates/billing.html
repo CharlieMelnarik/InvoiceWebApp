@@ -172,6 +172,40 @@
         <div class="fw-semibold">${{ '%.2f'|format((referral_credit_pending_cents or 0) / 100.0) }}</div>
       </div>
     </div>
+
+    {% if referral_welcome_referred %}
+      <hr class="my-3" />
+      <div class="rounded border p-3 bg-light">
+        <div class="fw-semibold mb-1">Your Referral Welcome Credit</div>
+        <div class="small-muted mb-2">
+          After your first paid subscription month, your next month is credited automatically.
+        </div>
+        <div class="row g-2">
+          <div class="col-12 col-md-3">
+            <div class="small-muted">Credit Amount</div>
+            <div class="fw-semibold">${{ '%.2f'|format((referral_welcome_bonus_amount_cents or 0) / 100.0) }}</div>
+          </div>
+          <div class="col-12 col-md-3">
+            <div class="small-muted">Granted</div>
+            <div class="fw-semibold">
+              {% if referral_welcome_bonus_granted_at %}
+                {{ referral_welcome_bonus_granted_at.strftime('%b %-d, %Y') if referral_welcome_bonus_granted_at else '' }}
+              {% else %}
+                Pending qualification
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-12 col-md-3">
+            <div class="small-muted">Pending to Apply</div>
+            <div class="fw-semibold">${{ '%.2f'|format((referral_welcome_bonus_pending_cents or 0) / 100.0) }}</div>
+          </div>
+          <div class="col-12 col-md-3">
+            <div class="small-muted">Applied to Billing</div>
+            <div class="fw-semibold">${{ '%.2f'|format((referral_welcome_bonus_applied_cents_total or 0) / 100.0) }}</div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
   </div>
 </div>
 

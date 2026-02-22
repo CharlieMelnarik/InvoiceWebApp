@@ -6748,6 +6748,11 @@ def create_app():
         referral_credit_pending_cents = 0
         referral_credit_earned_cents = 0
         referral_credit_applied_cents = 0
+        referral_welcome_referred = False
+        referral_welcome_bonus_amount_cents = 0
+        referral_welcome_bonus_granted_at = None
+        referral_welcome_bonus_pending_cents = 0
+        referral_welcome_bonus_applied_cents_total = 0
 
         with db_session() as s:
             u = s.get(User, _current_user_id_int())
@@ -6794,6 +6799,13 @@ def create_app():
                 referral_credit_pending_cents = int(getattr(u, "referral_credit_cents_pending", 0) or 0)
                 referral_credit_earned_cents = int(getattr(u, "referral_credit_cents_earned_total", 0) or 0)
                 referral_credit_applied_cents = int(getattr(u, "referral_credit_cents_applied_total", 0) or 0)
+                referral_welcome_referred = int(getattr(u, "referred_by_user_id", 0) or 0) > 0
+                referral_welcome_bonus_amount_cents = int(getattr(u, "referral_signup_bonus_amount_cents", 0) or 0)
+                referral_welcome_bonus_granted_at = getattr(u, "referral_signup_bonus_granted_at", None)
+                referral_welcome_bonus_pending_cents = int(getattr(u, "referral_signup_bonus_pending_cents", 0) or 0)
+                referral_welcome_bonus_applied_cents_total = int(
+                    getattr(u, "referral_signup_bonus_applied_cents_total", 0) or 0
+                )
 
         return render_template(
             "billing.html",
@@ -6819,6 +6831,11 @@ def create_app():
             referral_credit_pending_cents=referral_credit_pending_cents,
             referral_credit_earned_cents=referral_credit_earned_cents,
             referral_credit_applied_cents=referral_credit_applied_cents,
+            referral_welcome_referred=referral_welcome_referred,
+            referral_welcome_bonus_amount_cents=referral_welcome_bonus_amount_cents,
+            referral_welcome_bonus_granted_at=referral_welcome_bonus_granted_at,
+            referral_welcome_bonus_pending_cents=referral_welcome_bonus_pending_cents,
+            referral_welcome_bonus_applied_cents_total=referral_welcome_bonus_applied_cents_total,
         )
 
     @app.route("/billing/checkout", methods=["POST"])
