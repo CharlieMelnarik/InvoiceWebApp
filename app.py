@@ -7500,8 +7500,13 @@ def create_app():
                     s.commit()
 
             elif etype in ("invoice.paid", "invoice.payment_succeeded"):
-                sub_id = (obj.get("subscription") or "").strip()
-                cust_id = (obj.get("customer") or "").strip()
+                def _stripe_id(v):
+                    if isinstance(v, dict):
+                        return (v.get("id") or "").strip()
+                    return (v or "").strip()
+
+                sub_id = _stripe_id(obj.get("subscription"))
+                cust_id = _stripe_id(obj.get("customer"))
                 billing_reason = (obj.get("billing_reason") or "").strip().lower()
                 paid_total = int(obj.get("amount_paid") or 0)
                 lines = ((obj.get("lines") or {}).get("data")) or []
@@ -7516,6 +7521,16 @@ def create_app():
                     or has_subscription_line
                 )
                 if paid_total <= 0 or not is_subscription_paid_invoice:
+                    _audit_log(
+                        s,
+                        event="referral.eval",
+                        result="skip",
+                        details=(
+                            f"reason=not_qualifying;etype={etype};paid_total={paid_total};"
+                            f"sub_id={sub_id or '-'};cust_id={cust_id or '-'};"
+                            f"billing_reason={billing_reason or '-'};sub_line={'1' if has_subscription_line else '0'}"
+                        ),
+                    )
                     s.commit()
                     return ("ok", 200)
 
@@ -7525,9 +7540,27 @@ def create_app():
                 if not u and cust_id:
                     u = s.query(User).filter(User.stripe_customer_id == cust_id).first()
                 if not u:
+                    _audit_log(
+                        s,
+                        event="referral.eval",
+                        result="skip",
+                        details=(
+                            f"reason=no_user_match;etype={etype};sub_id={sub_id or '-'};"
+                            f"cust_id={cust_id or '-'};billing_reason={billing_reason or '-'}"
+                        ),
+                    )
                     s.commit()
                     return ("ok", 200)
                 if bool(getattr(u, "is_employee", False)):
+                    _audit_log(
+                        s,
+                        event="referral.eval",
+                        result="skip",
+                        user_id=u.id,
+                        username=u.username,
+                        email=u.email,
+                        details=f"reason=employee_user;etype={etype}",
+                    )
                     s.commit()
                     return ("ok", 200)
 
