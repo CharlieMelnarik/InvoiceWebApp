@@ -7504,7 +7504,13 @@ def create_app():
                 cust_id = (obj.get("customer") or "").strip()
                 billing_reason = (obj.get("billing_reason") or "").strip().lower()
                 paid_total = int(obj.get("amount_paid") or 0)
-                is_subscription_paid_invoice = bool(sub_id) and billing_reason in ("subscription_create", "subscription_cycle")
+                lines = ((obj.get("lines") or {}).get("data")) or []
+                has_subscription_line = any(((ln or {}).get("type") or "").strip().lower() == "subscription" for ln in lines)
+                is_subscription_paid_invoice = bool(sub_id) and (
+                    billing_reason in ("subscription_create", "subscription_cycle", "subscription_update")
+                    or has_subscription_line
+                    or not billing_reason
+                )
                 if paid_total <= 0 or not is_subscription_paid_invoice:
                     s.commit()
                     return ("ok", 200)
