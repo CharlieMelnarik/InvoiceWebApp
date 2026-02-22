@@ -7499,7 +7499,7 @@ def create_app():
 
                     s.commit()
 
-            elif etype == "invoice.paid":
+            elif etype in ("invoice.paid", "invoice.payment_succeeded"):
                 sub_id = (obj.get("subscription") or "").strip()
                 cust_id = (obj.get("customer") or "").strip()
                 billing_reason = (obj.get("billing_reason") or "").strip().lower()
