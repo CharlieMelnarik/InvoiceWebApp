@@ -169,6 +169,11 @@ class User(Base):
     referral_credit_cents_pending: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     referral_credit_cents_earned_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     referral_credit_cents_applied_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # One-time signup bonus for referred user after first paid subscription month.
+    referral_signup_bonus_granted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    referral_signup_bonus_amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    referral_signup_bonus_pending_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    referral_signup_bonus_applied_cents_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

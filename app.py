@@ -2905,6 +2905,14 @@ def _migrate_user_referral_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN referral_credit_cents_earned_total INTEGER")
     if not _column_exists(engine, "users", "referral_credit_cents_applied_total"):
         stmts.append("ALTER TABLE users ADD COLUMN referral_credit_cents_applied_total INTEGER")
+    if not _column_exists(engine, "users", "referral_signup_bonus_granted_at"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_signup_bonus_granted_at TIMESTAMP NULL")
+    if not _column_exists(engine, "users", "referral_signup_bonus_amount_cents"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_signup_bonus_amount_cents INTEGER")
+    if not _column_exists(engine, "users", "referral_signup_bonus_pending_cents"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_signup_bonus_pending_cents INTEGER")
+    if not _column_exists(engine, "users", "referral_signup_bonus_applied_cents_total"):
+        stmts.append("ALTER TABLE users ADD COLUMN referral_signup_bonus_applied_cents_total INTEGER")
 
     if stmts:
         with engine.begin() as conn:
@@ -2924,6 +2932,15 @@ def _migrate_user_referral_fields(engine):
             ))
             conn.execute(text(
                 "UPDATE users SET referral_credit_cents_applied_total = 0 WHERE referral_credit_cents_applied_total IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET referral_signup_bonus_amount_cents = 0 WHERE referral_signup_bonus_amount_cents IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET referral_signup_bonus_pending_cents = 0 WHERE referral_signup_bonus_pending_cents IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE users SET referral_signup_bonus_applied_cents_total = 0 WHERE referral_signup_bonus_applied_cents_total IS NULL"
             ))
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS users_referred_by_idx ON users (referred_by_user_id)"
@@ -3698,6 +3715,27 @@ def create_app():
             return 0
         user.referral_credit_cents_pending = 0
         user.referral_credit_cents_applied_total = int(getattr(user, "referral_credit_cents_applied_total", 0) or 0) + pending
+        return pending
+
+    def _apply_pending_signup_bonus_for_user(session, user: User | None) -> int:
+        if not user:
+            return 0
+        pending = int(getattr(user, "referral_signup_bonus_pending_cents", 0) or 0)
+        cust_id = (getattr(user, "stripe_customer_id", None) or "").strip()
+        if pending <= 0 or not cust_id:
+            return 0
+        ok = _apply_customer_balance_credit(
+            cust_id,
+            pending,
+            reason="InvoiceRunner one-time referral signup bonus",
+            metadata={"type": "referral_signup_bonus", "app_user_id": str(user.id)},
+        )
+        if not ok:
+            return 0
+        user.referral_signup_bonus_pending_cents = 0
+        user.referral_signup_bonus_applied_cents_total = int(
+            getattr(user, "referral_signup_bonus_applied_cents_total", 0) or 0
+        ) + pending
         return pending
 
     def _extract_card_fingerprint_from_invoice_paid_obj(invoice_obj: dict) -> str:
@@ -6887,6 +6925,19 @@ def create_app():
                 )
                 s.commit()
 
+            applied_signup_bonus_cents = _apply_pending_signup_bonus_for_user(s, u)
+            if applied_signup_bonus_cents > 0:
+                _audit_log(
+                    s,
+                    event="billing.signup_bonus_apply",
+                    result="success",
+                    user_id=u.id,
+                    username=u.username,
+                    email=u.email,
+                    details=f"applied_cents={applied_signup_bonus_cents}",
+                )
+                s.commit()
+
             subscription_data = {"metadata": {"plan_tier": plan_tier}}
             trial_used_for_plan = bool(
                 (getattr(u, "trial_used_pro_at", None) if plan_tier == "pro" else (getattr(u, "trial_used_basic_at", None) or getattr(u, "trial_used_at", None)))
@@ -7451,8 +7502,10 @@ def create_app():
             elif etype == "invoice.paid":
                 sub_id = (obj.get("subscription") or "").strip()
                 cust_id = (obj.get("customer") or "").strip()
+                billing_reason = (obj.get("billing_reason") or "").strip().lower()
                 paid_total = int(obj.get("amount_paid") or 0)
-                if paid_total <= 0:
+                is_subscription_paid_invoice = bool(sub_id) and billing_reason in ("subscription_create", "subscription_cycle")
+                if paid_total <= 0 or not is_subscription_paid_invoice:
                     s.commit()
                     return ("ok", 200)
 
@@ -7572,6 +7625,48 @@ def create_app():
                                         f"applied={'yes' if applied > 0 else 'no'}"
                                     ),
                                 )
+                                # Referred user bonus: after first paid subscription month, grant a one-time
+                                # free-month account credit toward the next billing invoice.
+                                if not getattr(u, "referral_signup_bonus_granted_at", None):
+                                    signup_bonus_cents = _credit_amount_for_tier(
+                                        _normalize_plan_tier(getattr(u, "subscription_tier", None))
+                                    )
+                                    signup_bonus_cents = max(0, int(signup_bonus_cents))
+                                    if signup_bonus_cents > 0:
+                                        bonus_applied = 0
+                                        if (getattr(u, "stripe_customer_id", None) or "").strip():
+                                            if _apply_customer_balance_credit(
+                                                (u.stripe_customer_id or "").strip(),
+                                                signup_bonus_cents,
+                                                reason="InvoiceRunner referral signup bonus (one free month)",
+                                                metadata={
+                                                    "referred_user_id": str(u.id),
+                                                    "referrer_user_id": str(referrer.id),
+                                                },
+                                            ):
+                                                bonus_applied = signup_bonus_cents
+                                        if bonus_applied > 0:
+                                            u.referral_signup_bonus_applied_cents_total = int(
+                                                getattr(u, "referral_signup_bonus_applied_cents_total", 0) or 0
+                                            ) + bonus_applied
+                                        else:
+                                            u.referral_signup_bonus_pending_cents = int(
+                                                getattr(u, "referral_signup_bonus_pending_cents", 0) or 0
+                                            ) + signup_bonus_cents
+                                        u.referral_signup_bonus_granted_at = now_utc
+                                        u.referral_signup_bonus_amount_cents = signup_bonus_cents
+                                        _audit_log(
+                                            s,
+                                            event="referral.signup_bonus",
+                                            result="success",
+                                            user_id=u.id,
+                                            username=u.username,
+                                            email=u.email,
+                                            details=(
+                                                f"referrer_user_id={referrer.id};bonus_cents={signup_bonus_cents};"
+                                                f"applied={'yes' if bonus_applied > 0 else 'no'}"
+                                            ),
+                                        )
 
                 s.commit()
 
