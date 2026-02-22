@@ -25,7 +25,7 @@ from werkzeug.utils import secure_filename
 import stripe
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, send_file, abort, current_app, jsonify, has_request_context
+    flash, send_file, abort, current_app, jsonify, has_request_context, session
 )
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -3625,6 +3625,10 @@ def create_app():
         code = re.sub(r"[^A-Za-z0-9]", "", (raw or "").strip().upper())
         return code[:32]
 
+    def _owner_user_filter():
+        # Treat NULL is_employee as owner for legacy rows.
+        return func.coalesce(User.is_employee, False).is_(False)
+
     def _signup_user_agent_hash() -> str | None:
         ua = (request.headers.get("User-Agent") or "").strip()
         if not ua:
@@ -3716,6 +3720,29 @@ def create_app():
         except Exception as exc:
             print(f"[REFERRAL] card fingerprint extract failed: {exc!r}", flush=True)
         return ""
+
+    def _backfill_missing_owner_referral_codes() -> int:
+        with db_session() as s:
+            owners_missing_codes = (
+                s.query(User)
+                .filter(_owner_user_filter())
+                .filter(or_(User.referral_code.is_(None), func.trim(User.referral_code) == ""))
+                .all()
+            )
+            generated = 0
+            for owner in owners_missing_codes:
+                _ensure_referral_code(s, owner)
+                generated += 1
+            if generated:
+                s.commit()
+            return generated
+
+    try:
+        backfilled_count = _backfill_missing_owner_referral_codes()
+        if backfilled_count:
+            print(f"[REFERRAL] generated referral codes for {backfilled_count} owner account(s)", flush=True)
+    except Exception as exc:
+        print(f"[REFERRAL] referral code backfill failed: {exc!r}", flush=True)
 
     # -----------------------------
     # Auth routes
@@ -3815,7 +3842,17 @@ def create_app():
         if current_user.is_authenticated:
             return redirect(url_for("customers_list"))
         turnstile_site_key = _turnstile_site_key()
-        referral_code_prefill = _normalize_referral_code(request.args.get("ref") or request.form.get("referral_code") or "")
+        referral_session_key = "_register_referral_code"
+        referral_raw_query = (request.args.get("ref") or "").strip()
+        referral_query_code = _normalize_referral_code(referral_raw_query)
+        referral_form_code = _normalize_referral_code(request.form.get("referral_code") or "")
+        referral_session_code = _normalize_referral_code(session.get(referral_session_key) or "")
+        referral_code_prefill = referral_query_code or referral_form_code or referral_session_code
+        if request.method == "GET":
+            if referral_query_code:
+                session[referral_session_key] = referral_query_code
+            elif "ref" in request.args:
+                session.pop(referral_session_key, None)
 
         def _render_register():
             return render_template(
@@ -3885,7 +3922,7 @@ def create_app():
                 taken_email = (
                     s.query(User)
                     .filter(text("lower(email) = :e"))
-                    .filter(User.is_employee.is_(False))
+                    .filter(_owner_user_filter())
                     .params(e=email)
                     .first()
                 )
@@ -3899,13 +3936,14 @@ def create_app():
                 if referral_code_prefill:
                     referrer = (
                         s.query(User)
-                        .filter(User.is_employee.is_(False))
+                        .filter(_owner_user_filter())
                         .filter(text("lower(referral_code) = :code"))
                         .params(code=referral_code_prefill.lower())
                         .first()
                     )
                     if not referrer:
-                        flash("Referral code not found. You can still create your account.", "info")
+                        # Invalid/missing referrer should never block signup and should stay silent.
+                        session.pop(referral_session_key, None)
                         referral_code_prefill = ""
 
                 signup_ip = _client_ip()
@@ -3931,8 +3969,17 @@ def create_app():
                 s.add(u)
                 s.flush()
                 _ensure_referral_code(s, u)
-                _audit_log(s, event="auth.register", result="success", user_id=u.id, username=u.username, email=u.email)
+                _audit_log(
+                    s,
+                    event="auth.register",
+                    result="success",
+                    user_id=u.id,
+                    username=u.username,
+                    email=u.email,
+                    details=f"ref_code={referred_by_code or '-'};ref_user_id={referred_by_id or 0}",
+                )
                 s.commit()
+                session.pop(referral_session_key, None)
 
                 login_user(AppUser(u.id, u.username, scope_user_id=u.id, is_employee=False))
                 return redirect(url_for("customers_list"))
