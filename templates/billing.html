@@ -74,9 +74,7 @@
           </ul>
           {% if not basic_price_configured %}
             <div class="small-muted">Basic plan is not configured yet.</div>
-          {% elif is_subscribed %}
-            <div class="small-muted">Already subscribed. Switch plans in Stripe billing.</div>
-          {% else %}
+          {% elif not is_subscribed %}
             <form method="post" action="{{ url_for('billing_checkout') }}" class="js-stripe-loading-form">
               <input type="hidden" name="plan" value="basic">
               <button class="btn btn-outline-primary" type="submit">
@@ -104,9 +102,7 @@
           </ul>
           {% if not pro_price_configured %}
             <div class="small-muted">Pro plan is not configured yet.</div>
-          {% elif is_subscribed %}
-            <div class="small-muted">Already subscribed. Switch plans in Stripe billing.</div>
-          {% else %}
+          {% elif not is_subscribed %}
             <form method="post" action="{{ url_for('billing_checkout') }}" class="js-stripe-loading-form">
               <input type="hidden" name="plan" value="pro">
               <button class="btn btn-primary" type="submit">
@@ -129,8 +125,8 @@
   <div class="card-body">
     <h5 class="mb-2">Referral Program</h5>
     <p class="small-muted mb-3">
-      Share your referral link. When a referred user becomes a paid subscriber and stays active long enough,
-      you earn one month of account credit.
+      Share your referral link. When a referred user becomes a paid subscriber, you earn one month of the value of
+      their subscription in account credit.
     </p>
     <div class="row g-3 align-items-end mb-2">
       <div class="col-12 col-md-4">
@@ -214,8 +210,8 @@
     <div class="card-body">
       <h5 class="mb-2">Customer Payments (Stripe Connect)</h5>
       <p class="small-muted mb-3">
-        Connect your Stripe account so your customers can pay invoices and estimates from the customer portal.
-        Payments go directly to your connected Stripe account.
+        Create a Stripe account here to get paid by your customers in the customer portal.
+        Payments go directly to your Stripe connect account.
       </p>
 
       {% if connect_account_id %}
