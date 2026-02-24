@@ -292,7 +292,13 @@
                   {% if ct.status != "e_signed" %}
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('contract_edit', contract_id=ct.id) }}">Edit</a>
                   {% endif %}
+                  {% if ct.status == "e_signed" %}
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('contract_pdf_download', contract_id=ct.id) }}">Download PDF</a>
+                  {% endif %}
                   <a class="btn btn-sm btn-outline-secondary" href="{{ contract_portal_links.get(ct.id, '#') }}" target="_blank" rel="noopener noreferrer">Open Sign Link</a>
+                  <form method="post" action="{{ url_for('contract_delete', contract_id=ct.id) }}" class="d-inline" onsubmit="return confirm('Delete this contract? This cannot be undone.');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                  </form>
                 </td>
               </tr>
             {% endfor %}

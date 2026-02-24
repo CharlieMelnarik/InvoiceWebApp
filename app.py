@@ -6,6 +6,7 @@ import re
 import io
 import math
 import html
+import textwrap
 import csv
 import hashlib
 import calendar
@@ -37,6 +38,8 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from PIL import Image, UnidentifiedImageError
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
 
 from config import Config
 from models import (
@@ -1262,6 +1265,72 @@ def _default_contract_body(owner: User | None, customer: Customer | None) -> str
     owner_name = ((getattr(owner, "business_name", None) or "").strip() if owner else "") or (
         (getattr(owner, "username", None) or "").strip() if owner else "Business"
     )
+
+
+def _contract_pdf_buffer(contract: Contract, owner: User | None, customer: Customer | None) -> io.BytesIO:
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=LETTER)
+    page_w, page_h = LETTER
+    margin = 54
+    line_h = 14
+    y = page_h - margin
+
+    def _new_page_if_needed(lines_needed: int = 1):
+        nonlocal y
+        if y - (lines_needed * line_h) < margin:
+            c.showPage()
+            y = page_h - margin
+
+    def _draw_line(text: str, *, font: str = "Helvetica", size: int = 11):
+        nonlocal y
+        _new_page_if_needed(1)
+        c.setFont(font, size)
+        c.drawString(margin, y, text)
+        y -= line_h
+
+    owner_name = ((getattr(owner, "business_name", None) or "").strip() if owner else "") or (
+        (getattr(owner, "username", None) or "").strip() if owner else "Business"
+    )
+    customer_name = ((getattr(customer, "name", None) or "").strip() if customer else "") or "Customer"
+
+    _draw_line(contract.title or "Service Agreement", font="Helvetica-Bold", size=16)
+    y -= 4
+    _draw_line(f"Business: {owner_name}", font="Helvetica", size=10)
+    _draw_line(f"Customer: {customer_name}", font="Helvetica", size=10)
+    _draw_line(f"Status: {contract.status.replace('_', '-').title()}", font="Helvetica", size=10)
+    if getattr(contract, "sent_at", None):
+        _draw_line(f"Sent: {contract.sent_at.strftime('%Y-%m-%d %H:%M:%S UTC')}", font="Helvetica", size=10)
+    if getattr(contract, "signed_at", None):
+        _draw_line(f"Signed: {contract.signed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}", font="Helvetica", size=10)
+    if getattr(contract, "signed_name", None):
+        _draw_line(f"Signed By: {contract.signed_name}", font="Helvetica", size=10)
+    y -= 6
+    _draw_line("Contract Terms", font="Helvetica-Bold", size=12)
+    y -= 2
+
+    max_chars = 102
+    body_text = (contract.body or "").replace("\r\n", "\n").replace("\r", "\n")
+    for para in body_text.split("\n"):
+        if not para.strip():
+            _new_page_if_needed(1)
+            y -= line_h
+            continue
+        wrapped = textwrap.wrap(para, width=max_chars, break_long_words=False, break_on_hyphens=False) or [""]
+        for ln in wrapped:
+            _draw_line(ln, font="Helvetica", size=10)
+
+    y -= 10
+    _draw_line("Signature Record", font="Helvetica-Bold", size=12)
+    if getattr(contract, "signed_name", None):
+        _draw_line(f"Name: {contract.signed_name}", font="Helvetica", size=10)
+    if getattr(contract, "signed_at", None):
+        _draw_line(f"Timestamp: {contract.signed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}", font="Helvetica", size=10)
+    if getattr(contract, "signed_ip", None):
+        _draw_line(f"IP: {contract.signed_ip}", font="Helvetica", size=10)
+
+    c.save()
+    buf.seek(0)
+    return buf
     customer_name = ((getattr(customer, "name", None) or "").strip() if customer else "") or "Client"
     return (
         "SERVICE AGREEMENT\n\n"
@@ -8974,6 +9043,52 @@ def create_app():
 
             return render_template("contract_form.html", mode="edit", c=customer, contract=contract)
 
+    @app.post("/contracts/<int:contract_id>/delete")
+    @login_required
+    @subscription_required
+    def contract_delete(contract_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            contract = (
+                s.query(Contract)
+                .filter(Contract.id == contract_id, Contract.user_id == uid)
+                .first()
+            )
+            if not contract:
+                abort(404)
+            customer_id = int(contract.customer_id)
+            s.delete(contract)
+            s.commit()
+        flash("Contract deleted.", "success")
+        return redirect(url_for("customer_view", customer_id=customer_id))
+
+    @app.get("/contracts/<int:contract_id>/pdf")
+    @login_required
+    @subscription_required
+    def contract_pdf_download(contract_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            contract = (
+                s.query(Contract)
+                .options(selectinload(Contract.customer))
+                .filter(Contract.id == contract_id, Contract.user_id == uid)
+                .first()
+            )
+            if not contract:
+                abort(404)
+            if contract.status != "e_signed":
+                flash("Only signed contracts can be downloaded as PDF.", "error")
+                return redirect(url_for("customer_view", customer_id=contract.customer_id))
+            owner = s.get(User, uid)
+            pdf_buf = _contract_pdf_buffer(contract, owner, contract.customer)
+            filename = f"contract_{contract.id}_signed.pdf"
+            return send_file(
+                pdf_buf,
+                as_attachment=True,
+                download_name=filename,
+                mimetype="application/pdf",
+            )
+
     # -----------------------------
     # All estimates list
     # -----------------------------
@@ -11976,6 +12091,7 @@ def create_app():
                 ),
                 sign_url=url_for("shared_contract_portal_sign", token=token),
                 decline_url=url_for("shared_contract_portal_decline", token=token),
+                pdf_url=url_for("shared_contract_portal_pdf", token=token),
             )
 
     @app.post("/shared/c/<token>/sign")
@@ -12067,6 +12183,40 @@ def create_app():
 
         flash("Contract declined.", "info")
         return redirect(url_for("shared_contract_portal", token=token), code=303)
+
+    @app.get("/shared/c/<token>/pdf")
+    def shared_contract_portal_pdf(token: str):
+        max_age = int(
+            current_app.config.get("CONTRACT_PORTAL_MAX_AGE_SECONDS")
+            or os.getenv("CONTRACT_PORTAL_MAX_AGE_SECONDS")
+            or "7776000"
+        )
+        decoded = read_contract_portal_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+
+        user_id, contract_id = decoded
+        with db_session() as s:
+            contract = (
+                s.query(Contract)
+                .options(selectinload(Contract.customer))
+                .filter(Contract.id == contract_id, Contract.user_id == user_id)
+                .first()
+            )
+            if not contract:
+                return render_template("shared_deleted.html"), 410
+            if contract.status != "e_signed":
+                flash("Contract PDF is available after signature.", "error")
+                return redirect(url_for("shared_contract_portal", token=token), code=303)
+            owner = s.get(User, contract.user_id)
+            pdf_buf = _contract_pdf_buffer(contract, owner, contract.customer)
+            filename = f"contract_{contract.id}_signed.pdf"
+            return send_file(
+                pdf_buf,
+                as_attachment=True,
+                download_name=filename,
+                mimetype="application/pdf",
+            )
 
     @app.get("/shared/v/<token>")
     def shared_customer_portal(token: str):

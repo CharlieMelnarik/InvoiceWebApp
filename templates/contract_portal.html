@@ -31,6 +31,9 @@
             Signed by <strong>{{ contract.signed_name or "Customer" }}</strong>
             {% if contract.signed_at %} on {{ contract.signed_at.strftime("%B %d, %Y %I:%M %p UTC") }}{% endif %}.
           </div>
+          <div class="mb-3">
+            <a class="btn btn-outline-secondary" href="{{ pdf_url }}">Download Signed Contract PDF</a>
+          </div>
         {% elif contract.status == "declined" %}
           <div class="alert alert-danger">
             This contract was declined{% if contract.declined_at %} on {{ contract.declined_at.strftime("%B %d, %Y %I:%M %p UTC") }}{% endif %}.
