@@ -51,15 +51,23 @@
     </form>
   </div>
 
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-3">
     <div class="card shadow-sm">
       <div class="card-body">
         <div class="small-muted">Business Income</div>
-        <div class="h5 fw-bold mb-0">${{ '%.2f'|format(income_total or 0) }}</div>
+        <div class="h5 fw-bold mb-0">${{ '%.2f'|format(business_income or 0) }}</div>
       </div>
     </div>
   </div>
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-3">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="small-muted">Other Income</div>
+        <div class="h5 fw-bold mb-0 text-success">${{ '%.2f'|format(other_income or 0) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-3">
     <div class="card shadow-sm">
       <div class="card-body">
         <div class="small-muted">Total Operating Expenses</div>
@@ -67,13 +75,29 @@
       </div>
     </div>
   </div>
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-3">
     <div class="card shadow-sm">
       <div class="card-body">
         <div class="small-muted">Profit / (Loss)</div>
         <div class="h5 fw-bold mb-0 {% if net_total < 0 %}text-danger{% else %}text-success{% endif %}">
           ${{ '%.2f'|format(net_total or 0) }}
         </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-3">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="small-muted">Interest Income</div>
+        <div class="h5 fw-bold mb-0 text-success">${{ '%.2f'|format(interest_income or 0) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-3">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="small-muted">Total Income</div>
+        <div class="h5 fw-bold mb-0 text-success">${{ '%.2f'|format(income_total or 0) }}</div>
       </div>
     </div>
   </div>
@@ -91,6 +115,21 @@
           </tr>
         </thead>
         <tbody>
+          <tr>
+            <td>Business Income</td>
+            <td class="text-end mono text-success">${{ '%.2f'|format(business_income or 0) }}</td>
+          </tr>
+          <tr>
+            <td>Other Income</td>
+            <td class="text-end mono text-success">${{ '%.2f'|format(other_income or 0) }}</td>
+          </tr>
+          <tr>
+            <td class="fw-semibold">TOTAL OPERATING INCOME</td>
+            <td class="text-end fw-semibold mono text-success">${{ '%.2f'|format((business_income or 0) + (other_income or 0)) }}</td>
+          </tr>
+          <tr>
+            <td colspan="2"><hr class="my-2"></td>
+          </tr>
           {% for row in rows %}
             <tr>
               <td>{{ row.label }}</td>
@@ -100,6 +139,19 @@
           <tr>
             <td class="fw-semibold">TOTAL OPERATING EXPENSES</td>
             <td class="text-end fw-semibold mono">${{ '%.2f'|format(total_expenses or 0) }}</td>
+          </tr>
+          <tr>
+            <td colspan="2"><hr class="my-2"></td>
+          </tr>
+          <tr>
+            <td>Interest Income</td>
+            <td class="text-end mono text-success">${{ '%.2f'|format(interest_income or 0) }}</td>
+          </tr>
+          <tr>
+            <td class="fw-semibold">NET INCOME</td>
+            <td class="text-end fw-semibold mono {% if net_total < 0 %}text-danger{% else %}text-success{% endif %}">
+              ${{ '%.2f'|format(net_total or 0) }}
+            </td>
           </tr>
         </tbody>
       </table>

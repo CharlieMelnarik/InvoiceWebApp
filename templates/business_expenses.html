@@ -39,7 +39,89 @@
       <div class="col-12 col-md-4">
         <div class="small-muted">Total Business Expenses</div>
         <div class="h5 fw-bold mb-0">${{ '%.2f'|format(total_expenses or 0) }}</div>
+        <div class="small-muted mt-2">Total Manual Income</div>
+        <div class="h6 fw-bold mb-0 text-success">${{ '%.2f'|format(total_manual_income or 0) }}</div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+      <div>
+        <div class="fw-semibold">Manual Income Entries</div>
+        <div class="small-muted">Add Other Income and Interest Income for Financial Summary and Profit &amp; Loss.</div>
+      </div>
+      <div class="text-end">
+        <div class="small-muted">Other Income: <span class="mono text-success">${{ '%.2f'|format(total_other_income or 0) }}</span></div>
+        <div class="small-muted">Interest Income: <span class="mono text-success">${{ '%.2f'|format(total_interest_income or 0) }}</span></div>
+      </div>
+    </div>
+    <form method="post" class="row g-2 align-items-end mb-3">
+      <input type="hidden" name="action" value="add_income_entry">
+      <div class="col-12 col-md-2">
+        <label class="form-label small-muted mb-1">Type</label>
+        <select class="form-select form-select-sm" name="income_type" required>
+          <option value="other">Other Income</option>
+          <option value="interest">Interest Income</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-5">
+        <label class="form-label small-muted mb-1">Description</label>
+        <input class="form-control form-control-sm" name="income_desc" placeholder="ex. Insurance rebate" required>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small-muted mb-1">Amount ($)</label>
+        <input class="form-control form-control-sm" name="income_amount" inputmode="decimal" placeholder="ex. 125.00" required>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small-muted mb-1">Date</label>
+        <input class="form-control form-control-sm" type="date" name="income_date">
+      </div>
+      <div class="col-12 col-md-1 d-grid">
+        <button class="btn btn-sm btn-success" type="submit">Add</button>
+      </div>
+    </form>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th style="width: 130px;">Type</th>
+            <th>Description</th>
+            <th style="width: 140px;">Date</th>
+            <th class="text-end" style="width: 120px;">Amount</th>
+            <th class="text-end" style="width: 90px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if income_rows and income_rows|length > 0 %}
+            {% for r in income_rows %}
+              <tr>
+                <td>
+                  {% if (r.income_type or '') == 'interest' %}
+                    <span class="badge text-bg-info">Interest</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">Other</span>
+                  {% endif %}
+                </td>
+                <td>{{ r.item_desc }}</td>
+                <td class="mono">{{ r.income_date.strftime("%Y-%m-%d") if r.income_date else "—" }}</td>
+                <td class="text-end mono text-success">${{ '%.2f'|format(r.amount or 0) }}</td>
+                <td class="text-end">
+                  <form method="post" class="d-inline" onsubmit="return confirm('Delete this income entry?');">
+                    <input type="hidden" name="action" value="delete_income_entry">
+                    <input type="hidden" name="income_id" value="{{ r.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="5" class="small-muted">No manual income entries yet.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
     </div>
   </div>
 </div>

@@ -205,6 +205,11 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="BusinessExpense.sort_order.asc(), BusinessExpense.id.asc()",
     )
+    income_entries: Mapped[list["IncomeEntry"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="IncomeEntry.created_at.desc(), IncomeEntry.id.desc()",
+    )
 
     invoice_design_templates: Mapped[list["InvoiceDesignTemplate"]] = relationship(
         back_populates="user",
@@ -750,6 +755,27 @@ class BusinessExpenseEntrySplit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     entry: Mapped["BusinessExpenseEntry"] = relationship(back_populates="split_items")
+
+
+class IncomeEntry(Base):
+    __tablename__ = "income_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    income_type: Mapped[str] = mapped_column(String(20), nullable=False, default="other", index=True)  # other|interest
+    item_desc: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    income_date: Mapped[date] = mapped_column(Date, nullable=False, default=date.today, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="income_entries")
 
 
 class AuditLog(Base):

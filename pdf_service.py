@@ -4693,6 +4693,9 @@ def generate_profit_loss_pdf(
     owner: User | None,
     period_label: str,
     income_total: float,
+    business_income: float,
+    other_income: float,
+    interest_income: float,
     expense_lines: list[tuple[str, float]],
 ) -> str:
     now = datetime.utcnow()
@@ -4738,7 +4741,10 @@ def generate_profit_loss_pdf(
     y -= 18
     pdf.setFont("Helvetica", 10)
     pdf.drawString(M + 14, y, "Business Income")
-    right_text(PAGE_W - M, y, _money(income_total), "Helvetica", 10)
+    right_text(PAGE_W - M, y, _money(business_income), "Helvetica", 10)
+    y -= 18
+    pdf.drawString(M + 14, y, "Other Income")
+    right_text(PAGE_W - M, y, _money(other_income), "Helvetica", 10)
     y -= 18
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawString(M + 14, y, "TOTAL INCOME")
@@ -4772,6 +4778,14 @@ def generate_profit_loss_pdf(
     pdf.drawString(M + 14, y, "TOTAL OPERATING EXPENSES")
     right_text(PAGE_W - M, y, _money(total_expenses), "Helvetica-Bold", 11)
     y -= 28
+
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(M, y, "Interest Income")
+    y -= 18
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(M + 14, y, "Interest Income")
+    right_text(PAGE_W - M, y, _money(interest_income), "Helvetica", 10)
+    y -= 26
 
     pdf.setFont("Helvetica-Bold", 13)
     label = "PROFIT FROM BUSINESS" if profit_or_loss >= 0 else "LOSS FROM BUSINESS"

@@ -116,6 +116,18 @@
           Show Breakdown
         </a>
       </div>
+      <div class="col-6 col-md-6">
+        <div class="small-muted">Other Income (Manual)</div>
+        <div class="fw-semibold text-success">{{ money(total_other_income) }}</div>
+      </div>
+      <div class="col-6 col-md-6">
+        <div class="small-muted">Interest Income (Manual)</div>
+        <div class="fw-semibold text-success">{{ money(total_interest_income) }}</div>
+      </div>
+      <div class="col-6 col-md-6">
+        <div class="small-muted">Total Income (Paid Invoices + Other Income + Interest Income)</div>
+        <div class="fw-bold text-success">{{ money(total_income_with_manual) }}</div>
+      </div>
 
     </div>
   </div>

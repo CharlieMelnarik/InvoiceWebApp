@@ -46,7 +46,7 @@ from models import (
     Base, make_engine, make_session_factory,
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
     ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
-    InvoiceDesignTemplate, EmailTemplate, CustomProfessionPreset, Contract,
+    InvoiceDesignTemplate, EmailTemplate, CustomProfessionPreset, Contract, IncomeEntry,
 )
 from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
 
@@ -1221,6 +1221,34 @@ def _business_expense_breakdown_for_period(
                 "amount": float(totals_by_expense_id.get(int(row.id), 0.0)),
             }
         )
+    return out
+
+
+def _manual_income_totals_for_period(
+    session,
+    user_id: int,
+    target_year: int,
+    target_month: int | None,
+) -> dict[str, float]:
+    start_dt, end_dt = _expense_period_bounds(target_year, target_month)
+    start_date = start_dt.date()
+    end_date = end_dt.date()
+    rows = (
+        session.query(IncomeEntry.income_type, IncomeEntry.amount, IncomeEntry.income_date)
+        .filter(IncomeEntry.user_id == user_id)
+        .all()
+    )
+    out = {"other": 0.0, "interest": 0.0}
+    for income_type, amount, income_date in rows:
+        d = _coerce_to_date(income_date)
+        if not d:
+            continue
+        if not (start_date <= d < end_date):
+            continue
+        key = (income_type or "").strip().lower()
+        if key not in out:
+            key = "other"
+        out[key] += float(amount or 0.0)
     return out
 
 
@@ -4871,6 +4899,7 @@ def create_app():
                             expense_rows = _zip_csv_rows(zf, "business_expense_categories.csv")
                             entry_rows = _zip_csv_rows(zf, "business_expense_entries.csv")
                             split_rows = _zip_csv_rows(zf, "business_expense_entry_splits.csv")
+                            income_rows = _zip_csv_rows(zf, "income_entries.csv")
                             schedule_rows = _zip_csv_rows(zf, "schedule_events.csv")
                             preset_rows = _zip_csv_rows(zf, "custom_profession_presets.csv")
                             design_rows = _zip_csv_rows(zf, "invoice_design_templates.csv")
@@ -4911,6 +4940,7 @@ def create_app():
                     s.query(Invoice).filter(Invoice.user_id == u.id).delete(synchronize_session=False)
                     s.query(Customer).filter(Customer.user_id == u.id).delete(synchronize_session=False)
                     s.query(BusinessExpense).filter(BusinessExpense.user_id == u.id).delete(synchronize_session=False)
+                    s.query(IncomeEntry).filter(IncomeEntry.user_id == u.id).delete(synchronize_session=False)
                     s.query(CustomProfessionPreset).filter(CustomProfessionPreset.user_id == u.id).delete(synchronize_session=False)
                     s.query(InvoiceDesignTemplate).filter(InvoiceDesignTemplate.user_id == u.id).delete(synchronize_session=False)
                     s.query(EmailTemplate).filter(EmailTemplate.user_id == u.id).delete(synchronize_session=False)
@@ -5107,6 +5137,25 @@ def create_app():
                                 item_desc=(row.get("item_desc") or "").strip(),
                                 amount=_csv_float(row.get("amount"), 0.0) or 0.0,
                                 created_at=_csv_dt(row.get("created_at")) or datetime.utcnow(),
+                            )
+                        )
+
+                    for row in income_rows:
+                        income_type = (row.get("income_type") or "").strip().lower()
+                        if income_type not in ("other", "interest"):
+                            income_type = "other"
+                        s.add(
+                            IncomeEntry(
+                                user_id=u.id,
+                                income_type=income_type,
+                                item_desc=(row.get("item_desc") or "").strip(),
+                                amount=_csv_float(row.get("amount"), 0.0) or 0.0,
+                                income_date=(
+                                    _csv_date(row.get("income_date"))
+                                    or (_csv_dt(row.get("created_at")) or datetime.utcnow()).date()
+                                ),
+                                created_at=_csv_dt(row.get("created_at")) or datetime.utcnow(),
+                                updated_at=_csv_dt(row.get("updated_at")) or datetime.utcnow(),
                             )
                         )
 
@@ -5941,6 +5990,12 @@ def create_app():
                 .order_by(BusinessExpenseEntrySplit.id.asc())
                 .all()
             )
+            income_entries = (
+                s.query(IncomeEntry)
+                .filter(IncomeEntry.user_id == uid)
+                .order_by(IncomeEntry.id.asc())
+                .all()
+            )
             schedule_events = (
                 s.query(ScheduleEvent)
                 .filter(ScheduleEvent.user_id == uid)
@@ -6015,6 +6070,7 @@ def create_app():
             expense_fields = ["id", "user_id", "label", "amount", "is_custom", "sort_order", "created_at", "updated_at"]
             entry_fields = ["id", "expense_id", "user_id", "item_desc", "amount", "expense_date", "created_at"]
             split_fields = ["id", "entry_id", "user_id", "item_desc", "amount", "created_at"]
+            income_fields = ["id", "user_id", "income_type", "item_desc", "amount", "income_date", "created_at", "updated_at"]
             schedule_fields = [
                 "id", "user_id", "created_by_user_id", "customer_id", "invoice_id", "title", "notes",
                 "start_dt", "end_dt", "status", "event_type", "is_auto", "recurring_token", "created_at", "updated_at",
@@ -6078,6 +6134,10 @@ def create_app():
                     _csv_bytes(split_fields, [[getattr(sp, f, None) for f in split_fields] for sp in splits]),
                 )
                 zf.writestr(
+                    "income_entries.csv",
+                    _csv_bytes(income_fields, [[getattr(i, f, None) for f in income_fields] for i in income_entries]),
+                )
+                zf.writestr(
                     "schedule_events.csv",
                     _csv_bytes(schedule_fields, [[getattr(ev, f, None) for f in schedule_fields] for ev in schedule_events]),
                 )
@@ -6102,7 +6162,7 @@ def create_app():
                 user_id=owner.id,
                 username=owner.username,
                 email=owner.email,
-                details=f"rows:customers={len(customers)},invoices={len(invoices)},expenses={len(expenses)}",
+                details=f"rows:customers={len(customers)},invoices={len(invoices)},expenses={len(expenses)},income_entries={len(income_entries)}",
             )
             s.commit()
             return send_file(
@@ -10151,9 +10211,9 @@ def create_app():
         target_month: int | None,
         *,
         include_breakdown: bool = False,
-    ) -> float | tuple[float, float]:
+    ) -> float | dict[str, float]:
         EPS = 0.01
-        total_paid_invoices_amount = 0.0
+        business_income = 0.0
         total_late_fee_income = 0.0
         invs = (
             s.query(Invoice)
@@ -10172,11 +10232,21 @@ def create_app():
                 if mo != target_month:
                     continue
             recognized_income, late_fee_income = _paid_invoice_income_components(inv, eps=EPS)
-            total_paid_invoices_amount += recognized_income
+            business_income += recognized_income
             total_late_fee_income += late_fee_income
+        manual = _manual_income_totals_for_period(s, uid, target_year, target_month)
+        other_income = float(manual.get("other", 0.0) or 0.0)
+        interest_income = float(manual.get("interest", 0.0) or 0.0)
+        income_total = business_income + other_income + interest_income
         if include_breakdown:
-            return total_paid_invoices_amount, total_late_fee_income
-        return total_paid_invoices_amount
+            return {
+                "income_total": income_total,
+                "business_income": business_income,
+                "other_income": other_income,
+                "interest_income": interest_income,
+                "late_fee_income": total_late_fee_income,
+            }
+        return income_total
 
     @app.route("/year-summary")
     @login_required
@@ -10344,6 +10414,10 @@ def create_app():
                     })
             expense_rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
             total_business_expenses = sum(float(r["amount"] or 0.0) for r in expense_rows)
+            manual_income_totals = _manual_income_totals_for_period(s, uid, target_year, target_month)
+            total_other_income = float(manual_income_totals.get("other", 0.0) or 0.0)
+            total_interest_income = float(manual_income_totals.get("interest", 0.0) or 0.0)
+            total_manual_income = total_other_income + total_interest_income
 
             expense_entries = (
                 s.execute(
@@ -10410,6 +10484,10 @@ def create_app():
             "unpaid_count": len(unpaid),
             "profit_paid_labor_only": profit_paid_labor_only,
             "total_business_expenses": total_business_expenses,
+            "total_other_income": total_other_income,
+            "total_interest_income": total_interest_income,
+            "total_manual_income": total_manual_income,
+            "total_income_with_manual": (total_paid_invoices_amount + total_manual_income),
             "unpaid": unpaid,
             "chart_data": {
                 "daily": {
@@ -10556,6 +10634,51 @@ def create_app():
                     flash("Categories saved.", "success")
                     return redirect(url_for("business_expenses"))
 
+                if action == "add_income_entry":
+                    income_type = (request.form.get("income_type") or "").strip().lower()
+                    if income_type not in ("other", "interest"):
+                        flash("Invalid income type.", "error")
+                        return redirect(url_for("business_expenses"))
+                    item_desc = (request.form.get("income_desc") or "").strip()
+                    if not item_desc:
+                        flash("Please enter an income description.", "error")
+                        return redirect(url_for("business_expenses"))
+                    amount = _to_float(request.form.get("income_amount"), 0.0)
+                    if amount < 0:
+                        flash("Income amount cannot be negative.", "error")
+                        return redirect(url_for("business_expenses"))
+                    income_date = _parse_iso_date_or_today((request.form.get("income_date") or "").strip())
+                    s.add(
+                        IncomeEntry(
+                            user_id=uid,
+                            income_type=income_type,
+                            item_desc=item_desc[:200],
+                            amount=amount,
+                            income_date=income_date,
+                        )
+                    )
+                    s.commit()
+                    flash("Income entry saved.", "success")
+                    return redirect(url_for("business_expenses"))
+
+                if action == "delete_income_entry":
+                    income_id_raw = (request.form.get("income_id") or "").strip()
+                    if not income_id_raw.isdigit():
+                        flash("Invalid income entry.", "error")
+                        return redirect(url_for("business_expenses"))
+                    income_row = (
+                        s.query(IncomeEntry)
+                        .filter(IncomeEntry.id == int(income_id_raw), IncomeEntry.user_id == uid)
+                        .first()
+                    )
+                    if not income_row:
+                        flash("Income entry not found.", "error")
+                        return redirect(url_for("business_expenses"))
+                    s.delete(income_row)
+                    s.commit()
+                    flash("Income entry removed.", "success")
+                    return redirect(url_for("business_expenses"))
+
                 flash("No business expense changes submitted.", "info")
                 return redirect(url_for("business_expenses"))
 
@@ -10563,6 +10686,15 @@ def create_app():
             default_rows = [r for r in rows if not r.is_custom]
             custom_rows = [r for r in rows if r.is_custom]
             total_expenses = sum(float(r.amount or 0.0) for r in rows)
+            income_rows = (
+                s.query(IncomeEntry)
+                .filter(IncomeEntry.user_id == uid)
+                .order_by(IncomeEntry.income_date.desc(), IncomeEntry.id.desc())
+                .all()
+            )
+            total_other_income = sum(float(r.amount or 0.0) for r in income_rows if (r.income_type or "").strip().lower() == "other")
+            total_interest_income = sum(float(r.amount or 0.0) for r in income_rows if (r.income_type or "").strip().lower() == "interest")
+            total_manual_income = total_other_income + total_interest_income
             search_query = (request.args.get("q") or "").strip()
             search_results: list[dict] = []
             if search_query:
@@ -10674,6 +10806,10 @@ def create_app():
                 default_rows=default_rows,
                 custom_rows=custom_rows,
                 total_expenses=total_expenses,
+                income_rows=income_rows,
+                total_other_income=total_other_income,
+                total_interest_income=total_interest_income,
+                total_manual_income=total_manual_income,
                 search_query=search_query,
                 search_results=search_results,
             )
@@ -11539,9 +11675,12 @@ def create_app():
         with db_session() as s:
             u = s.get(User, uid)
             rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
-            income_total, late_fee_income = _profit_loss_income_for_period(
-                s, uid, target_year, target_month, include_breakdown=True
-            )
+            income_breakdown = _profit_loss_income_for_period(s, uid, target_year, target_month, include_breakdown=True)
+            income_total = float(income_breakdown.get("income_total", 0.0) or 0.0)
+            business_income = float(income_breakdown.get("business_income", 0.0) or 0.0)
+            other_income = float(income_breakdown.get("other_income", 0.0) or 0.0)
+            interest_income = float(income_breakdown.get("interest_income", 0.0) or 0.0)
+            late_fee_income = float(income_breakdown.get("late_fee_income", 0.0) or 0.0)
             total_expenses = sum(float(r["amount"] or 0.0) for r in rows)
             net_total = income_total - total_expenses
             return render_template(
@@ -11550,6 +11689,9 @@ def create_app():
                 month=(str(target_month) if target_month else ""),
                 period_label=period_label,
                 income_total=income_total,
+                business_income=business_income,
+                other_income=other_income,
+                interest_income=interest_income,
                 late_fee_income=late_fee_income,
                 total_expenses=total_expenses,
                 net_total=net_total,
@@ -11576,12 +11718,15 @@ def create_app():
         with db_session() as s:
             u = s.get(User, uid)
             rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
-            income_total = _profit_loss_income_for_period(s, uid, target_year, target_month)
+            income_breakdown = _profit_loss_income_for_period(s, uid, target_year, target_month, include_breakdown=True)
             expense_lines = [(r["label"], float(r["amount"] or 0.0)) for r in rows]
             pdf_path = generate_profit_loss_pdf(
                 owner=u,
                 period_label=period_label,
-                income_total=income_total,
+                income_total=float(income_breakdown.get("income_total", 0.0) or 0.0),
+                business_income=float(income_breakdown.get("business_income", 0.0) or 0.0),
+                other_income=float(income_breakdown.get("other_income", 0.0) or 0.0),
+                interest_income=float(income_breakdown.get("interest_income", 0.0) or 0.0),
                 expense_lines=expense_lines,
             )
             return send_file(
@@ -11610,12 +11755,15 @@ def create_app():
         with db_session() as s:
             u = s.get(User, uid)
             rows = _business_expense_breakdown_for_period(s, uid, target_year, target_month)
-            income_total = _profit_loss_income_for_period(s, uid, target_year, target_month)
+            income_breakdown = _profit_loss_income_for_period(s, uid, target_year, target_month, include_breakdown=True)
             expense_lines = [(r["label"], float(r["amount"] or 0.0)) for r in rows]
             pdf_path = generate_profit_loss_pdf(
                 owner=u,
                 period_label=period_label,
-                income_total=income_total,
+                income_total=float(income_breakdown.get("income_total", 0.0) or 0.0),
+                business_income=float(income_breakdown.get("business_income", 0.0) or 0.0),
+                other_income=float(income_breakdown.get("other_income", 0.0) or 0.0),
+                interest_income=float(income_breakdown.get("interest_income", 0.0) or 0.0),
                 expense_lines=expense_lines,
             )
             return send_file(
