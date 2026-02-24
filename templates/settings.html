@@ -397,7 +397,8 @@
             <h5>Invoice Builder (Pro)</h5>
           </div>
           <div class="settings-help">Advanced drag-and-drop template builder and styling controls.</div>
-          <div class="mb-2">
+          <div class="mb-2 d-flex flex-wrap gap-2">
+            <a class="btn btn-primary btn-sm" href="{{ url_for('invoice_builder_importer') }}">AI PDF Import (Paused)</a>
             <a class="btn btn-outline-primary btn-sm" href="{{ url_for('invoice_builder') }}">Open Advanced Drag & Drop Builder</a>
           </div>
           <div class="row g-3">
@@ -546,7 +547,7 @@
           </div>
 
           <div class="row g-3">
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label compact-label mb-0">Default Due Date (days)</label>
               <div class="form-check form-switch m-0 mb-1">
                 <input class="form-check-input" type="checkbox" id="paymentReminderDueTodayEnabled" name="payment_reminder_due_today_enabled" value="1" {% if u.payment_reminder_due_today_enabled is not defined or u.payment_reminder_due_today_enabled %}checked{% endif %}>
@@ -554,7 +555,7 @@
               </div>
               <input type="text" class="form-control" name="payment_due_days" inputmode="numeric" value="{{ u.payment_due_days if u.payment_due_days is not none else '30' }}" placeholder="30">
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label compact-label mb-0">Reminder Days Before Due</label>
               <div class="form-check form-switch m-0 mb-1">
                 <input class="form-check-input" type="checkbox" id="paymentReminderBeforeEnabled" name="payment_reminder_before_enabled" value="1" {% if u.payment_reminder_before_enabled is not defined or u.payment_reminder_before_enabled %}checked{% endif %}>
@@ -562,13 +563,29 @@
               </div>
               <input type="text" class="form-control" name="payment_reminder_days_before" inputmode="numeric" value="{{ u.payment_reminder_days_before if u.payment_reminder_days_before is not none else '3' }}" placeholder="3">
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label compact-label mb-0">Reminder Days After Due</label>
               <div class="form-check form-switch m-0 mb-1">
                 <input class="form-check-input" type="checkbox" id="paymentReminderAfterEnabled" name="payment_reminder_after_enabled" value="1" {% if u.payment_reminder_after_enabled is not defined or u.payment_reminder_after_enabled %}checked{% endif %}>
                 <label class="form-check-label small text-muted" for="paymentReminderAfterEnabled">Will auto-send Reminder Days After Due</label>
               </div>
               <input type="text" class="form-control" name="payment_reminder_days_after" inputmode="numeric" value="{{ u.payment_reminder_days_after if u.payment_reminder_days_after is not none else '3' }}" placeholder="3">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label compact-label mb-0">Repeat Overdue Reminder</label>
+              <div class="form-check form-switch m-0 mb-1">
+                <input class="form-check-input" type="checkbox" id="paymentReminderAfterRepeatEnabled" name="payment_reminder_after_repeat_enabled" value="1" {% if u.payment_reminder_after_repeat_enabled %}checked{% endif %}>
+                <label class="form-check-label small text-muted" for="paymentReminderAfterRepeatEnabled">Keep sending overdue reminders after first send</label>
+              </div>
+              <div class="input-group">
+                <input type="text" class="form-control" name="payment_reminder_after_repeat_interval" inputmode="numeric" value="{{ u.payment_reminder_after_repeat_interval if u.payment_reminder_after_repeat_interval is not none else '1' }}" placeholder="1">
+                <select class="form-select" name="payment_reminder_after_repeat_unit">
+                  {% set after_repeat_unit = (u.payment_reminder_after_repeat_unit or 'month') %}
+                  <option value="day" {% if after_repeat_unit == 'day' %}selected{% endif %}>Day(s)</option>
+                  <option value="week" {% if after_repeat_unit == 'week' %}selected{% endif %}>Week(s)</option>
+                  <option value="month" {% if after_repeat_unit == 'month' %}selected{% endif %}>Month(s)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -824,6 +841,11 @@
   const customCard = document.getElementById("customProfessionCard");
   const builderEnabledToggle = document.getElementById("invoiceBuilderEnabled");
   const paymentFeeAutoToggle = document.getElementById("paymentFeeAutoEnabled");
+  const paymentRemindersEnabledToggle = document.getElementById("paymentRemindersEnabled");
+  const paymentReminderDueTodayToggle = document.getElementById("paymentReminderDueTodayEnabled");
+  const paymentReminderBeforeToggle = document.getElementById("paymentReminderBeforeEnabled");
+  const paymentReminderAfterToggle = document.getElementById("paymentReminderAfterEnabled");
+  const paymentReminderAfterRepeatToggle = document.getElementById("paymentReminderAfterRepeatEnabled");
   const stripeFeeWrap = document.getElementById("stripeFeeSettingsWrap");
   const lateFeeModeSelect = document.getElementById("lateFeeMode");
   const lateFeeFixedWrap = document.getElementById("lateFeeFixedWrap");
@@ -844,6 +866,15 @@
   function toggleStripeFeeFields() {
     if (!paymentFeeAutoToggle || !stripeFeeWrap) return;
     stripeFeeWrap.style.display = paymentFeeAutoToggle.checked ? "" : "none";
+  }
+  function syncPaymentReminderSwitchesToMaster() {
+    if (!paymentRemindersEnabledToggle) return;
+    const nextVal = !!paymentRemindersEnabledToggle.checked;
+    [paymentReminderDueTodayToggle, paymentReminderBeforeToggle, paymentReminderAfterToggle, paymentReminderAfterRepeatToggle]
+      .forEach((toggle) => {
+        if (!toggle) return;
+        toggle.checked = nextVal;
+      });
   }
   function toggleLateFeeModeFields() {
     if (!lateFeeModeSelect || !lateFeeFixedWrap || !lateFeePercentWrap) return;
@@ -866,6 +897,10 @@
   if (paymentFeeAutoToggle) {
     paymentFeeAutoToggle.addEventListener("change", toggleStripeFeeFields);
     toggleStripeFeeFields();
+  }
+  if (paymentRemindersEnabledToggle) {
+    paymentRemindersEnabledToggle.addEventListener("change", syncPaymentReminderSwitchesToMaster);
+    syncPaymentReminderSwitchesToMaster();
   }
   if (lateFeeModeSelect) {
     lateFeeModeSelect.addEventListener("change", toggleLateFeeModeFields);

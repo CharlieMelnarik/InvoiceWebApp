@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% if mode == "edit" %}
+  {% set page_title = "Edit Contract" %}
+{% else %}
+  {% set page_title = "New Contract" %}
+{% endif %}
+{% set title = page_title %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">{{ page_title }}</h1>
+    <div class="subtitle">
+      Customer:
+      {% if c %}
+        <a class="text-decoration-none fw-semibold" href="{{ url_for('customer_view', customer_id=c.id) }}">{{ c.name }}</a>
+      {% else %}
+        <span class="text-danger">Missing customer</span>
+      {% endif %}
+    </div>
+  </div>
+  {% if c %}
+    <div class="action-group">
+      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Back to Customer</a>
+    </div>
+  {% endif %}
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    {% if mode == "edit" %}
+      <form method="post" action="{{ url_for('contract_edit', contract_id=contract.id) }}">
+    {% else %}
+      <form method="post" action="{{ url_for('contract_new', customer_id=c.id) }}">
+    {% endif %}
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Contract Title</label>
+        {% if mode == "edit" %}
+          <input class="form-control" name="title" value="{{ contract.title }}" required>
+        {% else %}
+          <input class="form-control" name="title" value="{{ title_value or 'Service Agreement' }}" required>
+        {% endif %}
+      </div>
+
+      {% if mode != "edit" %}
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Send To Email</label>
+          <input class="form-control" name="to_email" value="{{ to_email_value or '' }}" placeholder="customer@example.com" required>
+        </div>
+      {% endif %}
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Contract Body</label>
+        {% if mode == "edit" %}
+          <textarea class="form-control mono" name="body" rows="20" required>{{ contract.body }}</textarea>
+        {% else %}
+          <textarea class="form-control mono" name="body" rows="20" required>{{ body_value or '' }}</textarea>
+        {% endif %}
+      </div>
+
+      <div class="d-flex flex-wrap gap-2">
+        {% if mode == "edit" %}
+          <button class="btn btn-primary" type="submit">Save Contract</button>
+        {% else %}
+          <button class="btn btn-primary" type="submit">Send Contract</button>
+        {% endif %}
+        {% if c %}
+          <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Cancel</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

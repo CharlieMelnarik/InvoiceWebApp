@@ -428,8 +428,9 @@
   let previewOffsetY = 0;
   let previewScale = 1;
   const TOKENS = [
-    "doc_label","invoice_number","date","due_date","business_name","business_phone","business_address","business_logo",
-    "customer_name","customer_email","customer_phone","job","rate","hours",
+    "doc_label","invoice_number","date","due_date","business_name","business_phone","business_address","business_email","business_logo",
+    "customer_name","customer_email","customer_phone","job","job_label","rate","hours",
+    "labor_title","parts_title","shop_supplies_label",
     "labor_lines","parts_lines","notes_text","labor_table","parts_table",
     "parts_total","labor_total","tax","total","paid","amount_due"
   ];
@@ -441,13 +442,18 @@
     business_name: "Business Name",
     business_phone: "Business Phone",
     business_address: "Business Address",
+    business_email: "Business Email",
     business_logo: "Business Logo",
     customer_name: "Customer Name",
     customer_email: "Customer Email",
     customer_phone: "Customer Phone",
     job: "Job",
+    job_label: "Job Label",
     rate: "Rate",
     hours: "Hours",
+    labor_title: "Labor Title",
+    parts_title: "Parts Title",
+    shop_supplies_label: "Shop Supplies Label",
     labor_lines: "Labor Lines",
     parts_lines: "Parts Lines",
     notes_text: "Notes Text",
@@ -805,6 +811,10 @@
     const raw = String(el?.src || el?.text || "").trim();
     if (!raw) return "";
     if (/\{\{\s*business_logo\s*\}\}/i.test(raw)) return logoPreviewUrl || "";
+    if (raw.startsWith("imported_asset:")) {
+      const assetPath = raw.slice("imported_asset:".length).replace(/^\/+/, "");
+      return `/api/invoice-builder/imported-asset/${encodeURI(assetPath)}`;
+    }
     return raw;
   }
 

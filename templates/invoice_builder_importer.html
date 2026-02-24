@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% set title = "AI PDF Import (Paused)" %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">AI PDF Import</h1>
+    <div class="subtitle">This workflow is paused while we redesign it for broader layout compatibility.</div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ url_for('settings') }}">Back to Settings</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('invoice_builder') }}">Open Advanced Builder</a>
+  </div>
+</div>
+
+<div class="card shadow-sm border-0">
+  <div class="card-body">
+    <p class="mb-2"><strong>Status:</strong> Temporarily disabled.</p>
+    <p class="mb-2">
+      The previous “import PDF and recreate as template” flow has been removed to avoid unreliable output.
+    </p>
+    <p class="mb-0">
+      OpenAI remains configured and available for future importer features (for example, extracting invoice data into InvoiceRunner).
+    </p>
+  </div>
+</div>
+{% endblock %}

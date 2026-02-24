@@ -326,7 +326,33 @@ def _owner_has_pro_pdf_templates(owner: User | None) -> bool:
 PRO_ONLY_PDF_TEMPLATES = {"basic", "simple", "blueprint", "luxe"}
 
 
-def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer | None, *, is_estimate: bool) -> dict[str, str]:
+def _resolve_imported_asset_token_path(src_raw: str) -> str:
+    raw = str(src_raw or "").strip()
+    prefix = "imported_asset:"
+    if not raw.startswith(prefix):
+        return ""
+    rel = raw[len(prefix):].strip().lstrip("/")
+    if not rel:
+        return ""
+    if ".." in rel.replace("\\", "/").split("/"):
+        return ""
+    base = (Path("instance") / "uploads" / "imported_templates").resolve()
+    abs_path = (base / rel).resolve()
+    if not str(abs_path).startswith(str(base) + os.sep):
+        return ""
+    if not abs_path.exists() or not abs_path.is_file():
+        return ""
+    return str(abs_path)
+
+
+def _builder_template_vars(
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    *,
+    is_estimate: bool,
+    cfg: dict | None = None,
+) -> dict[str, str]:
     due_line = _invoice_due_date_line(inv, owner, is_estimate=is_estimate)
     due_date = ""
     if due_line:
@@ -368,6 +394,7 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
 
     notes_text = (getattr(inv, "notes", None) or "").strip()
     total_with_fees, due_with_fees, late_fee = _invoice_pdf_amounts(inv, owner, is_estimate=is_estimate)
+    cfg = cfg or {}
     return {
         "doc_label": "ESTIMATE" if is_estimate else "INVOICE",
         "invoice_number": str(getattr(inv, "display_number", None) or inv.invoice_number or ""),
@@ -390,11 +417,17 @@ def _builder_template_vars(inv: Invoice, owner: User | None, customer: Customer 
         "parts_table": "{{parts_table}}",
         "parts_total": _money(inv.parts_total()),
         "labor_total": _money(inv.labor_total()),
+        "shop_supplies_amount": _money(float(getattr(inv, "shop_supplies", 0.0) or 0.0)),
+        "shop_supplies": _money(float(getattr(inv, "shop_supplies", 0.0) or 0.0)),
         "tax": _money(inv.tax_amount()),
         "total": _money(total_with_fees),
         "late_fee": _money(late_fee),
         "paid": _money(getattr(inv, "paid", 0.0) or 0.0),
         "amount_due": _money(due_with_fees),
+        "labor_title": str(cfg.get("labor_title") or "Labor"),
+        "parts_title": str(cfg.get("parts_title") or "Parts"),
+        "job_label": str(cfg.get("job_label") or "Job"),
+        "shop_supplies_label": str(cfg.get("shop_supplies_label") or "Shop Supplies"),
     }
 
 
@@ -408,6 +441,7 @@ def _render_invoice_builder_pdf(
     generated_dt: datetime,
     is_estimate: bool,
     design_obj: dict,
+    cfg: dict | None = None,
 ) -> str:
     PAGE_W, PAGE_H = LETTER
     pdf = canvas.Canvas(pdf_path, pagesize=LETTER)
@@ -427,7 +461,7 @@ def _render_invoice_builder_pdf(
     pdf.setFillColor(colors.HexColor(canvas_bg))
     pdf.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
 
-    vars_map = _builder_template_vars(inv, owner, customer, is_estimate=is_estimate)
+    vars_map = _builder_template_vars(inv, owner, customer, is_estimate=is_estimate, cfg=cfg)
     owner_logo_blob = getattr(owner, "logo_blob", None) if owner else None
     owner_logo_abs = ""
     owner_logo_rel = (getattr(owner, "logo_path", None) or "").strip() if owner else ""
@@ -666,6 +700,43 @@ def _render_invoice_builder_pdf(
         needed_h_page = (rows + 1) * row_h + (12 * scale_y)
         return max(10.0, needed_h_page / max(0.001, scale_y))
 
+    def _text_needed_canvas_h(_el: dict) -> float:
+        text_raw = str(_el.get("text") or "")
+        rich_raw = str(_el.get("richText") or "")
+        if "{{labor_table}}" in text_raw or "{{labor_table}}" in rich_raw or "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
+            return max(10.0, float(_el.get("h") or 10.0))
+
+        for k, v in vars_map.items():
+            text_raw = text_raw.replace(f"{{{{{k}}}}}", str(v))
+        font_size = max(7.0, min(64.0, float(_el.get("fontSize") or 14.0))) * min(scale_x, scale_y)
+        raw_font_weight = _el.get("fontWeight")
+        try:
+            font_weight = int(raw_font_weight or 500)
+        except Exception:
+            fw_txt = str(raw_font_weight or "").strip().lower()
+            if "bold" in fw_txt:
+                font_weight = 700
+            elif "light" in fw_txt:
+                font_weight = 300
+            elif "regular" in fw_txt or "normal" in fw_txt:
+                font_weight = 400
+            else:
+                font_weight = 500
+        font_family = str(_el.get("fontFamily") or "Helvetica")
+        font_style = str(_el.get("fontStyle") or "normal")
+        font_name = _builder_font_name(font_family, font_weight, font_style)
+        line_spacing = max(0.8, min(3.0, float(_el.get("lineSpacing") or 1.2)))
+        line_h = max(8.0, font_size * line_spacing)
+
+        w_canvas = max(1.0, float(_el.get("w") or 10.0))
+        max_w = max(8.0, (w_canvas * scale_x) - (12 * scale_x))
+        line_count = 0
+        for ln in str(text_raw).splitlines() or [""]:
+            wrapped = _wrap_text_preserve_spaces(str(ln), font_name, font_size, max_w)
+            line_count += max(1, len(wrapped))
+        needed_page_h = (line_count * line_h) + (6 * scale_y)
+        return max(10.0, needed_page_h / max(0.001, scale_y))
+
     effective_h: dict[str, float] = {}
     effective_y: dict[str, float] = {}
     base_h: dict[str, float] = {}
@@ -696,6 +767,9 @@ def _render_invoice_builder_pdf(
             effective_h[el_id] = max(h0, _table_needed_canvas_h("labor"))
         elif "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
             effective_h[el_id] = max(h0, _table_needed_canvas_h("parts"))
+        elif bool(_el.get("autoGrow", False)):
+            min_h = max(10.0, float(_el.get("minH") or h0))
+            effective_h[el_id] = max(h0, min_h, _text_needed_canvas_h(_el))
         else:
             effective_h[el_id] = h0
 
@@ -798,6 +872,8 @@ def _render_invoice_builder_pdf(
                 wanted = max(base_h.get(el_id, 10.0), _table_needed_canvas_h("labor"))
             elif "{{parts_table}}" in text_raw or "{{parts_table}}" in rich_raw:
                 wanted = max(base_h.get(el_id, 10.0), _table_needed_canvas_h("parts"))
+            elif bool(_el.get("autoGrow", False)):
+                wanted = max(base_h.get(el_id, 10.0), _text_needed_canvas_h(_el))
             if wanted is None:
                 continue
             min_h = max(10.0, float(_el.get("minH") or base_h.get(el_id, 10.0)))
@@ -875,6 +951,13 @@ def _render_invoice_builder_pdf(
             is_business_logo = bool(re.search(r"\{\{\s*business_logo\s*\}\}", src_raw, flags=re.I))
             img_reader = logo_reader if is_business_logo else None
             if img_reader is None and src_raw:
+                imported_asset_path = _resolve_imported_asset_token_path(src_raw)
+                if imported_asset_path:
+                    try:
+                        img_reader = ImageReader(imported_asset_path)
+                    except Exception:
+                        img_reader = None
+            if img_reader is None and src_raw:
                 try:
                     if src_raw.lower().startswith(("http://", "https://")):
                         img_reader = ImageReader(src_raw)
@@ -936,7 +1019,19 @@ def _render_invoice_builder_pdf(
             if rich_raw:
                 rich_raw = rich_raw.replace(f"{{{{{k}}}}}", str(v))
         font_size = max(7.0, min(64.0, float(el.get("fontSize") or 14.0))) * min(scale_x, scale_y)
-        font_weight = int(el.get("fontWeight") or 500)
+        raw_font_weight = el.get("fontWeight")
+        try:
+            font_weight = int(raw_font_weight or 500)
+        except Exception:
+            fw_txt = str(raw_font_weight or "").strip().lower()
+            if "bold" in fw_txt:
+                font_weight = 700
+            elif "light" in fw_txt:
+                font_weight = 300
+            elif "regular" in fw_txt or "normal" in fw_txt:
+                font_weight = 400
+            else:
+                font_weight = 500
         font_family = str(el.get("fontFamily") or "Helvetica")
         font_style = str(el.get("fontStyle") or "normal")
         text_align = str(el.get("textAlign") or "left").strip().lower()
@@ -954,10 +1049,12 @@ def _render_invoice_builder_pdf(
         line_spacing = float(el.get("lineSpacing") or 1.2)
         line_spacing = max(0.8, min(3.0, line_spacing))
         line_h = max(8.0, font_size * line_spacing)
+        # Imported templates often have tight OCR/native boxes. Ensure at least one line can render.
+        draw_h = max(float(rh), line_h + 4.0)
         left_x = rx + (6 * scale_x)
         right_x = rx + rw - (6 * scale_x)
         center_x = rx + (rw / 2.0)
-        ty = ry + rh - line_h
+        ty = ry + draw_h - line_h
         max_w = rw - (12 * scale_x)
         if rich_raw.strip():
             rich = rich_raw
@@ -998,8 +1095,8 @@ def _render_invoice_builder_pdf(
             )
             try:
                 para = Paragraph(rich, pstyle)
-                _w, h_used = para.wrap(max_w, max(10.0, rh - 4))
-                draw_y = ry + rh - h_used - 2
+                _w, h_used = para.wrap(max_w, max(10.0, draw_h - 4))
+                draw_y = ry + draw_h - h_used - 2
                 para.drawOn(pdf, left_x, max(ry + 2, draw_y))
                 continue
             except Exception:
@@ -3926,6 +4023,7 @@ def generate_and_store_pdf(
                     generated_dt=generated_dt,
                     is_estimate=is_estimate,
                     design_obj=design_obj,
+                    cfg=cfg,
                 )
             except Exception:
                 pass

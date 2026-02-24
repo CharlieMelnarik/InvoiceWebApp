@@ -6,6 +6,7 @@ python-dotenv
 gunicorn
 reportlab
 Pillow
+openai
 
 itsdangerous
 

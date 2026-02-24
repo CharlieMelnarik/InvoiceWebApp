@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% set title = "Contract Signature" %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-9 col-xl-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+          <div>
+            <div class="small-muted">{{ business_name }}</div>
+            <h1 class="h4 mb-1">Contract Signature</h1>
+            <div class="fw-semibold">{{ contract.title }}</div>
+            {% if customer %}
+              <div class="small-muted mt-1">Customer: {{ customer.name }}</div>
+            {% endif %}
+          </div>
+          <div class="text-lg-end">
+            {% if contract.status == "e_signed" %}
+              <span class="badge text-bg-success">E-signed</span>
+            {% elif contract.status == "declined" %}
+              <span class="badge text-bg-danger">Declined</span>
+            {% else %}
+              <span class="badge text-bg-warning">Sent</span>
+            {% endif %}
+          </div>
+        </div>
+
+        {% if contract.status == "e_signed" %}
+          <div class="alert alert-success">
+            Signed by <strong>{{ contract.signed_name or "Customer" }}</strong>
+            {% if contract.signed_at %} on {{ contract.signed_at.strftime("%B %d, %Y %I:%M %p UTC") }}{% endif %}.
+          </div>
+        {% elif contract.status == "declined" %}
+          <div class="alert alert-danger">
+            This contract was declined{% if contract.declined_at %} on {{ contract.declined_at.strftime("%B %d, %Y %I:%M %p UTC") }}{% endif %}.
+            {% if contract.declined_reason %}
+              <div class="mt-2"><strong>Reason:</strong> {{ contract.declined_reason }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+
+        <div class="border rounded p-3 bg-light mb-4" style="white-space: pre-wrap;">{{ contract.body }}</div>
+
+        {% if contract.status == "sent" %}
+          <div class="row g-3">
+            <div class="col-12 col-lg-6">
+              <form method="post" action="{{ sign_url }}" class="border rounded p-3 h-100">
+                <h2 class="h6 fw-bold mb-2">E-sign Contract</h2>
+                <div class="mb-3">
+                  <label class="form-label">Full Name</label>
+                  <input class="form-control" name="signed_name" placeholder="Enter your full name" required>
+                </div>
+                <button class="btn btn-success" type="submit">E-sign Contract</button>
+              </form>
+            </div>
+            <div class="col-12 col-lg-6">
+              <form method="post" action="{{ decline_url }}" class="border rounded p-3 h-100">
+                <h2 class="h6 fw-bold mb-2">Decline Contract</h2>
+                <div class="mb-3">
+                  <label class="form-label">Reason (optional)</label>
+                  <textarea class="form-control" name="declined_reason" rows="4" placeholder="Provide a reason (optional)"></textarea>
+                </div>
+                <button class="btn btn-outline-danger" type="submit">Decline</button>
+              </form>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

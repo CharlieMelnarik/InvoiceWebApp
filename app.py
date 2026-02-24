@@ -43,7 +43,7 @@ from models import (
     Base, make_engine, make_session_factory,
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
     ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
-    InvoiceDesignTemplate, EmailTemplate, CustomProfessionPreset,
+    InvoiceDesignTemplate, EmailTemplate, CustomProfessionPreset, Contract,
 )
 from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
 
@@ -184,6 +184,11 @@ def _logo_upload_dir() -> Path:
     d = Path("instance") / "uploads" / "logos"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _invoice_import_ai_enabled() -> bool:
+    # Reserved for future invoice import/extraction workflows.
+    return bool((os.getenv("OPENAI_API_KEY") or "").strip())
 
 
 def _process_logo_upload_to_png_bytes(file_storage) -> bytes:
@@ -1028,6 +1033,26 @@ def read_customer_portal_token(token: str, max_age_seconds: int) -> tuple[int, i
         return None
 
 
+def _contract_portal_serializer():
+    secret = current_app.config.get("SECRET_KEY")
+    salt = current_app.config.get("CONTRACT_PORTAL_SALT", "contract-portal")
+    return URLSafeTimedSerializer(secret, salt=salt)
+
+
+def make_contract_portal_token(user_id: int, contract_id: int) -> str:
+    return _contract_portal_serializer().dumps({"uid": int(user_id), "cid": int(contract_id)})
+
+
+def read_contract_portal_token(token: str, max_age_seconds: int) -> tuple[int, int] | None:
+    try:
+        data = _contract_portal_serializer().loads(token, max_age=max_age_seconds)
+        uid = int(data.get("uid"))
+        cid = int(data.get("cid"))
+        return uid, cid
+    except (SignatureExpired, BadSignature, TypeError, ValueError):
+        return None
+
+
 def _employee_invite_serializer():
     secret = current_app.config.get("SECRET_KEY")
     salt = current_app.config.get("EMPLOYEE_INVITE_SALT", "employee-invite")
@@ -1231,6 +1256,34 @@ def _public_url(path: str) -> str:
         return url_for("landing", _external=True).rstrip("/") + path
     # Cron/background fallback when APP_BASE_URL is not configured.
     return f"http://127.0.0.1:5000{path}"
+
+
+def _default_contract_body(owner: User | None, customer: Customer | None) -> str:
+    owner_name = ((getattr(owner, "business_name", None) or "").strip() if owner else "") or (
+        (getattr(owner, "username", None) or "").strip() if owner else "Business"
+    )
+    customer_name = ((getattr(customer, "name", None) or "").strip() if customer else "") or "Client"
+    return (
+        "SERVICE AGREEMENT\n\n"
+        f"This Service Agreement (\"Agreement\") is entered into between {owner_name} (\"Business\") "
+        f"and {customer_name} (\"Client\").\n\n"
+        "1. Scope of Work\n"
+        "Client authorizes Business to perform the services and/or provide the materials described in related "
+        "estimates, invoices, work orders, or written approvals.\n\n"
+        "2. Authorization\n"
+        "By signing this agreement, Client confirms they are authorized to approve the work and related charges.\n\n"
+        "3. Pricing and Payment\n"
+        "Client agrees to pay all approved charges, taxes, fees, and applicable late fees according to Business terms.\n\n"
+        "4. Changes and Additional Work\n"
+        "Any additional work requested by Client may result in updated pricing and timeline.\n\n"
+        "5. Completion and Acceptance\n"
+        "Client agrees to inspect completed work promptly and notify Business of any concerns.\n\n"
+        "6. Liability and Warranty\n"
+        "Business will perform services in a professional manner. Any specific warranty terms must be provided in writing.\n\n"
+        "7. Governing Terms\n"
+        "This agreement supplements the project-specific invoice/estimate terms for this customer account.\n\n"
+        "By signing below, Client acknowledges and agrees to these terms."
+    )
 
 
 def _client_ip() -> str:
@@ -1979,9 +2032,16 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
     after_enabled = bool(getattr(owner, "payment_reminder_after_enabled", True))
     before_days = int(getattr(owner, "payment_reminder_days_before", 0) or 0)
     after_days = int(getattr(owner, "payment_reminder_days_after", 0) or 0)
+    after_repeat_enabled = bool(getattr(owner, "payment_reminder_after_repeat_enabled", False))
+    after_repeat_interval = int(getattr(owner, "payment_reminder_after_repeat_interval", 1) or 1)
+    after_repeat_interval = max(1, after_repeat_interval)
+    after_repeat_unit = (getattr(owner, "payment_reminder_after_repeat_unit", "month") or "month").strip().lower()
+    if after_repeat_unit not in ("day", "week", "month"):
+        after_repeat_unit = "month"
+    after_repeat_days = after_repeat_interval * {"day": 1, "week": 7, "month": 30}[after_repeat_unit]
     tz_offset = int(getattr(owner, "schedule_summary_tz_offset_minutes", 0) or 0)
     print(
-        f"[PAYMENT REMINDER] user={owner.id} running (before={before_enabled}/{before_days}, due_today={due_today_enabled}, after={after_enabled}/{after_days}, tz_offset={tz_offset})",
+        f"[PAYMENT REMINDER] user={owner.id} running (before={before_enabled}/{before_days}, due_today={due_today_enabled}, after={after_enabled}/{after_days}, after_repeat={after_repeat_enabled}/{after_repeat_interval} {after_repeat_unit}(s), tz_offset={tz_offset})",
         flush=True,
     )
 
@@ -2059,7 +2119,15 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
                 skipped_not_due_today += 1
 
             if after_enabled and now_utc >= after_target:
-                if getattr(inv, "payment_reminder_after_sent_at", None) is None:
+                after_last_sent_at = getattr(inv, "payment_reminder_after_sent_at", None)
+                should_send_after = False
+                if after_last_sent_at is None:
+                    should_send_after = True
+                elif after_repeat_enabled:
+                    next_repeat_due_at = after_last_sent_at + timedelta(days=after_repeat_days)
+                    should_send_after = now_utc >= next_repeat_due_at
+
+                if should_send_after:
                     _send_payment_reminder_for_invoice(
                         session,
                         inv=inv,
@@ -2300,6 +2368,12 @@ def _migrate_user_payment_reminder_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_days_before INTEGER")
     if not _column_exists(engine, "users", "payment_reminder_days_after"):
         stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_days_after INTEGER")
+    if not _column_exists(engine, "users", "payment_reminder_after_repeat_enabled"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_after_repeat_enabled BOOLEAN")
+    if not _column_exists(engine, "users", "payment_reminder_after_repeat_interval"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_after_repeat_interval INTEGER")
+    if not _column_exists(engine, "users", "payment_reminder_after_repeat_unit"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_after_repeat_unit VARCHAR(20)")
     if not _column_exists(engine, "users", "payment_reminder_last_run_at"):
         stmts.append("ALTER TABLE users ADD COLUMN payment_reminder_last_run_at TIMESTAMP NULL")
     if not _column_exists(engine, "users", "late_fee_enabled"):
@@ -2327,6 +2401,9 @@ def _migrate_user_payment_reminder_fields(engine):
             conn.execute(text("UPDATE users SET payment_reminder_after_enabled = TRUE WHERE payment_reminder_after_enabled IS NULL"))
             conn.execute(text("UPDATE users SET payment_reminder_days_before = 3 WHERE payment_reminder_days_before IS NULL"))
             conn.execute(text("UPDATE users SET payment_reminder_days_after = 3 WHERE payment_reminder_days_after IS NULL"))
+            conn.execute(text("UPDATE users SET payment_reminder_after_repeat_enabled = FALSE WHERE payment_reminder_after_repeat_enabled IS NULL"))
+            conn.execute(text("UPDATE users SET payment_reminder_after_repeat_interval = 1 WHERE payment_reminder_after_repeat_interval IS NULL"))
+            conn.execute(text("UPDATE users SET payment_reminder_after_repeat_unit = 'month' WHERE payment_reminder_after_repeat_unit IS NULL"))
             conn.execute(text("UPDATE users SET late_fee_enabled = FALSE WHERE late_fee_enabled IS NULL"))
             conn.execute(text("UPDATE users SET late_fee_mode = 'fixed' WHERE late_fee_mode IS NULL"))
             conn.execute(text("UPDATE users SET late_fee_fixed = 0.0 WHERE late_fee_fixed IS NULL"))
@@ -5042,11 +5119,13 @@ def create_app():
                         "show_business_name", "show_business_phone", "show_business_address", "show_business_email",
                         "payment_fee_auto_enabled", "payment_reminders_enabled",
                         "payment_reminder_before_enabled", "payment_reminder_due_today_enabled",
-                        "payment_reminder_after_enabled", "late_fee_enabled",
+                        "payment_reminder_after_enabled", "payment_reminder_after_repeat_enabled",
+                        "late_fee_enabled",
                     }
                     owner_int_fields = {
                         "schedule_summary_tz_offset_minutes", "payment_due_days",
-                        "payment_reminder_days_before", "payment_reminder_days_after", "late_fee_frequency_days",
+                        "payment_reminder_days_before", "payment_reminder_days_after",
+                        "payment_reminder_after_repeat_interval", "late_fee_frequency_days",
                     }
                     owner_float_fields = {
                         "tax_rate", "default_hourly_rate", "default_parts_markup", "payment_fee_percent",
@@ -5347,6 +5426,9 @@ def create_app():
                     payment_due_days = int(_to_float(request.form.get("payment_due_days"), 30))
                     payment_reminder_days_before = int(_to_float(request.form.get("payment_reminder_days_before"), 3))
                     payment_reminder_days_after = int(_to_float(request.form.get("payment_reminder_days_after"), 3))
+                    payment_reminder_after_repeat_enabled = (request.form.get("payment_reminder_after_repeat_enabled") == "1")
+                    payment_reminder_after_repeat_interval = int(_to_float(request.form.get("payment_reminder_after_repeat_interval"), 1))
+                    payment_reminder_after_repeat_unit = (request.form.get("payment_reminder_after_repeat_unit") or "month").strip().lower()
                     late_fee_enabled = (request.form.get("late_fee_enabled") == "1")
                     late_fee_mode = (request.form.get("late_fee_mode") or "fixed").strip().lower()
                     late_fee_fixed = _to_float(request.form.get("late_fee_fixed"), 0.0)
@@ -5373,6 +5455,12 @@ def create_app():
                     if payment_reminder_days_after < 0 or payment_reminder_days_after > 3650:
                         flash("Reminder days after due must be between 0 and 3650.", "error")
                         return _render_settings()
+                    if payment_reminder_after_repeat_interval < 1 or payment_reminder_after_repeat_interval > 365:
+                        flash("Overdue reminder repeat interval must be between 1 and 365.", "error")
+                        return _render_settings()
+                    if payment_reminder_after_repeat_unit not in ("day", "week", "month"):
+                        flash("Overdue reminder repeat unit must be day, week, or month.", "error")
+                        return _render_settings()
                     if late_fee_mode not in ("fixed", "percent"):
                         flash("Late fee mode must be fixed or percent.", "error")
                         return _render_settings()
@@ -5397,6 +5485,9 @@ def create_app():
                     u.payment_due_days = payment_due_days
                     u.payment_reminder_days_before = payment_reminder_days_before
                     u.payment_reminder_days_after = payment_reminder_days_after
+                    u.payment_reminder_after_repeat_enabled = payment_reminder_after_repeat_enabled
+                    u.payment_reminder_after_repeat_interval = payment_reminder_after_repeat_interval
+                    u.payment_reminder_after_repeat_unit = payment_reminder_after_repeat_unit
                     u.late_fee_enabled = late_fee_enabled
                     u.late_fee_mode = late_fee_mode
                     u.late_fee_fixed = late_fee_fixed
@@ -5807,6 +5898,8 @@ def create_app():
                 "payment_reminders_enabled", "payment_due_days", "payment_reminder_before_enabled",
                 "payment_reminder_due_today_enabled", "payment_reminder_after_enabled",
                 "payment_reminder_days_before", "payment_reminder_days_after",
+                "payment_reminder_after_repeat_enabled", "payment_reminder_after_repeat_interval",
+                "payment_reminder_after_repeat_unit",
                 "payment_reminder_last_run_at", "late_fee_enabled", "late_fee_mode", "late_fee_fixed",
                 "late_fee_percent", "late_fee_frequency_days", "custom_profession_name",
                 "custom_job_label", "custom_labor_title", "custom_labor_desc_label",
@@ -5933,6 +6026,20 @@ def create_app():
                 download_name=f"invoicerunner_backup_user_{uid}_{ts}.zip",
             )
 
+    @app.get("/settings/invoice-builder/import-pdf")
+    @login_required
+    @subscription_required
+    @owner_required
+    def invoice_builder_importer():
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            if not _has_pro_features(owner):
+                flash("Invoice Builder importer is available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
+            return render_template("invoice_builder_importer.html", ai_import_enabled=_invoice_import_ai_enabled())
+
     @app.get("/settings/invoice-builder")
     @login_required
     @subscription_required
@@ -6008,13 +6115,18 @@ def create_app():
                 "business_name": owner_name,
                 "business_phone": owner_phone,
                 "business_address": owner_addr,
+                "business_email": (getattr(owner, "email", None) or "").strip(),
                 "business_logo": "{{business_logo}}",
                 "customer_name": "Sample Customer",
                 "customer_email": "customer@example.com",
                 "customer_phone": "(406) 555-1234",
                 "job": "Sample Job",
+                "job_label": "Job",
                 "rate": "$100.00",
                 "hours": "2.5",
+                "labor_title": "Labor",
+                "parts_title": "Parts",
+                "shop_supplies_label": "Shop Supplies",
                 "labor_lines": (
                     "Oil change service - 1.0 hr - $100.00\n"
                     "Brake inspection - 0.75 hr - $75.00\n"
@@ -8649,6 +8761,16 @@ def create_app():
                 estimates_q = estimates_q.filter(Invoice.display_number.startswith(year))
 
             estimates_list = estimates_q.all()
+            contracts_list = (
+                s.query(Contract)
+                .filter(Contract.user_id == uid, Contract.customer_id == c.id)
+                .order_by(Contract.created_at.desc())
+                .all()
+            )
+            contract_portal_links = {
+                int(ct.id): _public_url(url_for("shared_contract_portal", token=make_contract_portal_token(uid, ct.id)))
+                for ct in contracts_list
+            }
 
             if status in ("paid", "unpaid"):
                 EPS = 0.01
@@ -8680,6 +8802,8 @@ def create_app():
             c=c,
             invoices=invoices_list,
             estimates=estimates_list,
+            contracts=contracts_list,
+            contract_portal_links=contract_portal_links,
             year=year,
             status=status or "all",
             total_business=total_business,
@@ -8687,6 +8811,151 @@ def create_app():
             total_unpaid=total_unpaid,
             next_event=next_event,
         )
+
+    @app.route("/customers/<int:customer_id>/contracts/new", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def contract_new(customer_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            customer = _customer_owned_or_404(s, customer_id)
+            owner = s.get(User, uid)
+            if not _has_pro_features(owner):
+                flash("Contracts are available on the Pro plan.", "error")
+                return redirect(url_for("customer_view", customer_id=customer_id))
+
+            if request.method == "POST":
+                title = (request.form.get("title") or "").strip() or "Service Agreement"
+                body = (request.form.get("body") or "").strip()
+                to_email = (request.form.get("to_email") or customer.email or "").strip().lower()
+                if not body:
+                    flash("Contract body is required.", "error")
+                    return render_template(
+                        "contract_form.html",
+                        mode="new",
+                        c=customer,
+                        title_value=title,
+                        body_value=body,
+                        to_email_value=to_email,
+                    )
+                if not _looks_like_email(to_email):
+                    flash("A valid customer email is required to send the contract.", "error")
+                    return render_template(
+                        "contract_form.html",
+                        mode="new",
+                        c=customer,
+                        title_value=title,
+                        body_value=body,
+                        to_email_value=to_email,
+                    )
+
+                now_utc = datetime.utcnow()
+                contract = Contract(
+                    user_id=uid,
+                    customer_id=customer.id,
+                    title=title,
+                    body=body,
+                    status="sent",
+                    sent_at=now_utc,
+                )
+                s.add(contract)
+                s.flush()
+
+                portal_token = make_contract_portal_token(uid, contract.id)
+                portal_url = _public_url(url_for("shared_contract_portal", token=portal_token))
+                owner_name = ((owner.business_name or "").strip() if owner and owner.business_name else "") or (
+                    owner.username if owner else "the business"
+                )
+                subject = f"Contract for Signature: {title}"
+                body_text = (
+                    f"Hello {(customer.name or 'there').strip() or 'there'},\n\n"
+                    f"{owner_name} has sent you a contract to review and e-sign.\n\n"
+                    f"Contract: {title}\n\n"
+                    "Please review and sign using the secure link below.\n\n"
+                    "Thank you."
+                )
+                html_body = (
+                    "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
+                    f"<p>Hello {html.escape((customer.name or 'there').strip() or 'there')},</p>"
+                    f"<p><strong>{html.escape(owner_name)}</strong> has sent you a contract to review and e-sign.</p>"
+                    f"<p>Contract: <strong>{html.escape(title)}</strong></p>"
+                    "<p>Please review and sign using the secure link below.</p>"
+                    "<p>Thank you.</p>"
+                    "</div>"
+                )
+                try:
+                    _send_invoice_pdf_email(
+                        to_email=to_email,
+                        subject=subject,
+                        body_text=body_text,
+                        action_url=portal_url,
+                        action_label="Sign Contract Here",
+                        html_body=html_body,
+                    )
+                except Exception as e:
+                    s.rollback()
+                    print(f"[CONTRACT SEND] SMTP ERROR to={to_email} customer={customer.id}: {repr(e)}", flush=True)
+                    flash("Could not send contract email (SMTP / sender config issue).", "error")
+                    return render_template(
+                        "contract_form.html",
+                        mode="new",
+                        c=customer,
+                        title_value=title,
+                        body_value=body,
+                        to_email_value=to_email,
+                    )
+
+                s.commit()
+                flash("Contract sent to customer for e-signature.", "success")
+                return redirect(url_for("customer_view", customer_id=customer.id))
+
+            return render_template(
+                "contract_form.html",
+                mode="new",
+                c=customer,
+                title_value="Service Agreement",
+                body_value=_default_contract_body(owner, customer),
+                to_email_value=(customer.email or "").strip(),
+            )
+
+    @app.route("/contracts/<int:contract_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def contract_edit(contract_id: int):
+        uid = _current_user_id_int()
+        with db_session() as s:
+            contract = (
+                s.query(Contract)
+                .options(selectinload(Contract.customer))
+                .filter(Contract.id == contract_id, Contract.user_id == uid)
+                .first()
+            )
+            if not contract:
+                abort(404)
+            customer = contract.customer
+            owner = s.get(User, uid)
+            if not _has_pro_features(owner):
+                flash("Contracts are available on the Pro plan.", "error")
+                return redirect(url_for("customer_view", customer_id=customer.id if customer else 0))
+
+            if contract.status == "e_signed":
+                flash("Signed contracts cannot be edited. Create a new contract if needed.", "error")
+                return redirect(url_for("customer_view", customer_id=customer.id if customer else 0))
+
+            if request.method == "POST":
+                title = (request.form.get("title") or "").strip() or "Service Agreement"
+                body = (request.form.get("body") or "").strip()
+                if not body:
+                    flash("Contract body is required.", "error")
+                    return render_template("contract_form.html", mode="edit", c=customer, contract=contract)
+                contract.title = title
+                contract.body = body
+                s.add(contract)
+                s.commit()
+                flash("Contract updated.", "success")
+                return redirect(url_for("customer_view", customer_id=customer.id if customer else 0))
+
+            return render_template("contract_form.html", mode="edit", c=customer, contract=contract)
 
     # -----------------------------
     # All estimates list
@@ -11658,6 +11927,129 @@ def create_app():
 
         flash("Invoice text sent.", "success")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+    @app.get("/shared/c/<token>")
+    def shared_contract_portal(token: str):
+        max_age = int(
+            current_app.config.get("CONTRACT_PORTAL_MAX_AGE_SECONDS")
+            or os.getenv("CONTRACT_PORTAL_MAX_AGE_SECONDS")
+            or "7776000"
+        )
+        decoded = read_contract_portal_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+
+        user_id, contract_id = decoded
+        with db_session() as s:
+            contract = (
+                s.query(Contract)
+                .options(selectinload(Contract.customer))
+                .filter(Contract.id == contract_id, Contract.user_id == user_id)
+                .first()
+            )
+            if not contract:
+                return render_template("shared_deleted.html"), 410
+            owner = s.get(User, contract.user_id)
+            return render_template(
+                "contract_portal.html",
+                contract=contract,
+                customer=contract.customer,
+                business_name=((owner.business_name or "").strip() if owner and owner.business_name else "") or (
+                    owner.username if owner else "Business"
+                ),
+                sign_url=url_for("shared_contract_portal_sign", token=token),
+                decline_url=url_for("shared_contract_portal_decline", token=token),
+            )
+
+    @app.post("/shared/c/<token>/sign")
+    def shared_contract_portal_sign(token: str):
+        max_age = int(
+            current_app.config.get("CONTRACT_PORTAL_MAX_AGE_SECONDS")
+            or os.getenv("CONTRACT_PORTAL_MAX_AGE_SECONDS")
+            or "7776000"
+        )
+        decoded = read_contract_portal_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+
+        user_id, contract_id = decoded
+        signed_name = (request.form.get("signed_name") or "").strip()
+        if not signed_name:
+            flash("Please enter your full name to e-sign.", "error")
+            return redirect(url_for("shared_contract_portal", token=token), code=303)
+
+        with db_session() as s:
+            contract = (
+                s.query(Contract)
+                .filter(Contract.id == contract_id, Contract.user_id == user_id)
+                .first()
+            )
+            if not contract:
+                return render_template("shared_deleted.html"), 410
+            if contract.status == "e_signed":
+                flash("This contract is already signed.", "info")
+                return redirect(url_for("shared_contract_portal", token=token), code=303)
+            if contract.status == "declined":
+                flash("This contract was declined and can no longer be signed.", "error")
+                return redirect(url_for("shared_contract_portal", token=token), code=303)
+
+            now_utc = datetime.utcnow()
+            contract.status = "e_signed"
+            contract.signed_name = signed_name[:200]
+            contract.signed_at = now_utc
+            contract.responded_at = now_utc
+            contract.declined_at = None
+            contract.declined_reason = None
+            contract.signed_ip = (_client_ip() or "")[:64] or None
+            contract.signed_user_agent = (request.headers.get("User-Agent") or "")[:300] or None
+            s.add(contract)
+            s.commit()
+
+        flash("Contract signed successfully.", "success")
+        return redirect(url_for("shared_contract_portal", token=token), code=303)
+
+    @app.post("/shared/c/<token>/decline")
+    def shared_contract_portal_decline(token: str):
+        max_age = int(
+            current_app.config.get("CONTRACT_PORTAL_MAX_AGE_SECONDS")
+            or os.getenv("CONTRACT_PORTAL_MAX_AGE_SECONDS")
+            or "7776000"
+        )
+        decoded = read_contract_portal_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+
+        user_id, contract_id = decoded
+        declined_reason = (request.form.get("declined_reason") or "").strip()
+        with db_session() as s:
+            contract = (
+                s.query(Contract)
+                .filter(Contract.id == contract_id, Contract.user_id == user_id)
+                .first()
+            )
+            if not contract:
+                return render_template("shared_deleted.html"), 410
+            if contract.status == "e_signed":
+                flash("This contract is already signed and cannot be declined.", "error")
+                return redirect(url_for("shared_contract_portal", token=token), code=303)
+            if contract.status == "declined":
+                flash("This contract is already declined.", "info")
+                return redirect(url_for("shared_contract_portal", token=token), code=303)
+
+            now_utc = datetime.utcnow()
+            contract.status = "declined"
+            contract.declined_reason = declined_reason[:1000] or None
+            contract.declined_at = now_utc
+            contract.responded_at = now_utc
+            contract.signed_at = None
+            contract.signed_name = None
+            contract.signed_ip = None
+            contract.signed_user_agent = None
+            s.add(contract)
+            s.commit()
+
+        flash("Contract declined.", "info")
+        return redirect(url_for("shared_contract_portal", token=token), code=303)
 
     @app.get("/shared/v/<token>")
     def shared_customer_portal(token: str):

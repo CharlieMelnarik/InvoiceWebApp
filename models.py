@@ -146,6 +146,9 @@ class User(Base):
     payment_reminder_after_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     payment_reminder_days_before: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     payment_reminder_days_after: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    payment_reminder_after_repeat_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    payment_reminder_after_repeat_interval: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payment_reminder_after_repeat_unit: Mapped[str] = mapped_column(String(20), nullable=False, default="month")
     payment_reminder_last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     late_fee_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -190,6 +193,11 @@ class User(Base):
         back_populates="user",
         foreign_keys="Invoice.user_id",
         order_by="Invoice.created_at.desc()",
+    )
+    contracts: Mapped[list["Contract"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="Contract.created_at.desc()",
     )
 
     business_expenses: Mapped[list["BusinessExpense"]] = relationship(
@@ -367,6 +375,10 @@ class Customer(Base):
     invoices: Mapped[list["Invoice"]] = relationship(
         back_populates="customer",
         order_by="Invoice.created_at.desc()",
+    )
+    contracts: Mapped[list["Contract"]] = relationship(
+        back_populates="customer",
+        order_by="Contract.created_at.desc()",
     )
 
     # NOTE: no delete-orphan here because ScheduleEvent.customer_id is SET NULL.
@@ -605,6 +617,43 @@ class InvoiceDesignTemplate(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="invoice_design_templates")
+
+
+class Contract(Base):
+    __tablename__ = "contracts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="Service Agreement")
+    body: Mapped[str] = mapped_column(String(50000), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="sent", index=True)  # sent|declined|e_signed
+
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    responded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    signed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    declined_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    signed_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    declined_reason: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    signed_ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    signed_user_agent: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="contracts")
+    customer: Mapped["Customer"] = relationship(back_populates="contracts")
 
 
 class EmailTemplate(Base):
