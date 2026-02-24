@@ -1293,6 +1293,28 @@ def _default_contract_body(owner: User | None, customer: Customer | None) -> str
     owner_name = ((getattr(owner, "business_name", None) or "").strip() if owner else "") or (
         (getattr(owner, "username", None) or "").strip() if owner else "Business"
     )
+    customer_name = ((getattr(customer, "name", None) or "").strip() if customer else "") or "Client"
+    return (
+        "SERVICE AGREEMENT\n\n"
+        f"This Service Agreement (\"Agreement\") is entered into between {owner_name} (\"Business\") "
+        f"and {customer_name} (\"Client\").\n\n"
+        "1. Scope of Work\n"
+        "Client authorizes Business to perform the services and/or provide the materials described in related "
+        "estimates, invoices, work orders, or written approvals.\n\n"
+        "2. Authorization\n"
+        "By signing this agreement, Client confirms they are authorized to approve the work and related charges.\n\n"
+        "3. Pricing and Payment\n"
+        "Client agrees to pay all approved charges, taxes, fees, and applicable late fees according to Business terms.\n\n"
+        "4. Changes and Additional Work\n"
+        "Any additional work requested by Client may result in updated pricing and timeline.\n\n"
+        "5. Completion and Acceptance\n"
+        "Client agrees to inspect completed work promptly and notify Business of any concerns.\n\n"
+        "6. Liability and Warranty\n"
+        "Business will perform services in a professional manner. Any specific warranty terms must be provided in writing.\n\n"
+        "7. Governing Terms\n"
+        "This agreement supplements the project-specific invoice/estimate terms for this customer account.\n\n"
+        "By signing below, Client acknowledges and agrees to these terms."
+    )
 
 
 def _contract_pdf_buffer(contract: Contract, owner: User | None, customer: Customer | None) -> io.BytesIO:
@@ -1359,28 +1381,6 @@ def _contract_pdf_buffer(contract: Contract, owner: User | None, customer: Custo
     c.save()
     buf.seek(0)
     return buf
-    customer_name = ((getattr(customer, "name", None) or "").strip() if customer else "") or "Client"
-    return (
-        "SERVICE AGREEMENT\n\n"
-        f"This Service Agreement (\"Agreement\") is entered into between {owner_name} (\"Business\") "
-        f"and {customer_name} (\"Client\").\n\n"
-        "1. Scope of Work\n"
-        "Client authorizes Business to perform the services and/or provide the materials described in related "
-        "estimates, invoices, work orders, or written approvals.\n\n"
-        "2. Authorization\n"
-        "By signing this agreement, Client confirms they are authorized to approve the work and related charges.\n\n"
-        "3. Pricing and Payment\n"
-        "Client agrees to pay all approved charges, taxes, fees, and applicable late fees according to Business terms.\n\n"
-        "4. Changes and Additional Work\n"
-        "Any additional work requested by Client may result in updated pricing and timeline.\n\n"
-        "5. Completion and Acceptance\n"
-        "Client agrees to inspect completed work promptly and notify Business of any concerns.\n\n"
-        "6. Liability and Warranty\n"
-        "Business will perform services in a professional manner. Any specific warranty terms must be provided in writing.\n\n"
-        "7. Governing Terms\n"
-        "This agreement supplements the project-specific invoice/estimate terms for this customer account.\n\n"
-        "By signing below, Client acknowledges and agrees to these terms."
-    )
 
 
 def _client_ip() -> str:
