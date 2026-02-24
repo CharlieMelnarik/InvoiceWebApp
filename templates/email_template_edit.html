@@ -102,6 +102,22 @@
         <div class="small-muted mb-2"><strong>Live Preview</strong> (sample data)</div>
         <div class="small mb-2"><strong>Subject:</strong> <span id="previewSubject">{{ preview_subject }}</span></div>
         <div id="previewBody" class="preview-box">{{ preview_html|safe }}</div>
+        {% if show_test_date_field %}
+          <div class="mt-3 pt-2 border-top">
+            <label class="form-label compact-label">Test date</label>
+            <div class="d-flex gap-2 align-items-center">
+              <input class="form-control" type="date" name="test_date" value="{{ test_date_value or '' }}">
+              <button type="submit" name="action" value="preview" class="btn btn-outline-secondary">Apply</button>
+            </div>
+            <div class="small-muted mt-1">Simulates "today" for preview/test email tokens only.</div>
+          </div>
+        {% elif show_test_date_readonly %}
+          <div class="mt-3 pt-2 border-top">
+            <label class="form-label compact-label">Test date</label>
+            <input class="form-control" type="date" value="{{ test_date_value or '' }}" disabled>
+            <div class="small-muted mt-1">Auto-set from your reminder settings.</div>
+          </div>
+        {% endif %}
       </section>
     </div>
   </form>

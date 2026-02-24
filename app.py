@@ -126,13 +126,13 @@ def _invoice_due_date_utc(inv: Invoice, owner: User | None) -> datetime:
     return created + timedelta(days=due_days)
 
 
-def _invoice_late_fee_amount(inv: Invoice, owner: User | None, *, as_of: datetime | None = None) -> float:
+def _invoice_late_fee_cycle_count(inv: Invoice, owner: User | None, *, as_of: datetime | None = None) -> int:
     if not owner or not bool(getattr(owner, "late_fee_enabled", False)):
-        return 0.0
+        return 0
     if bool(getattr(inv, "is_estimate", False)):
-        return 0.0
+        return 0
     if float(inv.amount_due() or 0.0) <= 0:
-        return 0.0
+        return 0
 
     now_utc = as_of or datetime.utcnow()
     due_dt = _invoice_due_date_utc(inv, owner)
@@ -143,12 +143,20 @@ def _invoice_late_fee_amount(inv: Invoice, owner: User | None, *, as_of: datetim
     due_local = due_dt + timedelta(minutes=tz_offset)
     overdue_days = (now_local.date() - due_local.date()).days
     if overdue_days < 1:
-        return 0.0
+        return 0
 
     frequency_days = int(getattr(owner, "late_fee_frequency_days", 30) or 30)
     frequency_days = max(1, min(365, frequency_days))
     # First fee applies starting the day after due date, then repeats every frequency_days.
-    cycles = 1 + ((overdue_days - 1) // frequency_days)
+    return int(1 + ((overdue_days - 1) // frequency_days))
+
+
+def _invoice_late_fee_amount(inv: Invoice, owner: User | None, *, as_of: datetime | None = None) -> float:
+    if not owner or not bool(getattr(owner, "late_fee_enabled", False)):
+        return 0.0
+    cycles = _invoice_late_fee_cycle_count(inv, owner, as_of=as_of)
+    if cycles <= 0:
+        return 0.0
 
     mode = (getattr(owner, "late_fee_mode", "fixed") or "fixed").strip().lower()
     base_total = float(inv.invoice_total() or 0.0)
@@ -774,8 +782,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}{{late_fee_line}}"
-            "Due date: <strong>{{due_date}}</strong></p>"
+            "{{late_fee_policy_line}}{{late_fee_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -791,8 +798,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}"
-            "Due date: <strong>{{due_date}}</strong></p>"
+            "{{late_fee_policy_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -808,8 +814,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}"
-            "Due date: <strong>{{due_date}}</strong></p>"
+            "{{late_fee_policy_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -825,8 +830,23 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}{{late_fee_line}}"
-            "Due date: <strong>{{due_date}}</strong></p>"
+            "{{late_fee_policy_line}}{{late_fee_line}}</p>"
+            "<p>{{action_button}}</p>"
+            "<p>Thank you.</p>"
+            "</div>"
+        ),
+    },
+    "reminder_after_due_recurring": {
+        "name": "Payment Reminder (Past Due Recurring)",
+        "description": "Automatic recurring reminder sent after due date based on repeat settings.",
+        "default_subject": "Recurring Past Due Reminder: Invoice {{document_number}}",
+        "default_html": (
+            "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
+            "<p>Hello {{customer_name}},</p>"
+            "<p>{{timing_line}}</p>"
+            "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
+            "Invoice amount due: <strong>${{amount_due}}</strong><br>"
+            "{{late_fee_policy_line}}{{late_fee_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -860,6 +880,24 @@ def _render_email_template_tokens(raw: str, context: dict[str, str]) -> str:
     return re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", _rep, str(raw or ""))
 
 
+def _strip_due_date_line_from_reminder_template(raw: str) -> str:
+    text = str(raw or "")
+    # Remove due-date line from HTML reminder templates (legacy/default variants).
+    text = re.sub(
+        r"(?is)<br\s*/?>\s*due\s*date:\s*(?:<strong>\s*\{\{\s*due_date\s*\}\}\s*</strong>|<strong>.*?</strong>|\{\{\s*due_date\s*\}\}|[^<\n\r]*)",
+        "",
+        text,
+    )
+    text = re.sub(
+        r"(?is)due\s*date:\s*(?:<strong>\s*\{\{\s*due_date\s*\}\}\s*</strong>|<strong>.*?</strong>|\{\{\s*due_date\s*\}\})",
+        "",
+        text,
+    )
+    # Remove due-date line from plaintext reminder templates.
+    text = re.sub(r"(?im)^\s*due\s*date:\s*.*\n?", "", text)
+    return text
+
+
 def _email_action_button_html(action_url: str | None, action_label: str | None) -> str:
     action_url_clean = (action_url or "").strip()
     if not action_url_clean:
@@ -880,24 +918,56 @@ def _email_template_preview_action(template_key: str) -> tuple[str, bool]:
     return "View & Pay Invoice", True
 
 
-def _email_template_sample_context(owner: User, template_key: str) -> dict[str, str]:
+def _email_template_sample_context(owner: User, template_key: str, *, test_date: date | None = None) -> dict[str, str]:
     action_label, _can_pay = _email_template_preview_action(template_key)
     action_url = _public_url(url_for("email_template_mock_portal", template_key=template_key))
+    key = _normalize_email_template_key(template_key)
+    created_local = _user_local_now(owner)
+    current_local = created_local
+    if test_date is not None:
+        current_local = datetime.combine(test_date, datetime.min.time())
     due_days = max(0, int(getattr(owner, "payment_due_days", 30) or 30))
-    due_date_text = (_user_local_now(owner) + timedelta(days=due_days)).strftime("%B %d, %Y")
+    due_local = created_local + timedelta(days=due_days)
+    due_date_text = due_local.strftime("%B %d, %Y")
+    sample_amount_due = 129.60
+    sample_overdue_days = max(0, (current_local.date() - due_local.date()).days)
+    freq_days = int(getattr(owner, "late_fee_frequency_days", 30) or 30)
+    freq_days = max(1, min(365, freq_days))
+    late_mode = (getattr(owner, "late_fee_mode", "fixed") or "fixed").strip().lower()
+    if late_mode == "percent":
+        late_pct = max(0.0, float(getattr(owner, "late_fee_percent", 0.0) or 0.0))
+        fee_desc = f"{late_pct:g}% of the invoice amount"
+        fee_per_cycle = sample_amount_due * (late_pct / 100.0)
+    else:
+        late_fixed = max(0.0, float(getattr(owner, "late_fee_fixed", 0.0) or 0.0))
+        fee_desc = f"${late_fixed:,.2f}"
+        fee_per_cycle = late_fixed
+    late_fee_policy_line = f"After {due_date_text}, a late fee of {fee_desc} will be charged every {freq_days} day(s)."
+    sample_late_fee_cycles = int(1 + ((sample_overdue_days - 1) // freq_days)) if sample_overdue_days >= 1 else 0
+    sample_late_fee_total = round(max(0.0, fee_per_cycle * sample_late_fee_cycles), 2)
+    sample_due_with_late_fee = round(sample_amount_due + sample_late_fee_total, 2)
+    timing_line = "This is a friendly reminder to complete payment for your invoice."
+    if key == "reminder_after_due_recurring":
+        timing_line = (
+            f"This invoice is currently {sample_overdue_days} day(s) overdue, "
+            f"and {sample_late_fee_cycles} late fee charge(s) have accrued."
+        )
     return {
         "customer_name": "Sample Customer",
         "business_name": ((owner.business_name or "").strip() or owner.username or "Your Business"),
-        "document_number": f"{_user_local_now(owner).strftime('%Y')}-0001",
-        "invoice_amount": "129.60",
-        "estimate_amount": "129.60",
-        "amount_due": "129.60",
+        "document_number": f"{created_local.strftime('%Y')}-0001",
+        "invoice_amount": f"{sample_amount_due:,.2f}",
+        "estimate_amount": f"{sample_amount_due:,.2f}",
+        "amount_due": f"{sample_amount_due:,.2f}",
         "due_date": due_date_text,
         "card_fee_line": "Paying by card online adds an additional $4.06 (card total: $133.66).",
         "portal_validity_line": "This secure link is valid for 90 days from the time this email was sent.",
-        "timing_line": "This is a friendly reminder to complete payment for your invoice.",
-        "late_fee_policy_line": "After March 21, 2026, a late fee of 5% of the invoice amount will be charged every 30 day(s).",
-        "late_fee_line": "Late fees accrued so far: $6.48. Current amount due including late fees: $136.08.",
+        "timing_line": timing_line,
+        "late_fee_policy_line": late_fee_policy_line,
+        "late_fee_line": (
+            f"Late fees accrued so far: ${sample_late_fee_total:,.2f}. "
+            f"Current amount due including late fees: ${sample_due_with_late_fee:,.2f}."
+        ),
         "action_label": action_label,
         "action_url": action_url,
         "action_button": _email_action_button_html(action_url, action_label),
@@ -1912,23 +1982,32 @@ def _ensure_customer_email_templates(session, owner: User | None) -> bool:
         (t.template_key or "").strip(): t
         for t in session.query(EmailTemplate).filter(EmailTemplate.user_id == owner.id).all()
     }
-    added = False
+    changed = False
     for key, cfg in EMAIL_TEMPLATE_DEFS.items():
-        if key in existing:
-            continue
-        session.add(
-            EmailTemplate(
-                user_id=owner.id,
-                template_key=key,
-                name=str(cfg.get("name") or key),
-                subject=str(cfg.get("default_subject") or ""),
-                html_body=str(cfg.get("default_html") or ""),
+        row = existing.get(key)
+        if row is None:
+            session.add(
+                EmailTemplate(
+                    user_id=owner.id,
+                    template_key=key,
+                    name=str(cfg.get("name") or key),
+                    subject=str(cfg.get("default_subject") or ""),
+                    html_body=str(cfg.get("default_html") or ""),
+                )
             )
-        )
-        added = True
-    if added:
+            changed = True
+            continue
+
+        # Keep existing custom templates, but strip legacy due-date line in reminder templates.
+        if key.startswith("reminder_"):
+            cleaned_html = _strip_due_date_line_from_reminder_template(row.html_body or "")
+            if cleaned_html != (row.html_body or ""):
+                row.html_body = cleaned_html
+                session.add(row)
+                changed = True
+    if changed:
         session.flush()
-    return added
+    return changed
 
 
 def _customer_email_template_payload(
@@ -1972,9 +2051,14 @@ def _customer_email_template_payload(
     render_ctx["action_url"] = action_url_clean
     render_ctx["action_label"] = action_label
 
+    normalized_key = _normalize_email_template_key(template_key)
     subject = _render_email_template_tokens(template.subject or fallback_subject, render_ctx).strip() or fallback_subject
     html_body = _render_email_template_tokens(template.html_body or "", render_ctx).strip()
+    if normalized_key.startswith("reminder_"):
+        html_body = _strip_due_date_line_from_reminder_template(html_body).strip()
     body_text = _strip_html_to_text(html_body) if html_body else fallback_body_text
+    if normalized_key.startswith("reminder_"):
+        body_text = _strip_due_date_line_from_reminder_template(body_text).strip()
     return subject, body_text, (html_body or None)
 
 
@@ -2028,6 +2112,15 @@ def _send_payment_reminder_for_invoice(
         timing_line = f"This invoice is past due by {max(0, -days_until_due)} day(s)."
         subject = f"Past Due Reminder: Invoice {display_no}"
         email_template_key = "reminder_after_due"
+    elif reminder_kind == "after_due_recurring":
+        overdue_days = max(0, -days_until_due)
+        late_fee_cycles = _invoice_late_fee_cycle_count(inv, owner, as_of=now_val)
+        timing_line = (
+            f"This invoice is currently {overdue_days} day(s) overdue, "
+            f"and {late_fee_cycles} late fee charge(s) have accrued."
+        )
+        subject = f"Recurring Past Due Reminder: Invoice {display_no}"
+        email_template_key = "reminder_after_due_recurring"
     else:
         timing_line = "This is a friendly reminder to complete payment for your invoice."
         subject = f"Payment Reminder: Invoice {display_no}"
@@ -2063,7 +2156,7 @@ def _send_payment_reminder_for_invoice(
         f"Invoice amount due: ${float(inv.amount_due() or 0.0):,.2f}\n"
         f"{late_fee_policy_line}"
         f"{late_fee_line}"
-        f"Due date: {due_dt.strftime('%B %d, %Y')}\n\n"
+        "\n"
         "Thank you."
     )
     tmpl_context = {
@@ -2110,7 +2203,7 @@ def _send_payment_reminder_for_invoice(
         inv.payment_reminder_before_sent_at = now_val
     elif reminder_kind == "due_today":
         inv.payment_reminder_due_today_sent_at = now_val
-    elif reminder_kind == "after_due":
+    elif reminder_kind in ("after_due", "after_due_recurring"):
         inv.payment_reminder_after_sent_at = now_val
     session.add(inv)
     return True, "sent"
@@ -2242,12 +2335,15 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
                     should_send_after = now_utc >= next_repeat_due_at
 
                 if should_send_after:
+                    send_kind = "after_due"
+                    if after_last_sent_at is not None and after_repeat_enabled:
+                        send_kind = "after_due_recurring"
                     _send_payment_reminder_for_invoice(
                         session,
                         inv=inv,
                         owner=owner,
                         customer=inv.customer,
-                        reminder_kind="after_due",
+                        reminder_kind=send_kind,
                         now_utc=now_utc,
                     )
                     sent_after += 1
@@ -6393,6 +6489,41 @@ def create_app():
                 s.add(row)
                 s.flush()
 
+            recurring_key = (key == "reminder_after_due_recurring")
+            fixed_test_keys = {"reminder_before_due", "reminder_due_today", "reminder_after_due"}
+            auto_test_date_key = key in fixed_test_keys
+            base_local_date = _user_local_now(owner).date()
+            due_days_cfg = max(0, int(getattr(owner, "payment_due_days", 30) or 30))
+            before_days_cfg = max(0, int(getattr(owner, "payment_reminder_days_before", 0) or 0))
+            after_days_cfg = max(0, int(getattr(owner, "payment_reminder_days_after", 0) or 0))
+
+            if auto_test_date_key:
+                if key == "reminder_before_due":
+                    offset_days = due_days_cfg - before_days_cfg
+                elif key == "reminder_due_today":
+                    offset_days = due_days_cfg
+                else:
+                    offset_days = due_days_cfg + after_days_cfg
+                test_date_obj = base_local_date + timedelta(days=offset_days)
+                test_date_value = test_date_obj.isoformat()
+            else:
+                raw_test_date = ""
+                if request.method == "POST":
+                    raw_test_date = (request.form.get("test_date") or "").strip()
+                else:
+                    raw_test_date = (request.args.get("test_date") or "").strip()
+                test_date_obj = None
+                if raw_test_date:
+                    try:
+                        test_date_obj = date.fromisoformat(raw_test_date)
+                    except Exception:
+                        test_date_obj = None
+                if test_date_obj is None:
+                    test_date_obj = base_local_date
+                    test_date_value = test_date_obj.isoformat()
+                else:
+                    test_date_value = raw_test_date
+
             subject_value = (row.subject or "")
             html_body_value = (row.html_body or "")
             if request.method == "POST":
@@ -6407,9 +6538,12 @@ def create_app():
                     s.add(row)
                     s.commit()
                     flash("Template reset to default.", "success")
-                    return redirect(url_for("email_template_edit", template_key=key))
+                    return redirect(url_for("email_template_edit", template_key=key, test_date=test_date_value))
 
-                if action == "test":
+                if action == "preview":
+                    # Live preview only; do not save or send.
+                    pass
+                elif action == "test":
                     if not subject:
                         flash("Subject is required to send a test email.", "error")
                     elif not html_body:
@@ -6419,7 +6553,7 @@ def create_app():
                         if not _looks_like_email(to_email):
                             flash("Your account email is missing or invalid. Update it in Settings > Account.", "error")
                         else:
-                            sample_context = _email_template_sample_context(owner, key)
+                            sample_context = _email_template_sample_context(owner, key, test_date=test_date_obj)
                             subject_rendered = _render_email_template_tokens(subject, sample_context).strip() or "InvoiceRunner Test Email"
                             html_rendered = _render_email_template_tokens(html_body, sample_context).strip()
                             text_rendered = _strip_html_to_text(html_rendered)
@@ -6434,19 +6568,20 @@ def create_app():
                             except Exception as exc:
                                 flash(f"Could not send test email. Check SMTP settings/logs. ({exc})", "error")
 
-                elif not subject:
-                    flash("Subject is required.", "error")
-                elif not html_body:
-                    flash("Email body is required.", "error")
                 else:
-                    row.subject = subject[:255]
-                    row.html_body = html_body[:20000]
-                    s.add(row)
-                    s.commit()
-                    flash("Email template saved.", "success")
-                    return redirect(url_for("email_template_edit", template_key=key))
+                    if not subject:
+                        flash("Subject is required.", "error")
+                    elif not html_body:
+                        flash("Email body is required.", "error")
+                    else:
+                        row.subject = subject[:255]
+                        row.html_body = html_body[:20000]
+                        s.add(row)
+                        s.commit()
+                        flash("Email template saved.", "success")
+                        return redirect(url_for("email_template_edit", template_key=key, test_date=test_date_value))
 
-            sample_context = _email_template_sample_context(owner, key)
+            sample_context = _email_template_sample_context(owner, key, test_date=test_date_obj)
             token_labels = {
                 "customer_name": "Customer Name",
                 "business_name": "Business Name",
@@ -6473,6 +6608,9 @@ def create_app():
                 template_description=(cfg.get("description") or ""),
                 subject_value=subject_value,
                 html_body_value=html_body_value,
+                test_date_value=test_date_value,
+                show_test_date_field=recurring_key,
+                show_test_date_readonly=auto_test_date_key,
                 preview_subject=preview_subject,
                 preview_html=preview_html,
                 token_keys=sorted(sample_context.keys()),
