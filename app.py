@@ -1686,18 +1686,27 @@ def _send_invoice_pdf_email(
     html_body_clean = (html_body or "").strip()
     if html_body_clean:
         if action_url_clean:
-            safe_label = html.escape((action_label or "Open Document").strip() or "Open Document")
+            html_lower = html_body_clean.lower()
             safe_url = html.escape(action_url_clean, quote=True)
-            html_body_clean = (
-                f"{html_body_clean}"
-                "<p style=\"margin: 18px 0;\">"
-                f"<a href=\"{safe_url}\" "
-                "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;"
-                "padding:10px 16px;border-radius:8px;font-weight:600;\">"
-                f"{safe_label}</a>"
-                "</p>"
-                "<p style=\"color:#555;font-size:13px;\">If the button does not work, contact us and we can resend your document.</p>"
+            safe_url_lower = safe_url.lower()
+            action_url_lower = action_url_clean.lower()
+            already_has_action_link = (
+                (action_url_lower in html_lower)
+                or (safe_url_lower in html_lower)
+                or ("{{action_button}}" in html_lower)
             )
+            safe_label = html.escape((action_label or "Open Document").strip() or "Open Document")
+            if not already_has_action_link:
+                html_body_clean = (
+                    f"{html_body_clean}"
+                    "<p style=\"margin: 18px 0;\">"
+                    f"<a href=\"{safe_url}\" "
+                    "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;"
+                    "padding:10px 16px;border-radius:8px;font-weight:600;\">"
+                    f"{safe_label}</a>"
+                    "</p>"
+                    "<p style=\"color:#555;font-size:13px;\">If the button does not work, contact us and we can resend your document.</p>"
+                )
         msg.add_alternative(html_body_clean, subtype="html")
     elif action_url_clean:
         safe_label = html.escape((action_label or "Open Document").strip() or "Open Document")
