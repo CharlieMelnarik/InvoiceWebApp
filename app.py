@@ -1509,11 +1509,28 @@ def _send_invoice_pdf_email(
     body_text_clean = (body_text or "").strip()
     if not body_text_clean and html_body:
         body_text_clean = _strip_html_to_text(html_body)
+    action_url_clean = (action_url or "").strip()
+    if action_url_clean and action_url_clean not in body_text_clean:
+        body_text_clean = (
+            f"{body_text_clean}\n\n{(action_label or 'Open Document').strip() or 'Open Document'}: {action_url_clean}"
+        ).strip()
     msg.set_content(body_text_clean or "Please open this message in an HTML-capable email client.")
 
     html_body_clean = (html_body or "").strip()
-    action_url_clean = (action_url or "").strip()
     if html_body_clean:
+        if action_url_clean:
+            safe_label = html.escape((action_label or "Open Document").strip() or "Open Document")
+            safe_url = html.escape(action_url_clean, quote=True)
+            html_body_clean = (
+                f"{html_body_clean}"
+                "<p style=\"margin: 18px 0;\">"
+                f"<a href=\"{safe_url}\" "
+                "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;"
+                "padding:10px 16px;border-radius:8px;font-weight:600;\">"
+                f"{safe_label}</a>"
+                "</p>"
+                "<p style=\"color:#555;font-size:13px;\">If the button does not work, contact us and we can resend your document.</p>"
+            )
         msg.add_alternative(html_body_clean, subtype="html")
     elif action_url_clean:
         safe_label = html.escape((action_label or "Open Document").strip() or "Open Document")
