@@ -1846,12 +1846,10 @@ def _owner_mailing_address(owner: User | None) -> str:
 
 
 def _campaign_footer_html(owner: User | None, unsub_url: str) -> str:
-    address_line = _owner_mailing_address(owner) or "Business mailing address unavailable"
     return (
         "<hr style=\"border:none;border-top:1px solid #ddd;margin:20px 0 12px 0;\">"
         "<p style=\"font-family:Arial,Helvetica,sans-serif;color:#555;font-size:12px;line-height:1.5;margin:0;\">"
         "You received this message because your business email was included in outreach for InvoiceRunner.<br>"
-        f"Business address: {html.escape(address_line)}<br>"
         f"<a href=\"{html.escape(unsub_url, quote=True)}\" style=\"color:#2563eb;\">Unsubscribe</a>"
         "</p>"
     )
