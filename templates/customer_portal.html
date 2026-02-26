@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% set title = "Customer Portal" %}
+{% set title = "Client Portal" %}
 
 {% block content %}
 {% set total = inv.invoice_total() %}
@@ -18,8 +18,8 @@
               {% if is_estimate %}Estimate{% else %}Invoice{% endif %}
               <span class="mono">{{ doc_number }}</span>
             </h1>
-            {% if customer %}
-              <div class="small-muted">Customer: {{ customer.name }}</div>
+            {% if client %}
+              <div class="small-muted">Client: {{ client.name }}</div>
             {% endif %}
             {% if inv.date_in %}
               <div class="small-muted">Date: {{ inv.date_in }}</div>

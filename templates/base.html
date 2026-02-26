@@ -610,7 +610,7 @@
       </a>
 
       <nav class="app-nav">
-        <a class="app-nav-link {% if ep in ['customers_list','customer_view','customer_new'] %}active{% endif %}" href="{{ url_for('customers_list') }}"><i class="bi bi-people nav-icon" aria-hidden="true"></i><span class="nav-label">Customers</span></a>
+        <a class="app-nav-link {% if ep in ['customers_list','customer_view','customer_new'] %}active{% endif %}" href="{{ url_for('customers_list') }}"><i class="bi bi-people nav-icon" aria-hidden="true"></i><span class="nav-label">Clients</span></a>
         <a class="app-nav-link {% if ep == 'schedule' %}active{% endif %}" href="{{ url_for('schedule') }}"><i class="bi bi-calendar3 nav-icon" aria-hidden="true"></i><span class="nav-label">Scheduler</span></a>
         <a class="app-nav-link {% if ep in ['invoices','invoice_new','invoice_edit','invoice_view'] %}active{% endif %}" href="{{ url_for('invoices') }}"><i class="bi bi-receipt nav-icon" aria-hidden="true"></i><span class="nav-label">Invoices</span></a>
         <a class="app-nav-link {% if ep in ['estimates','estimate_new','estimate_edit','estimate_view'] %}active{% endif %}" href="{{ url_for('estimates') }}"><i class="bi bi-file-earmark-text nav-icon" aria-hidden="true"></i><span class="nav-label">Estimates</span></a>

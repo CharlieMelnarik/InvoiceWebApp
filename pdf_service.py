@@ -1598,7 +1598,7 @@ def _render_modern_pdf(
     paid_processing_fee = _invoice_processing_fee_paid(inv)
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
-            label_right_value(sum_x + 12, right_edge, y, "Stripe Fee:", _money(paid_processing_fee)); y -= 16
+            label_right_value(sum_x + 12, right_edge, y, "Processing Fee:", _money(paid_processing_fee)); y -= 16
         label_right_value(sum_x + 12, right_edge, y, "Paid:", _money(paid_amount)); y -= 18
 
     pdf.setFont("Helvetica-Bold", 12)
@@ -1839,7 +1839,7 @@ def _render_split_panel_pdf(
         pdf.setFont("Helvetica", 9)
         if paid_amount:
             if paid_processing_fee > 0:
-                pdf.drawString(rail_x + 12, y, f"Stripe Fee: {_money(paid_processing_fee)}"); y -= 14
+                pdf.drawString(rail_x + 12, y, f"Processing Fee: {_money(paid_processing_fee)}"); y -= 14
             pdf.drawString(rail_x + 12, y, f"Paid: {_money(paid_amount)}"); y -= 14
         pdf.setFont("Helvetica-Bold", 10)
         if price_owed < 0:
@@ -2602,7 +2602,7 @@ def _render_strip_pdf(
     label_right_value(sum_x + 10, right_edge, y, label, _money(total_price)); y -= 16
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
-            label_right_value(sum_x + 10, right_edge, y, "Stripe Fee:", _money(paid_processing_fee)); y -= 14
+            label_right_value(sum_x + 10, right_edge, y, "Processing Fee:", _money(paid_processing_fee)); y -= 14
         label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(paid_amount)); y -= 16
     if not is_estimate:
         label_right_value(sum_x + 10, right_edge, y, "Amount Due:", _money(price_owed))
@@ -3591,7 +3591,7 @@ def _render_luxe_pdf(
     paid_processing_fee = _invoice_processing_fee_paid(inv)
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
-            pdf.drawString(right_x + 12, next_meta_y, f"Stripe Fee: {_money(paid_processing_fee)}")
+            pdf.drawString(right_x + 12, next_meta_y, f"Processing Fee: {_money(paid_processing_fee)}")
             next_meta_y -= 14
         pdf.drawString(right_x + 12, next_meta_y, f"Paid: {_money(paid_amount)}")
 
@@ -4666,7 +4666,7 @@ def generate_and_store_pdf(
 
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
-            label_right_value(sum_x + 10, right_edge, y, "Stripe Fee:", _money(paid_processing_fee)); y -= 16
+            label_right_value(sum_x + 10, right_edge, y, "Processing Fee:", _money(paid_processing_fee)); y -= 16
         label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(paid_amount)); y -= 18
 
     # Amount Due / Profit below the box

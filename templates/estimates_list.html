@@ -9,7 +9,7 @@
     <div class="subtitle">Create and track estimates before converting to invoices.</div>
   </div>
   <div class="action-group">
-    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Clients</a>
     <a class="btn btn-primary" href="{{ url_for('estimate_new') }}">New Estimate</a>
   </div>
 </div>
@@ -17,7 +17,7 @@
 <form class="row g-2 align-items-end form-panel" method="get" action="{{ url_for('estimates') }}">
   <div class="col-12 col-md-6">
     <label class="form-label">Search</label>
-    <input class="form-control" name="q" value="{{ q or '' }}" placeholder="Search customer or job…">
+    <input class="form-control" name="q" value="{{ q or '' }}" placeholder="Search client or job…">
   </div>
 
   <div class="col-6 col-md-2">
@@ -38,7 +38,7 @@
         <thead class="table-light">
           <tr>
             <th style="min-width: 170px;">Estimate #</th>
-            <th style="min-width: 260px;">Customer</th>
+            <th style="min-width: 260px;">Client</th>
             <th style="min-width: 260px;">Job</th>
             <th style="min-width: 140px;">Date In</th>
             <th style="width: 140px;">Total</th>
@@ -63,7 +63,7 @@
                 <td>
                   {% if inv.customer_id %}
                     <a href="{{ url_for('customer_view', customer_id=inv.customer_id) }}" class="text-decoration-none">
-                      {{ customer_map.get(inv.customer_id, "Customer #" ~ inv.customer_id) }}
+                      {{ customer_map.get(inv.customer_id, "Client #" ~ inv.customer_id) }}
                     </a>
                   {% else %}
                     <span class="text-muted">—</span>

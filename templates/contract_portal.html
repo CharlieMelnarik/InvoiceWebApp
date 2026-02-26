@@ -11,8 +11,8 @@
             <div class="small-muted">{{ business_name }}</div>
             <h1 class="h4 mb-1">Contract Signature</h1>
             <div class="fw-semibold">{{ contract.title }}</div>
-            {% if customer %}
-              <div class="small-muted mt-1">Customer: {{ customer.name }}</div>
+            {% if client %}
+              <div class="small-muted mt-1">Client: {{ client.name }}</div>
             {% endif %}
           </div>
           <div class="text-lg-end">
@@ -28,7 +28,7 @@
 
         {% if contract.status == "e_signed" %}
           <div class="alert alert-success">
-            Signed by <strong>{{ contract.signed_name or "Customer" }}</strong>
+            Signed by <strong>{{ contract.signed_name or "Client" }}</strong>
             {% if contract.signed_at %} on {{ contract.signed_at.strftime("%B %d, %Y %I:%M %p UTC") }}{% endif %}.
           </div>
           <div class="mb-3">

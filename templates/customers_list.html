@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% set title = "Customers" %}
+{% set title = "Clients" %}
 
 {% block content %}
 
 <div class="page-header">
   <div>
-    <h1 class="h3 fw-bold mb-1">Customers</h1>
-    <div class="subtitle">Select a customer to view invoices.</div>
+    <h1 class="h3 fw-bold mb-1">Clients</h1>
+    <div class="subtitle">Select a client to view invoices.</div>
   </div>
   <div class="action-group">
-    <a class="btn btn-primary" href="{{ url_for('customer_new') }}">New Customer</a>
+    <a class="btn btn-primary" href="{{ url_for('customer_new') }}">New Client</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('invoice_new') }}">New Invoice</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('estimate_new') }}">New Estimate</a>
   </div>
@@ -32,7 +32,7 @@
       <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
           <tr>
-            <th style="min-width: 260px;">Customer</th>
+            <th style="min-width: 260px;">Client</th>
             <th style="min-width: 220px;">Email</th>
             <th style="min-width: 160px;">Phone</th>
             <th>Address</th>
@@ -40,8 +40,8 @@
           </tr>
         </thead>
         <tbody>
-          {% if customers and customers|length > 0 %}
-            {% for c in customers %}
+          {% if clients and clients|length > 0 %}
+            {% for c in clients %}
               <tr>
                 <td class="fw-semibold">
                   <a href="{{ url_for('customer_view', customer_id=c.id) }}" class="text-decoration-none">
@@ -78,9 +78,9 @@
             <tr>
               <td colspan="5" class="p-4">
                 <div class="text-center">
-                  <div class="fw-semibold mb-1">No customers yet.</div>
-                  <div class="small-muted mb-3">Create your first customer to start invoicing.</div>
-                  <a class="btn btn-primary" href="{{ url_for('customer_new') }}">Create Customer</a>
+                  <div class="fw-semibold mb-1">No clients yet.</div>
+                  <div class="small-muted mb-3">Create your first client to start invoicing.</div>
+                  <a class="btn btn-primary" href="{{ url_for('customer_new') }}">Create Client</a>
                 </div>
               </td>
             </tr>

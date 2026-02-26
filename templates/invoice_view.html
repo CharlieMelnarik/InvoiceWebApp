@@ -217,22 +217,22 @@
     </h1>
 
     <div class="small-muted">
-      {% if customer %}
-        Customer:
-        <a href="{{ url_for('customer_view', customer_id=customer.id) }}" class="text-decoration-none fw-semibold">
-          {{ customer.name }}
+      {% if client %}
+        Client:
+        <a href="{{ url_for('customer_view', customer_id=client.id) }}" class="text-decoration-none fw-semibold">
+          {{ client.name }}
         </a>
       {% else %}
-        Customer: <span class="text-danger">Missing</span>
+        Client: <span class="text-danger">Missing</span>
       {% endif %}
       {% if inv.date_in %} · Date: <span class="mono">{{ inv.date_in }}</span>{% endif %}
     </div>
   </div>
 
   <div class="action-group">
-    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
-    {% if customer %}
-      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=customer.id) }}">Back to Customer</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Clients</a>
+    {% if client %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=client.id) }}">Back to Client</a>
     {% endif %}
 
     <form method="post" action="{{ url_for('invoice_duplicate', invoice_id=inv.id) }}">
@@ -333,7 +333,7 @@
             <div class="col-12">
               <div class="small-muted mb-1" id="invoicePayoutModeLabel"></div>
               <div class="small-muted mb-1" id="invoicePayoutConvenienceFee"></div>
-              <div class="small-muted mb-1" id="invoicePayoutCustomerTotal"></div>
+              <div class="small-muted mb-1" id="invoicePayoutClientTotal"></div>
               <div class="small-muted mb-1" id="invoicePayoutStripeFee"></div>
               <div class="small-muted fw-semibold" id="invoicePayoutNet"></div>
             </div>
@@ -352,7 +352,7 @@
         <div class="doc-action-grid">
           {% if owner_pro_enabled %}
             <a class="btn btn-outline-primary" href="{{ customer_portal_url }}" target="_blank" rel="noopener noreferrer">
-              Customer Portal
+              Client Portal
             </a>
           {% endif %}
 
@@ -366,7 +366,7 @@
 
           {% if pro_features_enabled and inv.amount_due() > 0 %}
             <form method="post" action="{{ url_for('invoice_send_reminder', invoice_id=inv.id) }}"
-                  onsubmit="return confirm('Send a payment reminder email to this customer now?');">
+                  onsubmit="return confirm('Send a payment reminder email to this client now?');">
               <button class="btn btn-outline-warning" type="submit">Send Payment Reminder</button>
             </form>
           {% endif %}
@@ -409,12 +409,12 @@
 
       <div class="doc-info-grid">
         <div class="doc-info-card doc-info-card-wide">
-          <div class="label">Customer Email</div>
-          <div class="value mono">{{ inv.customer_email or (customer.email if customer else "—") }}</div>
+          <div class="label">Client Email</div>
+          <div class="value mono">{{ inv.customer_email or (client.email if client else "—") }}</div>
         </div>
         <div class="doc-info-card">
-          <div class="label">Customer Phone</div>
-          <div class="value mono">{{ format_phone(inv.customer_phone or (customer.phone if customer else "")) or "—" }}</div>
+          <div class="label">Client Phone</div>
+          <div class="value mono">{{ format_phone(inv.customer_phone or (client.phone if client else "")) or "—" }}</div>
         </div>
         {% if tmpl_key == "flipping_items" %}
           <div class="doc-info-card">
@@ -550,7 +550,7 @@
 
     const modeLabel = document.getElementById("invoicePayoutModeLabel");
     const feeLabel = document.getElementById("invoicePayoutConvenienceFee");
-    const totalLabel = document.getElementById("invoicePayoutCustomerTotal");
+    const totalLabel = document.getElementById("invoicePayoutClientTotal");
     const stripeFeeLabel = document.getElementById("invoicePayoutStripeFee");
     const netLabel = document.getElementById("invoicePayoutNet");
 
@@ -590,7 +590,7 @@
           : `Mode: Manual (${manualPct.toFixed(2)}% + ${money(manualFixed)})`;
       }
       if (feeLabel) feeLabel.textContent = `Credit Card Processing Fee added: ${money(convenienceFee)}`;
-      if (totalLabel) totalLabel.textContent = `Customer checkout total: ${money(customerTotal)}`;
+      if (totalLabel) totalLabel.textContent = `Client checkout total: ${money(customerTotal)}`;
       if (stripeFeeLabel) stripeFeeLabel.textContent = `Estimated Stripe fee: ${money(stripeFee)}`;
       if (netLabel) netLabel.textContent = `Estimated net payout: ${money(netPayout)}`;
     }

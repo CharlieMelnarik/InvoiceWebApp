@@ -183,14 +183,14 @@
         <div class="form-check mb-2">
           <input class="form-check-input" type="checkbox" id="blockTime">
           <label class="form-check-label" for="blockTime">
-            Block off time (no customer)
+            Block off time (no client)
           </label>
         </div>
 
         <div id="customerFields">
         <div class="mb-2">
-          <label class="form-label">Customer</label>
-          <input class="form-control" id="custSearch" placeholder="Type a customer name..." autocomplete="off">
+          <label class="form-label">Client</label>
+          <input class="form-control" id="custSearch" placeholder="Type a client name..." autocomplete="off">
           <div class="list-group mt-1" id="custResults" style="max-height:180px; overflow:auto; display:none;"></div>
           <input type="hidden" id="customerId">
           <div class="small-muted mt-1" id="custHint" style="display:none;">
@@ -201,7 +201,7 @@
         <div class="mb-2">
           <label class="form-label">Related Invoice / Estimate (optional)</label>
           <select class="form-select" id="invoiceSelect" disabled>
-            <option value="">Select a customer first</option>
+            <option value="">Select a client first</option>
           </select>
           <div class="small-muted mt-1">
             <a href="#" id="invoiceLink" class="text-decoration-none" style="display:none;" target="_blank" rel="noopener">
@@ -237,13 +237,13 @@
 
         <div class="mb-2">
           <div class="fw-semibold">Recurring Schedule (optional)</div>
-          <div class="small-muted">Creates recurring appointments for this customer from the start time.</div>
+          <div class="small-muted">Creates recurring appointments for this client from the start time.</div>
         </div>
 
         <div class="form-check mb-2">
           <input class="form-check-input" type="checkbox" id="recurringEnabled">
           <label class="form-check-label" for="recurringEnabled">
-            Enable recurring schedule for this customer
+            Enable recurring schedule for this client
           </label>
         </div>
 
@@ -289,7 +289,7 @@
       </div>
 
       <div class="modal-footer">
-        <button class="btn btn-outline-secondary" id="btnGoCustomer" style="display:none;">Go to Customer</button>
+        <button class="btn btn-outline-secondary" id="btnGoClient" style="display:none;">Go to Client</button>
         <button class="btn btn-success" id="btnComplete" style="display:none;">Mark Completed</button>
         <button class="btn btn-outline-warning" id="btnCancel" style="display:none;">Cancelled</button>
         <button class="btn btn-outline-danger" id="btnStopRecurring" style="display:none;">Stop Recurring</button>
@@ -345,7 +345,7 @@
   const recurringNotes = document.getElementById("recurringNotes");
   const recurringHint = document.getElementById("recurringHint");
   const stopRecurringBtn = document.getElementById("btnStopRecurring");
-  const goCustomerBtn = document.getElementById("btnGoCustomer");
+  const goClientBtn = document.getElementById("btnGoClient");
   const completeBtn = document.getElementById("btnComplete");
   const cancelBtn = document.getElementById("btnCancel");
   const invoiceSelect = document.getElementById("invoiceSelect");
@@ -501,16 +501,16 @@
     updateInvoiceLink();
   }
 
-  async function loadCustomerDocuments(customerId, selectedId = ""){
+  async function loadClientDocuments(customerId, selectedId = ""){
     if (!invoiceSelect) return;
     if (!customerId) {
-      resetInvoiceSelect("Select a customer first");
+      resetInvoiceSelect("Select a client first");
       return;
     }
     invoiceSelect.disabled = true;
     invoiceSelect.innerHTML = `<option value="">Loading...</option>`;
     updateInvoiceLink();
-    const res = await fetch(`/api/customers/${customerId}/documents`);
+    const res = await fetch(`/api/clients/${customerId}/documents`);
     const rows = await res.json().catch(() => ([]));
     const docs = Array.isArray(rows) ? rows : [];
     if (!docs.length) {
@@ -872,7 +872,7 @@
     const enabled = !!recurringEnabled.checked;
     recurringFields.style.display = enabled ? "" : "none";
     recurringHint.textContent = enabled
-      ? "Recurring settings apply to this customer and schedule future appointments."
+      ? "Recurring settings apply to this client and schedule future appointments."
       : "";
     if (enabled && !recurringDurationMinutes.value){
       const startDt = _parseInputDate(startInput.value);
@@ -917,7 +917,7 @@
         titleInput.value = "Blocked time";
       }
     }
-    updateGoToCustomerButton();
+    updateGoToClientButton();
   }
 
   if (blockToggle){
@@ -942,19 +942,19 @@
     });
   }
 
-  function updateGoToCustomerButton(){
-    if (!goCustomerBtn) return;
+  function updateGoToClientButton(){
+    if (!goClientBtn) return;
     const customerId = document.getElementById("customerId").value;
     if (customerId && !blockToggle.checked) {
-      goCustomerBtn.style.display = "";
-      goCustomerBtn.dataset.customerId = customerId;
+      goClientBtn.style.display = "";
+      goClientBtn.dataset.customerId = customerId;
     } else {
-      goCustomerBtn.style.display = "none";
-      goCustomerBtn.dataset.customerId = "";
+      goClientBtn.style.display = "none";
+      goClientBtn.dataset.customerId = "";
     }
   }
 
-  function _applyPreselectedCustomerIfAny(){
+  function _applyPreselectedClientIfAny(){
     // If we have a customer_id in the URL, set it so saves link correctly.
     // If customer_name is provided, prefill the search box for convenience.
     if (PRESELECT_CUSTOMER_ID && /^\d+$/.test(PRESELECT_CUSTOMER_ID) && !blockToggle.checked){
@@ -962,7 +962,7 @@
       if (PRESELECT_CUSTOMER_NAME){
         document.getElementById("custSearch").value = PRESELECT_CUSTOMER_NAME;
       }
-      loadCustomerDocuments(PRESELECT_CUSTOMER_ID);
+      loadClientDocuments(PRESELECT_CUSTOMER_ID);
       // If user starts typing and selects someone else, this will be replaced.
     }
   }
@@ -1003,7 +1003,7 @@
 
     document.getElementById("customerId").value = "";
     document.getElementById("custSearch").value = "";
-    resetInvoiceSelect("Select a customer first");
+    resetInvoiceSelect("Select a client first");
     document.getElementById("title").value = "";
     document.getElementById("notes").value = "";
     setBlockMode(isBlock);
@@ -1019,17 +1019,17 @@
 
     if (!isBlock){
       resetRecurringFields();
-      _applyPreselectedCustomerIfAny();
+      _applyPreselectedClientIfAny();
     }
     if (IS_EMPLOYEE_ACCOUNT && recurringSection){
       recurringSection.style.display = "none";
     }
     setModalReadOnly(false);
-    updateGoToCustomerButton();
+    updateGoToClientButton();
     modal.show();
 
     // if a customer_id was deep-linked, keep title blank unless user fills it
-    // (optional: you can set title to customer name once you add a customer lookup endpoint)
+    // (optional: you can set title to client name once you add a client lookup endpoint)
   }
 
   function openModalForEdit(e, readOnly = false){
@@ -1041,9 +1041,9 @@
     document.getElementById("customerId").value = e.customer_id || "";
     document.getElementById("custSearch").value = e.customer_name || "";
     if (!isBlock && e.customer_id) {
-      loadCustomerDocuments(e.customer_id, e.invoice_id || "");
+      loadClientDocuments(e.customer_id, e.invoice_id || "");
     } else {
-      resetInvoiceSelect(isBlock ? "Blocked time has no documents" : "Select a customer first");
+      resetInvoiceSelect(isBlock ? "Blocked time has no documents" : "Select a client first");
     }
 
     document.getElementById("title").value = e.title || "";
@@ -1059,7 +1059,7 @@
     custActiveIndex = -1;
 
     resetRecurringFields();
-    updateGoToCustomerButton();
+    updateGoToClientButton();
     if (IS_EMPLOYEE_ACCOUNT && recurringSection){
       recurringSection.style.display = "none";
     }
@@ -1067,7 +1067,7 @@
       const rec = e.customer_recurring;
       if (rec.interval_days) {
         stopRecurringBtn.style.display = "";
-        recurringHint.textContent = "Recurring schedule already exists for this customer.";
+        recurringHint.textContent = "Recurring schedule already exists for this client.";
       }
       recurringIntervalDays.value = rec.interval_days || "";
       recurringDurationMinutes.value = rec.default_minutes || "";
@@ -1201,7 +1201,7 @@
         return;
       }
       if (!customerId){
-        alert("Please select a customer before enabling recurring scheduling.");
+        alert("Please select a client before enabling recurring scheduling.");
         return;
       }
       payload.recurring_enabled = true;
@@ -1247,13 +1247,13 @@
   stopRecurringBtn.addEventListener("click", async () => {
     const customerId = document.getElementById("customerId").value;
     if (!customerId){
-      alert("Select a customer to stop recurring scheduling.");
+      alert("Select a client to stop recurring scheduling.");
       return;
     }
-    if (!confirm("Disable recurring scheduling for this customer and delete future recurring appointments?")) {
+    if (!confirm("Disable recurring scheduling for this client and delete future recurring appointments?")) {
       return;
     }
-    const res = await fetch(`/customers/${customerId}/recurring/disable`, { method:"POST" });
+    const res = await fetch(`/clients/${customerId}/recurring/disable`, { method:"POST" });
     if (!res.ok){
       alert("Error disabling recurring schedule.");
       return;
@@ -1263,12 +1263,12 @@
     await refresh();
   });
 
-  if (goCustomerBtn){
-    goCustomerBtn.addEventListener("click", (e) => {
+  if (goClientBtn){
+    goClientBtn.addEventListener("click", (e) => {
       e.preventDefault();
-      const customerId = goCustomerBtn.dataset.customerId;
+      const customerId = goClientBtn.dataset.customerId;
       if (customerId){
-        window.location.href = `/customers/${customerId}`;
+        window.location.href = `/clients/${customerId}`;
       }
     });
   }
@@ -1292,7 +1292,7 @@
   }
 
   // -----------------------------
-  // Customer typeahead (with Enter + arrow nav)
+  // Client typeahead (with Enter + arrow nav)
   // -----------------------------
   const custSearch = document.getElementById("custSearch");
   const custResults = document.getElementById("custResults");
@@ -1322,17 +1322,17 @@
     });
   }
 
-  function pickCustomerByIndex(index){
+  function pickClientByIndex(index){
     const row = custRowsCache[index];
     if (!row) return false;
 
     document.getElementById("customerId").value = row.id;
     custSearch.value = row.name;
     hideCustResults();
-    updateGoToCustomerButton();
-    loadCustomerDocuments(row.id);
+    updateGoToClientButton();
+    loadClientDocuments(row.id);
 
-    // If title is blank, default it to customer name
+    // If title is blank, default it to client name
     const t = document.getElementById("title");
     if (t && !(t.value || "").trim()){
       t.value = row.name;
@@ -1345,8 +1345,8 @@
 
     // whenever user types, clear selected id until they pick
     document.getElementById("customerId").value = "";
-    resetInvoiceSelect("Select a customer first");
-    updateGoToCustomerButton();
+    resetInvoiceSelect("Select a client first");
+    updateGoToClientButton();
     if (custTimer) clearTimeout(custTimer);
 
     if (!q){
@@ -1355,7 +1355,7 @@
     }
 
     custTimer = setTimeout(async () => {
-      const res = await fetch(`/api/customers/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/clients/search?q=${encodeURIComponent(q)}`);
       const rows = await res.json();
       custRowsCache = Array.isArray(rows) ? rows : [];
       custActiveIndex = -1;
@@ -1373,7 +1373,7 @@
         custResults.querySelectorAll("button").forEach(btn => {
           btn.addEventListener("click", () => {
             const idx = parseInt(btn.dataset.idx, 10);
-            pickCustomerByIndex(idx);
+            pickClientByIndex(idx);
           });
         });
       } else {
@@ -1400,7 +1400,7 @@
       // Press Enter to choose highlighted; if none highlighted, choose first
       e.preventDefault();
       const idx = (custActiveIndex >= 0 ? custActiveIndex : 0);
-      pickCustomerByIndex(idx);
+      pickClientByIndex(idx);
     } else if (e.key === "Escape"){
       hideCustResults();
     }

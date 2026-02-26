@@ -464,8 +464,8 @@
           <div class="settings-card-head">
             <h5>Email Editor</h5>
           </div>
-          <div class="settings-help">Customize customer-facing email messages for invoice, estimate, and payment reminder sends.</div>
-          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('email_templates') }}">Open Customer Email Editor</a>
+          <div class="settings-help">Customize client-facing email messages for invoice, estimate, and payment reminder sends.</div>
+          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('email_templates') }}">Open Client Email Editor</a>
         </section>
       {% endif %}
 
@@ -513,9 +513,9 @@
       {% if pro_features_enabled %}
         <section class="settings-card span-2" id="section-payments">
           <div class="settings-card-head">
-            <h5>Customer Payment Fee Rules (Pro)</h5>
+            <h5>Client Payment Fee Rules (Pro)</h5>
           </div>
-          <div class="settings-help">Used for customer portal card payments and payout calculations.</div>
+          <div class="settings-help">Used for client portal card payments and payout calculations.</div>
           <div class="row g-3">
             <div class="col-md-4">
               <label class="form-label compact-label">Credit Card Processing Fee (%)</label>
@@ -732,7 +732,7 @@
         <div class="settings-card-head">
           <h5>Data Backup (CSV)</h5>
         </div>
-        <div class="settings-help">Download a full account backup as a ZIP containing CSV files for customers, invoices/estimates, line items, expenses, schedules, templates, and settings.</div>
+        <div class="settings-help">Download a full account backup as a ZIP containing CSV files for clients, invoices/estimates, line items, expenses, schedules, templates, and settings.</div>
         <div class="d-flex flex-wrap gap-2 mb-3">
           <input class="form-control form-control-sm" style="max-width:260px;" type="password" name="backup_export_password" placeholder="Current password">
           <button class="btn btn-outline-primary btn-sm" type="submit" formaction="{{ url_for('settings_export_backup') }}" formmethod="post">

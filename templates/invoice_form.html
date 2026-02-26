@@ -57,7 +57,7 @@
     </div>
   </div>
   <div class="action-group">
-    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Customers</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Clients</a>
     <a class="btn btn-outline-secondary"
        href="{{ url_for('estimates') if doc_type == 'estimate' else url_for('invoices') }}">
       {{ "All Estimates" if doc_type == "estimate" else "Invoices" }}
@@ -65,7 +65,7 @@
   </div>
 </div>
 
-{# JS customer data (id/name/email/phone) #}
+{# JS client data (id/name/email/phone) #}
 <script>
   const CUSTOMERS = {{ (customers_for_js if customers_for_js is defined else [])|tojson|safe }};
 </script>
@@ -76,9 +76,9 @@
 
     <div class="row g-3">
 
-      <!-- Customer selection: type-to-search -->
+      <!-- Client selection: type-to-search -->
       <div class="col-12 col-md-6">
-        <label class="form-label req">Customer</label>
+        <label class="form-label req">Client</label>
 
         <input
           class="form-control"
@@ -86,7 +86,7 @@
           name="customer_name"
           list="customers_datalist"
           value="{{ _cust_name }}"
-          placeholder="Start typing a customer name…"
+          placeholder="Start typing a client name…"
           autocomplete="off"
           required
         />
@@ -94,13 +94,13 @@
         <input type="hidden" id="customer_id" name="customer_id" value="{{ _cust_id }}">
 
         <datalist id="customers_datalist">
-          {% for c in customers %}
+          {% for c in clients %}
             <option value="{{ c.name }}" data-id="{{ c.id }}"></option>
           {% endfor %}
         </datalist>
 
         <div class="small-muted mt-1">
-          Need a new customer? <a href="{{ url_for('customer_new') }}">Create one</a>.
+          Need a new client? <a href="{{ url_for('customer_new') }}">Create one</a>.
         </div>
       </div>
 
@@ -115,21 +115,21 @@
       </div>
       {% endif %}
 
-      <!-- Customer contact (invoice-level override) -->
+      <!-- Client contact (invoice-level override) -->
       <div class="col-12 col-md-6">
-        <label class="form-label">Customer Email (override)</label>
+        <label class="form-label">Client Email (override)</label>
         <input class="form-control" type="email" id="customer_email" name="customer_email"
                value="{% if mode=='edit' %}{{ inv.customer_email or '' }}{% else %}{{ (form.customer_email if form else '') }}{% endif %}"
-               placeholder="customer@example.com">
-        <div class="small-muted mt-1">If blank, we’ll use the customer profile email automatically.</div>
+               placeholder="client@example.com">
+        <div class="small-muted mt-1">If blank, we’ll use the client profile email automatically.</div>
       </div>
 
       <div class="col-12 col-md-6">
-        <label class="form-label">Customer Phone (override)</label>
+        <label class="form-label">Client Phone (override)</label>
         <input class="form-control" id="customer_phone" name="customer_phone"
                value="{% if mode=='edit' %}{{ format_phone(inv.customer_phone) }}{% else %}{{ (form.customer_phone if form else '') }}{% endif %}"
                placeholder="(406) 555-1234">
-        <div class="small-muted mt-1">If blank, we’ll use the customer profile phone automatically.</div>
+        <div class="small-muted mt-1">If blank, we’ll use the client profile phone automatically.</div>
       </div>
 
       {% if tmpl_key == "flipping_items" %}
@@ -504,8 +504,8 @@
   }
 
   // -----------------------------
-  // Customer typeahead → set hidden customer_id
-  // AND auto-fill email/phone from customer profile (if override fields are blank)
+  // Client typeahead → set hidden customer_id
+  // AND auto-fill email/phone from client profile (if override fields are blank)
   // -----------------------------
   (function () {
     const nameInput = document.getElementById("customer_name");
@@ -538,16 +538,16 @@
       });
     }
 
-    const idToCustomer = {};
+    const idToClient = {};
     if (Array.isArray(CUSTOMERS)) {
       CUSTOMERS.forEach(c => {
-        if (c && c.id != null) idToCustomer[String(c.id)] = c;
+        if (c && c.id != null) idToClient[String(c.id)] = c;
       });
     }
 
-    function fillContactFromCustomerId() {
+    function fillContactFromClientId() {
       if (!idInput.value) return;
-      const c = idToCustomer[String(idInput.value)];
+      const c = idToClient[String(idInput.value)];
       if (!c) return;
 
       if (emailInput && !(emailInput.value || "").trim()) {
@@ -558,7 +558,7 @@
       }
     }
 
-    function syncCustomerId() {
+    function syncClientId() {
       const v = (nameInput.value || "").trim().toLowerCase();
       if (!v) {
         idInput.value = "";
@@ -566,16 +566,16 @@
       }
       if (nameToId[v]) {
         idInput.value = nameToId[v];
-        fillContactFromCustomerId();
+        fillContactFromClientId();
       } else {
         idInput.value = "";
       }
     }
 
     if (nameInput) {
-      nameInput.addEventListener("input", syncCustomerId);
-      nameInput.addEventListener("change", syncCustomerId);
-      nameInput.addEventListener("blur", syncCustomerId);
+      nameInput.addEventListener("input", syncClientId);
+      nameInput.addEventListener("change", syncClientId);
+      nameInput.addEventListener("blur", syncClientId);
     }
     if (phoneInput) {
       phoneInput.value = formatPhone(phoneInput.value);
@@ -587,17 +587,17 @@
     const form = document.getElementById("invoiceForm");
     if (form) {
       form.addEventListener("submit", function (e) {
-        syncCustomerId();
+        syncClientId();
         if (!idInput.value) {
           e.preventDefault();
-          alert("Please select an existing customer (choose one from the suggestions).");
+          alert("Please select an existing client (choose one from the suggestions).");
           nameInput.focus();
         }
       });
     }
 
-    syncCustomerId();
-    fillContactFromCustomerId();
+    syncClientId();
+    fillContactFromClientId();
   })();
 
   (function () {

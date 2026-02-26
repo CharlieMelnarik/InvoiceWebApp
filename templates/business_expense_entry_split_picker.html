@@ -28,7 +28,7 @@
           <option value="">Select one...</option>
           {% for d in docs %}
             <option value="{{ d.id }}" {% if doc_id and doc_id|int == d.id %}selected{% endif %}>
-              {{ d.display_number or d.invoice_number }} · {{ d.name or "No customer" }} · {{ d.date_in or "" }}
+              {{ d.display_number or d.invoice_number }} · {{ d.name or "No client" }} · {{ d.date_in or "" }}
             </option>
           {% endfor %}
         </select>

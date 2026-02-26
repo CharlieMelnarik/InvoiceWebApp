@@ -747,7 +747,7 @@ PRO_ONLY_PDF_TEMPLATES = {"basic", "simple", "blueprint", "luxe"}
 EMAIL_TEMPLATE_DEFS = {
     "invoice_ready": {
         "name": "Invoice Email",
-        "description": "Sent when user emails an invoice to customer.",
+        "description": "Sent when user emails an invoice to client.",
         "default_subject": "Invoice {{document_number}}",
         "default_html": (
             "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
@@ -761,7 +761,7 @@ EMAIL_TEMPLATE_DEFS = {
     },
     "estimate_ready": {
         "name": "Estimate Email",
-        "description": "Sent when user emails an estimate to customer.",
+        "description": "Sent when user emails an estimate to client.",
         "default_subject": "Estimate {{document_number}}",
         "default_html": (
             "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
@@ -955,7 +955,7 @@ def _email_template_sample_context(owner: User, template_key: str, *, test_date:
             f"and {sample_late_fee_cycles} late fee charge(s) have accrued."
         )
     return {
-        "customer_name": "Sample Customer",
+        "customer_name": "Sample Client",
         "business_name": ((owner.business_name or "").strip() or owner.username or "Your Business"),
         "document_number": f"{created_local.strftime('%Y')}-0001",
         "invoice_amount": f"{sample_amount_due:,.2f}",
@@ -1410,7 +1410,7 @@ def _default_contract_body(owner: User | None, customer: Customer | None) -> str
         "6. Liability and Warranty\n"
         "Business will perform services in a professional manner. Any specific warranty terms must be provided in writing.\n\n"
         "7. Governing Terms\n"
-        "This agreement supplements the project-specific invoice/estimate terms for this customer account.\n\n"
+        "This agreement supplements the project-specific invoice/estimate terms for this client account.\n\n"
         "By signing below, Client acknowledges and agrees to these terms."
     )
 
@@ -1439,12 +1439,12 @@ def _contract_pdf_buffer(contract: Contract, owner: User | None, customer: Custo
     owner_name = ((getattr(owner, "business_name", None) or "").strip() if owner else "") or (
         (getattr(owner, "username", None) or "").strip() if owner else "Business"
     )
-    customer_name = ((getattr(customer, "name", None) or "").strip() if customer else "") or "Customer"
+    customer_name = ((getattr(customer, "name", None) or "").strip() if customer else "") or "Client"
 
     _draw_line(contract.title or "Service Agreement", font="Helvetica-Bold", size=16)
     y -= 4
     _draw_line(f"Business: {owner_name}", font="Helvetica", size=10)
-    _draw_line(f"Customer: {customer_name}", font="Helvetica", size=10)
+    _draw_line(f"Client: {customer_name}", font="Helvetica", size=10)
     _draw_line(f"Status: {contract.status.replace('_', '-').title()}", font="Helvetica", size=10)
     if getattr(contract, "sent_at", None):
         _draw_line(f"Sent: {contract.sent_at.strftime('%Y-%m-%d %H:%M:%S UTC')}", font="Helvetica", size=10)
@@ -1599,7 +1599,7 @@ def _send_sms_via_twilio(to_phone_e164: str, body_text: str) -> None:
 def _stripe_err_msg(exc: Exception) -> str:
     text_msg = str(exc or "")
     if "No such customer" in text_msg:
-        return "Stripe customer record is invalid for the current mode. Please retry checkout."
+        return "Stripe client record is invalid for the current mode. Please retry checkout."
     if "No such price" in text_msg:
         return "Stripe price is invalid for the current mode. Update your Stripe price IDs."
     if "Invalid API Key" in text_msg or "api key" in text_msg.lower():
@@ -2261,7 +2261,7 @@ def _send_payment_reminder_for_invoice(
 
     to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
     if not to_email or "@" not in to_email:
-        return False, "Customer email is missing or invalid."
+        return False, "Client email is missing or invalid."
 
     now_val = now_utc or datetime.utcnow()
     due_dt = _invoice_due_date_utc(inv, owner)
@@ -5317,7 +5317,7 @@ def create_app():
                         old_id = _csv_int(row.get("id"), None)
                         cust = Customer(
                             user_id=u.id,
-                            name=(row.get("name") or "").strip() or "Customer",
+                            name=(row.get("name") or "").strip() or "Client",
                             email=_csv_str(row.get("email")),
                             phone=_csv_str(row.get("phone")),
                             address=_csv_str(row.get("address")),
@@ -5365,7 +5365,7 @@ def create_app():
                             tax_override=_csv_float(row.get("tax_override"), None),
                             customer_email=_csv_str(row.get("customer_email")),
                             customer_phone=_csv_str(row.get("customer_phone")),
-                            name=(row.get("name") or "").strip() or "Customer",
+                            name=(row.get("name") or "").strip() or "Client",
                             vehicle=(row.get("vehicle") or "").strip() or "Job",
                             hours=_csv_float(row.get("hours"), 0.0) or 0.0,
                             price_per_hour=_csv_float(row.get("price_per_hour"), 0.0) or 0.0,
@@ -6146,7 +6146,7 @@ def create_app():
                     tax_override=None,
                     customer_email="customer@example.com",
                     customer_phone="(406) 555-1234",
-                    name="Sample Customer",
+                    name="Sample Client",
                     vehicle="Sample Job",
                     hours=1.5,
                     price_per_hour=60.0,
@@ -7151,7 +7151,7 @@ def create_app():
                 "business_address": owner_addr,
                 "business_email": (getattr(owner, "email", None) or "").strip(),
                 "business_logo": "{{business_logo}}",
-                "customer_name": "Sample Customer",
+                "customer_name": "Sample Client",
                 "customer_email": "customer@example.com",
                 "customer_phone": "(406) 555-1234",
                 "job": "Sample Job",
@@ -7375,7 +7375,7 @@ def create_app():
 
             sample_context = _email_template_sample_context(owner, key, test_date=test_date_obj)
             token_labels = {
-                "customer_name": "Customer Name",
+                "customer_name": "Client Name",
                 "business_name": "Business Name",
                 "document_number": "Document Number",
                 "invoice_amount": "Invoice Amount",
@@ -7431,7 +7431,7 @@ def create_app():
                 can_pay=can_pay,
                 action_label=action_label,
                 business_name=((owner.business_name or "").strip() or owner.username or "Your Business"),
-                customer_name="Sample Customer",
+                customer_name="Sample Client",
                 document_number=f"{_user_local_now(owner).strftime('%Y')}-0001",
                 invoice_amount=129.60,
                 convenience_fee=4.06,
@@ -7496,7 +7496,7 @@ def create_app():
                     tax_override=None,
                     customer_email="customer@example.com",
                     customer_phone="(406) 555-1234",
-                    name="Sample Customer",
+                    name="Sample Client",
                     vehicle="Sample Job",
                     hours=2.5,
                     price_per_hour=100.0,
@@ -8507,7 +8507,7 @@ def create_app():
             if not u:
                 abort(403)
             if not _has_pro_features(u):
-                flash("Stripe Connect customer payments are available on the Pro plan.", "error")
+                flash("Stripe Connect client payments are available on the Pro plan.", "error")
                 return redirect(url_for("billing"))
 
             acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
@@ -8561,7 +8561,7 @@ def create_app():
             if not u:
                 abort(403)
             if not _has_pro_features(u):
-                flash("Stripe Connect customer payments are available on the Pro plan.", "error")
+                flash("Stripe Connect client payments are available on the Pro plan.", "error")
                 return redirect(url_for("billing"))
             acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip() if u else ""
             if not acct_id:
@@ -9249,10 +9249,10 @@ def create_app():
                 except Exception:
                     return jsonify({"error": "invoice_id must be an integer"}), 400
                 if not cust_id_int:
-                    return jsonify({"error": "Select a customer before choosing an invoice."}), 400
+                    return jsonify({"error": "Select a client before choosing an invoice."}), 400
                 inv = _invoice_owned_or_404(s, invoice_id_int)
                 if cust_id_int and inv.customer_id != cust_id_int:
-                    return jsonify({"error": "Invoice must belong to the selected customer."}), 400
+                    return jsonify({"error": "Invoice must belong to the selected client."}), 400
 
             ev = ScheduleEvent(
                 user_id=uid,
@@ -9274,7 +9274,7 @@ def create_app():
                 if event_type == "block":
                     return jsonify({"error": "Recurring schedule is not available for blocked time."}), 400
                 if not cust_id_int:
-                    return jsonify({"error": "Recurring schedule requires a customer."}), 400
+                    return jsonify({"error": "Recurring schedule requires a client."}), 400
                 if not recurring_interval_days.isdigit():
                     return jsonify({"error": "Recurring interval (days) is required."}), 400
 
@@ -9371,10 +9371,10 @@ def create_app():
                     except Exception:
                         return jsonify({"error": "invoice_id must be an integer"}), 400
                     if not ev.customer_id:
-                        return jsonify({"error": "Select a customer before choosing an invoice."}), 400
+                        return jsonify({"error": "Select a client before choosing an invoice."}), 400
                     inv = _invoice_owned_or_404(s, invoice_id_int)
                     if ev.customer_id and inv.customer_id != ev.customer_id:
-                        return jsonify({"error": "Invoice must belong to the selected customer."}), 400
+                        return jsonify({"error": "Invoice must belong to the selected client."}), 400
                     ev.invoice_id = invoice_id_int
 
             if "title" in data:
@@ -9399,7 +9399,7 @@ def create_app():
                 if getattr(ev, "event_type", None) == "block":
                     return jsonify({"error": "Recurring schedule is not available for blocked time."}), 400
                 if not ev.customer_id:
-                    return jsonify({"error": "Recurring schedule requires a customer."}), 400
+                    return jsonify({"error": "Recurring schedule requires a client."}), 400
 
                 interval_days_raw = (data.get("recurring_interval_days") or "").strip()
                 if not interval_days_raw.isdigit():
@@ -9508,7 +9508,7 @@ def create_app():
             default_service_minutes = int(default_minutes_raw) if default_minutes_raw.isdigit() else 60
 
             if not name:
-                flash("Customer name is required.", "error")
+                flash("Client name is required.", "error")
                 return render_template("customer_form.html", mode="new", form=request.form)
 
             with db_session() as s:
@@ -9519,7 +9519,7 @@ def create_app():
                     .first()
                 )
                 if existing:
-                    flash("That customer already exists.", "info")
+                    flash("That client already exists.", "info")
                     return redirect(url_for("customer_view", customer_id=existing.id))
 
                 c = Customer(
@@ -9545,7 +9545,7 @@ def create_app():
                     s.commit()
                 except IntegrityError:
                     s.rollback()
-                    flash("That customer name is already in use.", "error")
+                    flash("That client name is already in use.", "error")
                     return render_template("customer_form.html", mode="new", form=request.form)
 
                 # If recurrence is enabled, generate initial future events
@@ -9589,7 +9589,7 @@ def create_app():
                 address = _format_customer_address(address_line1, address_line2, city, state, postal_code)
 
                 if not name:
-                    flash("Customer name is required.", "error")
+                    flash("Client name is required.", "error")
                     return render_template("customer_form.html", mode="edit", c=c)
 
                 dup = (
@@ -9603,12 +9603,12 @@ def create_app():
                     try:
                         _merge_customers(s, source=c, target=dup)
                         s.commit()
-                        flash(f"Merged into existing customer: {dup.name}", "success")
+                        flash(f"Merged into existing client: {dup.name}", "success")
                         return redirect(url_for("customer_view", customer_id=dup.id))
                     except Exception as e:
                         s.rollback()
                         print("[CUSTOMER MERGE] ERROR:", repr(e), flush=True)
-                        flash("Could not merge customers (server error).", "error")
+                        flash("Could not merge clients (server error).", "error")
                         return render_template("customer_form.html", mode="edit", c=c)
 
                 c.name = name
@@ -9654,10 +9654,10 @@ def create_app():
                     s.commit()
                 except IntegrityError:
                     s.rollback()
-                    flash("That customer name is already in use. Try a different name, or merge customers.", "error")
+                    flash("That client name is already in use. Try a different name, or merge clients.", "error")
                     return render_template("customer_form.html", mode="edit", c=c)
 
-                flash("Customer updated.", "success")
+                flash("Client updated.", "success")
                 return redirect(url_for("customer_view", customer_id=c.id))
 
         return render_template("customer_form.html", mode="edit", c=c)
@@ -9704,7 +9704,7 @@ def create_app():
                 pass
 
         flash(
-            f"Customer deleted. Removed {deleted_docs} associated invoice/estimate record(s).",
+            f"Client deleted. Removed {deleted_docs} associated invoice/estimate record(s).",
             "success",
         )
         return redirect(url_for("customers_list"))
@@ -9772,7 +9772,7 @@ def create_app():
             if request.method == "POST":
                 target_id_raw = (request.form.get("target_customer_id") or "").strip()
                 if not target_id_raw.isdigit():
-                    flash("Pick a customer to merge into.", "error")
+                    flash("Pick a client to merge into.", "error")
                     return render_template("customer_merge.html", source=source, customers=customers)
 
                 target = _customer_owned_or_404(s, int(target_id_raw))
@@ -9913,7 +9913,7 @@ def create_app():
                         to_email_value=to_email,
                     )
                 if not _looks_like_email(to_email):
-                    flash("A valid customer email is required to send the contract.", "error")
+                    flash("A valid client email is required to send the contract.", "error")
                     return render_template(
                         "contract_form.html",
                         mode="new",
@@ -9980,7 +9980,7 @@ def create_app():
                     )
 
                 s.commit()
-                flash("Contract sent to customer for e-signature.", "success")
+                flash("Contract sent to client for e-signature.", "success")
                 return redirect(url_for("customer_view", customer_id=customer.id))
 
             return render_template(
@@ -10219,7 +10219,7 @@ def create_app():
             vehicle = (request.form.get("vehicle") or "").strip()
 
             if not customer_id_raw.isdigit():
-                flash("Please select a customer from the list.", "error")
+                flash("Please select a client from the list.", "error")
                 return render_template(
                     "invoice_form.html",
                     mode="new",
@@ -10396,7 +10396,7 @@ def create_app():
             vehicle = (request.form.get("vehicle") or "").strip()
 
             if not customer_id_raw.isdigit():
-                flash("Please select a customer from the list.", "error")
+                flash("Please select a client from the list.", "error")
                 return render_template(
                     "invoice_form.html",
                     mode="new",
@@ -10588,7 +10588,7 @@ def create_app():
             if request.method == "POST":
                 customer_id_raw = (request.form.get("customer_id") or "").strip()
                 if not customer_id_raw.isdigit():
-                    flash("Please select a customer from the list.", "error")
+                    flash("Please select a client from the list.", "error")
                     return render_template(
                         "invoice_form.html",
                         mode="edit",
@@ -10969,7 +10969,7 @@ def create_app():
             if request.method == "POST":
                 customer_id_raw = (request.form.get("customer_id") or "").strip()
                 if not customer_id_raw.isdigit():
-                    flash("Please select a customer from the list.", "error")
+                    flash("Please select a client from the list.", "error")
                     return render_template(
                         "invoice_form.html",
                         mode="edit",
@@ -12812,7 +12812,7 @@ def create_app():
 
             to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
             if not to_email or "@" not in to_email:
-                flash("Customer email is missing. Add it on the estimate edit page (or customer profile).", "error")
+                flash("Client email is missing. Add it on the estimate edit page (or client profile).", "error")
                 return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
             if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
@@ -12887,7 +12887,7 @@ def create_app():
             to_phone_raw = (inv.customer_phone or (customer.phone if customer else "") or "").strip()
             to_phone = _to_e164_phone(to_phone_raw)
             if not to_phone:
-                flash("Customer phone is missing or invalid. Add it on the estimate edit page (or customer profile).", "error")
+                flash("Client phone is missing or invalid. Add it on the estimate edit page (or client profile).", "error")
                 return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
             if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
@@ -12985,7 +12985,7 @@ def create_app():
 
             to_email = (inv.customer_email or (customer.email if customer else "") or "").strip().lower()
             if not to_email or "@" not in to_email:
-                flash("Customer email is missing. Add it on the invoice edit page (or customer profile).", "error")
+                flash("Client email is missing. Add it on the invoice edit page (or client profile).", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
             if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):
@@ -13191,7 +13191,7 @@ def create_app():
             to_phone_raw = (inv.customer_phone or (customer.phone if customer else "") or "").strip()
             to_phone = _to_e164_phone(to_phone_raw)
             if not to_phone:
-                flash("Customer phone is missing or invalid. Add it on the invoice edit page (or customer profile).", "error")
+                flash("Client phone is missing or invalid. Add it on the invoice edit page (or client profile).", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
             if (not inv.pdf_path) or (not os.path.exists(inv.pdf_path)):

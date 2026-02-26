@@ -11,17 +11,17 @@
   <div>
     <h1 class="h3 fw-bold mb-1">{{ page_title }}</h1>
     <div class="subtitle">
-      Customer:
+      Client:
       {% if c %}
         <a class="text-decoration-none fw-semibold" href="{{ url_for('customer_view', customer_id=c.id) }}">{{ c.name }}</a>
       {% else %}
-        <span class="text-danger">Missing customer</span>
+        <span class="text-danger">Missing client</span>
       {% endif %}
     </div>
   </div>
   {% if c %}
     <div class="action-group">
-      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Back to Customer</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Back to Client</a>
     </div>
   {% endif %}
 </div>
@@ -45,7 +45,7 @@
       {% if mode != "edit" %}
         <div class="mb-3">
           <label class="form-label fw-semibold">Send To Email</label>
-          <input class="form-control" name="to_email" value="{{ to_email_value or '' }}" placeholder="customer@example.com" required>
+          <input class="form-control" name="to_email" value="{{ to_email_value or '' }}" placeholder="client@example.com" required>
         </div>
       {% endif %}
 
