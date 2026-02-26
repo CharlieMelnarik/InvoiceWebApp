@@ -94,7 +94,7 @@
         <input type="hidden" id="customer_id" name="customer_id" value="{{ _cust_id }}">
 
         <datalist id="customers_datalist">
-          {% for c in clients %}
+          {% for c in customers %}
             <option value="{{ c.name }}" data-id="{{ c.id }}"></option>
           {% endfor %}
         </datalist>

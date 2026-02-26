@@ -20,7 +20,7 @@
       <label class="form-label req">Merge into</label>
       <select class="form-select" name="target_customer_id" required>
         <option value="">Choose a client…</option>
-        {% for c in clients %}
+        {% for c in customers %}
           <option value="{{ c.id }}">{{ c.name }}</option>
         {% endfor %}
       </select>
@@ -38,4 +38,3 @@
   </div>
 </form>
 {% endblock %}
-

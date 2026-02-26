@@ -510,7 +510,7 @@
     invoiceSelect.disabled = true;
     invoiceSelect.innerHTML = `<option value="">Loading...</option>`;
     updateInvoiceLink();
-    const res = await fetch(`/api/clients/${customerId}/documents`);
+    const res = await fetch(`/api/customers/${customerId}/documents`);
     const rows = await res.json().catch(() => ([]));
     const docs = Array.isArray(rows) ? rows : [];
     if (!docs.length) {
@@ -1253,7 +1253,7 @@
     if (!confirm("Disable recurring scheduling for this client and delete future recurring appointments?")) {
       return;
     }
-    const res = await fetch(`/clients/${customerId}/recurring/disable`, { method:"POST" });
+    const res = await fetch(`/customers/${customerId}/recurring/disable`, { method:"POST" });
     if (!res.ok){
       alert("Error disabling recurring schedule.");
       return;
@@ -1268,7 +1268,7 @@
       e.preventDefault();
       const customerId = goClientBtn.dataset.customerId;
       if (customerId){
-        window.location.href = `/clients/${customerId}`;
+        window.location.href = `/customers/${customerId}`;
       }
     });
   }
@@ -1355,7 +1355,7 @@
     }
 
     custTimer = setTimeout(async () => {
-      const res = await fetch(`/api/clients/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/customers/search?q=${encodeURIComponent(q)}`);
       const rows = await res.json();
       custRowsCache = Array.isArray(rows) ? rows : [];
       custActiveIndex = -1;

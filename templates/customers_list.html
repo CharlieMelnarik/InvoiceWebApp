@@ -40,8 +40,8 @@
           </tr>
         </thead>
         <tbody>
-          {% if clients and clients|length > 0 %}
-            {% for c in clients %}
+          {% if customers and customers|length > 0 %}
+            {% for c in customers %}
               <tr>
                 <td class="fw-semibold">
                   <a href="{{ url_for('customer_view', customer_id=c.id) }}" class="text-decoration-none">
