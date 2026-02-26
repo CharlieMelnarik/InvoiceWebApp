@@ -3,7 +3,7 @@
 
 {% block content %}
 {% set total = inv.invoice_total() %}
-{% set amount_due = inv.amount_due() %}
+{% set amount_due = effective_amount_due if effective_amount_due is defined else inv.amount_due() %}
 {% set is_paid = amount_due <= 0.01 %}
 {% set is_estimate = inv.is_estimate %}
 
@@ -60,6 +60,9 @@
             <div class="border rounded p-3 h-100">
               <div class="small-muted mb-1">Amount Due</div>
               <div class="h5 mb-0 mono">${{ "%.2f"|format(amount_due_display if amount_due_display is defined else amount_due) }}</div>
+              {% if late_fee_amount is defined and late_fee_amount > 0 %}
+                <div class="small-muted mt-1">Includes late fees: ${{ "%.2f"|format(late_fee_amount) }}</div>
+              {% endif %}
             </div>
           </div>
         </div>

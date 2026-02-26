@@ -371,6 +371,21 @@
             </form>
           {% endif %}
 
+          {% if can_use_marketing_campaigns and pro_features_enabled and inv.amount_due() > 0 %}
+            <form method="post" action="{{ url_for('invoice_send_reminder_test', invoice_id=inv.id, kind='before_due') }}"
+                  onsubmit="return confirm('Admin test: send BEFORE DUE reminder using simulated settings-based date?');">
+              <button class="btn btn-outline-warning" type="submit">Send Manual Test Before Due Email</button>
+            </form>
+            <form method="post" action="{{ url_for('invoice_send_reminder_test', invoice_id=inv.id, kind='due_today') }}"
+                  onsubmit="return confirm('Admin test: send DUE TODAY reminder using simulated settings-based date?');">
+              <button class="btn btn-outline-warning" type="submit">Send Manual Test Due Today Email</button>
+            </form>
+            <form method="post" action="{{ url_for('invoice_send_reminder_test', invoice_id=inv.id, kind='after_due') }}"
+                  onsubmit="return confirm('Admin test: send PAST DUE reminder using simulated settings-based date?');">
+              <button class="btn btn-outline-warning" type="submit">Send Manual Test Due Late Email</button>
+            </form>
+          {% endif %}
+
           <form method="post" action="{{ url_for('invoice_text', invoice_id=inv.id) }}" class="d-none">
             <button class="btn btn-outline-success" type="submit">Text PDF</button>
           </form>

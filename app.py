@@ -2307,11 +2307,35 @@ def _send_payment_reminder_for_invoice(
         email_template_key = "reminder_manual"
 
     late_fee_line = ""
+    online_total_line = ""
+    base_amount_due = float(inv.amount_due() or 0.0)
+    payable_due_amount = due_with_late_fee if late_fee > 0 else base_amount_due
+    convenience_fee = 0.0
+    if owner_pro_enabled and payable_due_amount > 0:
+        fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
+        fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
+        fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
+        stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
+        stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
+        convenience_fee = _payment_fee_amount(
+            payable_due_amount,
+            fee_percent,
+            fee_fixed,
+            auto_enabled=fee_auto_enabled,
+            stripe_percent=stripe_fee_percent,
+            stripe_fixed=stripe_fee_fixed,
+        )
+    online_total = round(payable_due_amount + convenience_fee, 2) if payable_due_amount > 0 else 0.0
     if late_fee > 0:
         late_fee_line = (
+            f"Original invoice amount due: ${base_amount_due:,.2f}\n"
             f"Late fees accrued so far: ${late_fee:,.2f}\n"
             f"Current amount due including late fees: ${due_with_late_fee:,.2f}\n"
         )
+        if owner_pro_enabled:
+            online_total_line = (
+                f"Total if paid online (including card processing fee): ${online_total:,.2f}\n"
+            )
 
     late_fee_policy_line = ""
     if owner and bool(getattr(owner, "late_fee_enabled", False)):
@@ -2333,9 +2357,10 @@ def _send_payment_reminder_for_invoice(
         f"Hello {(customer.name if customer else 'there') or 'there'},\n\n"
         f"{timing_line}\n"
         f"Invoice {display_no} from {business_name}\n"
-        f"Invoice amount due: ${float(inv.amount_due() or 0.0):,.2f}\n"
+        f"Invoice amount due: ${base_amount_due:,.2f}\n"
         f"{late_fee_policy_line}"
         f"{late_fee_line}"
+        f"{online_total_line}"
         "\n"
         "Thank you."
     )
@@ -2343,11 +2368,11 @@ def _send_payment_reminder_for_invoice(
         "customer_name": ((customer.name if customer else "there") or "there"),
         "business_name": business_name,
         "document_number": display_no,
-        "amount_due": f"{float(inv.amount_due() or 0.0):,.2f}",
+        "amount_due": f"{base_amount_due:,.2f}",
         "due_date": due_dt.strftime("%B %d, %Y"),
         "timing_line": timing_line,
         "late_fee_policy_line": late_fee_policy_line.strip(),
-        "late_fee_line": late_fee_line.strip(),
+        "late_fee_line": html.escape(f"{late_fee_line}{online_total_line}".strip()).replace("\n", "<br>"),
         "action_label": ("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
     }
     subject, body, html_body = _customer_email_template_payload(
@@ -13066,6 +13091,71 @@ def create_app():
         flash("Payment reminder email sent.", "success")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
+    @app.route("/invoices/<int:invoice_id>/reminder/test/<string:kind>", methods=["POST"])
+    @login_required
+    @subscription_required
+    def invoice_send_reminder_test(invoice_id: int, kind: str):
+        with db_session() as s:
+            actor = s.get(User, _current_actor_user_id_int())
+            if not _is_marketing_admin_user(actor):
+                flash("Admin-only test feature.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+            inv = _invoice_owned_or_404(s, invoice_id)
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+
+            if not _has_pro_features(owner):
+                flash("Payment reminders are available on the Pro plan.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+            kind_key = (kind or "").strip().lower()
+            due_dt = _invoice_due_date_utc(inv, owner)
+            before_days = max(0, int(getattr(owner, "payment_reminder_days_before", 3) or 0))
+            after_days = max(0, int(getattr(owner, "payment_reminder_days_after", 3) or 0))
+            simulated_now = None
+            reminder_kind = ""
+            flash_label = ""
+
+            if kind_key == "before_due":
+                reminder_kind = "before_due"
+                simulated_now = due_dt - timedelta(days=before_days)
+                flash_label = f"before due ({before_days} day(s) before due date)"
+            elif kind_key == "due_today":
+                reminder_kind = "due_today"
+                simulated_now = due_dt
+                flash_label = "due today"
+            elif kind_key == "after_due":
+                reminder_kind = "after_due"
+                simulated_now = due_dt + timedelta(days=after_days)
+                flash_label = f"past due ({after_days} day(s) after due date)"
+            else:
+                flash("Invalid reminder test type.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+            try:
+                sent, msg = _send_payment_reminder_for_invoice(
+                    s,
+                    inv=inv,
+                    owner=owner,
+                    customer=customer,
+                    reminder_kind=reminder_kind,
+                    now_utc=simulated_now,
+                    include_pdf=False,
+                )
+                if not sent:
+                    flash(msg, "error")
+                    return redirect(url_for("invoice_view", invoice_id=invoice_id))
+                s.commit()
+            except Exception as exc:
+                print(f"[PAYMENT REMINDER] admin test send failed invoice={invoice_id} kind={kind_key}: {repr(exc)}", flush=True)
+                s.rollback()
+                flash("Could not send admin test reminder email. Check SMTP settings/logs.", "error")
+                return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+        flash(f"Admin test reminder sent ({flash_label}).", "success")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
     @app.route("/invoices/<int:invoice_id>/text", methods=["POST"])
     @login_required
     @subscription_required
@@ -13339,6 +13429,8 @@ def create_app():
                 and owner.stripe_connect_payouts_enabled
             )
             owner_pro_enabled = _has_pro_features(owner)
+            late_fee_amount = _invoice_late_fee_amount(inv, owner)
+            due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
 
             payment_message = ""
             payment_error = ""
@@ -13356,13 +13448,17 @@ def create_app():
                     status = (cs.get("payment_status") or "").lower()
                     if uid_meta == user_id and iid_meta == invoice_id and status == "paid":
                         amount_total_cents = int(cs.get("amount_total") or 0)
+                        paid_total = round(max(0.0, amount_total_cents / 100.0), 2) if amount_total_cents > 0 else 0.0
+                        meta_base_amount = _to_float(metadata.get("base_amount"), 0.0)
+                        meta_convenience_fee = _to_float(metadata.get("convenience_fee"), 0.0)
                         invoice_total = float(inv.invoice_total() or 0.0)
-                        if amount_total_cents > 0:
-                            paid_display = round(amount_total_cents / 100.0, 2)
-                            paid_processing_fee = round(max(0.0, paid_display - invoice_total), 2)
+                        paid_base_amount = meta_base_amount if meta_base_amount > 0 else round(max(0.0, min(invoice_total, paid_total)), 2)
+                        paid_fee_amount = meta_convenience_fee if meta_convenience_fee > 0 else round(max(0.0, paid_total - paid_base_amount), 2)
+                        if paid_total > 0:
+                            paid_display = paid_total
                         if inv.amount_due() > 0.0:
-                            inv.paid = invoice_total
-                            inv.paid_processing_fee = paid_processing_fee
+                            inv.paid = round(float(inv.paid or 0.0) + paid_base_amount, 2)
+                            inv.paid_processing_fee = round(float(inv.paid_processing_fee or 0.0) + paid_fee_amount, 2)
                             s.commit()
                         payment_message = "Payment received. Thank you."
                     else:
@@ -13377,19 +13473,20 @@ def create_app():
             pay_url = url_for("shared_customer_portal_pay", token=token)
             can_pay_online = (
                 (not bool(inv.is_estimate))
-                and (inv.amount_due() > 0.0)
+                and (due_with_late_fee > 0.0)
                 and bool(stripe.api_key)
                 and owner_connect_ready
                 and owner_pro_enabled
             )
             amount_due = float(inv.amount_due() or 0.0)
+            effective_amount_due = due_with_late_fee if due_with_late_fee > 0 else amount_due
             fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
             fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0) if owner else 0.0
             fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0) if owner else 0.0
             stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
             stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
             computed_convenience_fee = _payment_fee_amount(
-                amount_due,
+                effective_amount_due,
                 fee_percent,
                 fee_fixed,
                 auto_enabled=fee_auto_enabled,
@@ -13397,15 +13494,15 @@ def create_app():
                 stripe_fixed=stripe_fee_fixed,
             )
             convenience_fee_display = round(
-                paid_processing_fee if amount_due <= 0.0 and paid_processing_fee > 0.0 else computed_convenience_fee,
+                paid_processing_fee if effective_amount_due <= 0.0 and paid_processing_fee > 0.0 else computed_convenience_fee,
                 2,
             )
-            amount_due_display = round(amount_due + computed_convenience_fee, 2) if amount_due > 0.0 else 0.0
-            pay_total = amount_due_display
+            amount_due_display = round(effective_amount_due, 2) if effective_amount_due > 0.0 else 0.0
+            pay_total = round(amount_due_display + convenience_fee_display, 2) if amount_due_display > 0.0 else 0.0
             doc_number = inv.display_number or inv.invoice_number
             business_name = (owner.business_name if owner else "") or "InvoiceRunner"
             payment_unavailable_reason = ""
-            if inv.amount_due() > 0.0 and not can_pay_online:
+            if effective_amount_due > 0.0 and not can_pay_online:
                 if not owner_pro_enabled:
                     payment_unavailable_reason = "Online payment is not enabled for this business plan."
                 elif not owner_connect_acct:
@@ -13431,6 +13528,9 @@ def create_app():
                 convenience_fee=convenience_fee_display,
                 amount_due_display=amount_due_display,
                 pay_total=pay_total,
+                late_fee_amount=late_fee_amount,
+                due_with_late_fee=due_with_late_fee,
+                effective_amount_due=effective_amount_due,
                 paid_display=paid_display,
                 fee_percent=fee_percent,
                 fee_fixed=fee_fixed,
@@ -13469,8 +13569,9 @@ def create_app():
                 and owner.stripe_connect_payouts_enabled
             )
             owner_pro_enabled = _has_pro_features(owner)
-            amount_due = float(inv.amount_due() or 0.0)
-            if amount_due <= 0:
+            due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
+            payment_base_due = due_with_late_fee if due_with_late_fee > 0 else float(inv.amount_due() or 0.0)
+            if payment_base_due <= 0:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
             if bool(inv.is_estimate):
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
@@ -13483,14 +13584,14 @@ def create_app():
             stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9) if owner else 2.9
             stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30) if owner else 0.30
             convenience_fee = _payment_fee_amount(
-                amount_due,
+                payment_base_due,
                 fee_percent,
                 fee_fixed,
                 auto_enabled=fee_auto_enabled,
                 stripe_percent=stripe_fee_percent,
                 stripe_fixed=stripe_fee_fixed,
             )
-            checkout_total = round(amount_due + convenience_fee, 2)
+            checkout_total = round(payment_base_due + convenience_fee, 2)
             amount_cents = int(round(checkout_total * 100))
             display_no = inv.display_number or inv.invoice_number
             doc_label = "Estimate" if inv.is_estimate else "Invoice"
@@ -13516,7 +13617,7 @@ def create_app():
                         "uid": str(user_id),
                         "iid": str(invoice_id),
                         "type": "invoice_payment",
-                        "base_amount": f"{amount_due:.2f}",
+                        "base_amount": f"{payment_base_due:.2f}",
                         "convenience_fee": f"{convenience_fee:.2f}",
                     },
                     stripe_account=owner_connect_acct,
