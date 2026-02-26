@@ -1649,10 +1649,15 @@ def _send_reset_email(to_email: str, reset_url: str) -> None:
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
     password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
-    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    mail_from = (
+        (current_app.config.get("TRANSACTIONAL_MAIL_FROM") or os.getenv("TRANSACTIONAL_MAIL_FROM") or "").strip()
+        or current_app.config.get("MAIL_FROM")
+        or os.getenv("MAIL_FROM")
+        or user
+    )
 
     if not all([host, port, user, password, mail_from]):
-        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS and TRANSACTIONAL_MAIL_FROM or MAIL_FROM).")
 
     minutes = int((current_app.config.get("PASSWORD_RESET_MAX_AGE_SECONDS", 3600)) / 60)
 
@@ -1690,10 +1695,15 @@ def _send_invoice_pdf_email(
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
     password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
-    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    mail_from = (
+        (current_app.config.get("TRANSACTIONAL_MAIL_FROM") or os.getenv("TRANSACTIONAL_MAIL_FROM") or "").strip()
+        or current_app.config.get("MAIL_FROM")
+        or os.getenv("MAIL_FROM")
+        or user
+    )
 
     if not all([host, port, user, password, mail_from]):
-        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS and TRANSACTIONAL_MAIL_FROM or MAIL_FROM).")
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -1775,9 +1785,14 @@ def _send_employee_invite_email(to_email: str, invite_url: str, owner_name: str)
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
     password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
-    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    mail_from = (
+        (current_app.config.get("TRANSACTIONAL_MAIL_FROM") or os.getenv("TRANSACTIONAL_MAIL_FROM") or "").strip()
+        or current_app.config.get("MAIL_FROM")
+        or os.getenv("MAIL_FROM")
+        or user
+    )
     if not all([host, port, user, password, mail_from]):
-        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS and TRANSACTIONAL_MAIL_FROM or MAIL_FROM).")
 
     msg = EmailMessage()
     msg["Subject"] = "InvoiceRunner Employee Invitation"
@@ -1812,10 +1827,15 @@ def _send_schedule_summary_email(to_email: str, subject: str, body_text: str) ->
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
     password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
-    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    mail_from = (
+        (current_app.config.get("TRANSACTIONAL_MAIL_FROM") or os.getenv("TRANSACTIONAL_MAIL_FROM") or "").strip()
+        or current_app.config.get("MAIL_FROM")
+        or os.getenv("MAIL_FROM")
+        or user
+    )
 
     if not all([host, port, user, password, mail_from]):
-        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS and TRANSACTIONAL_MAIL_FROM or MAIL_FROM).")
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -1955,9 +1975,14 @@ def _send_contact_us_email(
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
     password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
-    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    mail_from = (
+        (current_app.config.get("TRANSACTIONAL_MAIL_FROM") or os.getenv("TRANSACTIONAL_MAIL_FROM") or "").strip()
+        or current_app.config.get("MAIL_FROM")
+        or os.getenv("MAIL_FROM")
+        or user
+    )
     if not all([host, port, user, password, mail_from]):
-        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS and TRANSACTIONAL_MAIL_FROM or MAIL_FROM).")
 
     to_email = (contact_to_email or "").strip().lower()
     if not _looks_like_email(to_email):
@@ -2059,9 +2084,14 @@ def _send_public_contact_us_email(
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
     password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
-    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    mail_from = (
+        (current_app.config.get("TRANSACTIONAL_MAIL_FROM") or os.getenv("TRANSACTIONAL_MAIL_FROM") or "").strip()
+        or current_app.config.get("MAIL_FROM")
+        or os.getenv("MAIL_FROM")
+        or user
+    )
     if not all([host, port, user, password, mail_from]):
-        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS and TRANSACTIONAL_MAIL_FROM or MAIL_FROM).")
 
     to_email = (contact_to_email or "").strip().lower()
     if not _looks_like_email(to_email):
@@ -3667,6 +3697,7 @@ def create_app():
     app.config.setdefault("SMTP_USER", os.getenv("SMTP_USER"))
     app.config.setdefault("SMTP_PASS", os.getenv("SMTP_PASS"))
     app.config.setdefault("MAIL_FROM", os.getenv("MAIL_FROM", os.getenv("SMTP_USER", "no-reply@example.com")))
+    app.config.setdefault("TRANSACTIONAL_MAIL_FROM", os.getenv("TRANSACTIONAL_MAIL_FROM", ""))
     app.config.setdefault("MARKETING_MAIL_FROM", os.getenv("MARKETING_MAIL_FROM", ""))
     app.config.setdefault("MARKETING_MAX_PER_HOUR", int(os.getenv("MARKETING_MAX_PER_HOUR", "120")))
     app.config.setdefault("TURNSTILE_SITE_KEY", os.getenv("TURNSTILE_SITE_KEY", ""))
