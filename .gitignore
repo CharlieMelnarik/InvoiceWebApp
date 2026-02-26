@@ -6,3 +6,6 @@
 
 # Local evidence exports
 evidence/
+
+# Local campaign imports
+campaign_leads.csv

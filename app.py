@@ -1884,7 +1884,8 @@ def _send_marketing_email(
     port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
     password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
-    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+    marketing_mail_from = (current_app.config.get("MARKETING_MAIL_FROM") or os.getenv("MARKETING_MAIL_FROM") or "").strip()
+    mail_from = marketing_mail_from or current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
 
     if not all([host, port, user, password, mail_from]):
         raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
@@ -3638,6 +3639,7 @@ def create_app():
     app.config.setdefault("SMTP_USER", os.getenv("SMTP_USER"))
     app.config.setdefault("SMTP_PASS", os.getenv("SMTP_PASS"))
     app.config.setdefault("MAIL_FROM", os.getenv("MAIL_FROM", os.getenv("SMTP_USER", "no-reply@example.com")))
+    app.config.setdefault("MARKETING_MAIL_FROM", os.getenv("MARKETING_MAIL_FROM", ""))
     app.config.setdefault("TURNSTILE_SITE_KEY", os.getenv("TURNSTILE_SITE_KEY", ""))
     app.config.setdefault("TURNSTILE_SECRET_KEY", os.getenv("TURNSTILE_SECRET_KEY", ""))
     app.config.setdefault("MARKETING_ADMIN_EMAILS", os.getenv("MARKETING_ADMIN_EMAILS", ""))
