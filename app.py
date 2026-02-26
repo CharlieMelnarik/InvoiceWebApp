@@ -753,7 +753,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<div style=\"font-family:Arial,sans-serif;color:#111;line-height:1.5;\">"
             "<p>Hello {{customer_name}},</p>"
             "<p>Your invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong> is ready.</p>"
-            "<p>Invoice amount: <strong>${{invoice_amount}}</strong><br>{{card_fee_line}}{{portal_validity_line}}</p>"
+            "<p>Invoice amount: <strong>${{invoice_amount}}</strong><br>{{online_total_line}}{{card_fee_line}}{{portal_validity_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -783,7 +783,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}{{late_fee_line}}</p>"
+            "{{late_fee_policy_line}}{{late_fee_line}}{{online_total_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -799,7 +799,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}</p>"
+            "{{late_fee_policy_line}}{{online_total_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -815,7 +815,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}</p>"
+            "{{late_fee_policy_line}}{{online_total_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -831,7 +831,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}{{late_fee_line}}</p>"
+            "{{late_fee_policy_line}}{{late_fee_line}}{{online_total_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -847,7 +847,7 @@ EMAIL_TEMPLATE_DEFS = {
             "<p>{{timing_line}}</p>"
             "<p>Invoice <strong>{{document_number}}</strong> from <strong>{{business_name}}</strong><br>"
             "Invoice amount due: <strong>${{amount_due}}</strong><br>"
-            "{{late_fee_policy_line}}{{late_fee_line}}</p>"
+            "{{late_fee_policy_line}}{{late_fee_line}}{{online_total_line}}</p>"
             "<p>{{action_button}}</p>"
             "<p>Thank you.</p>"
             "</div>"
@@ -947,6 +947,7 @@ def _email_template_sample_context(owner: User, template_key: str, *, test_date:
     sample_late_fee_cycles = int(1 + ((sample_overdue_days - 1) // freq_days)) if sample_overdue_days >= 1 else 0
     sample_late_fee_total = round(max(0.0, fee_per_cycle * sample_late_fee_cycles), 2)
     sample_due_with_late_fee = round(sample_amount_due + sample_late_fee_total, 2)
+    sample_online_total = round(sample_due_with_late_fee + 4.06, 2)
     timing_line = "This is a friendly reminder to complete payment for your invoice."
     if key == "reminder_after_due_recurring":
         timing_line = (
@@ -962,6 +963,7 @@ def _email_template_sample_context(owner: User, template_key: str, *, test_date:
         "amount_due": f"{sample_amount_due:,.2f}",
         "due_date": due_date_text,
         "card_fee_line": "Paying by card online adds an additional $4.06 (card total: $133.66).",
+        "online_total_line": f"Total if paid online (including card processing fee): ${sample_online_total:,.2f}.",
         "portal_validity_line": "This secure link is valid for 90 days from the time this email was sent.",
         "timing_line": timing_line,
         "late_fee_policy_line": late_fee_policy_line,
@@ -2326,16 +2328,17 @@ def _send_payment_reminder_for_invoice(
             stripe_fixed=stripe_fee_fixed,
         )
     online_total = round(payable_due_amount + convenience_fee, 2) if payable_due_amount > 0 else 0.0
+    if owner_pro_enabled and payable_due_amount > 0:
+        online_total_line = (
+            f"Total if paid online (including card processing fee): ${online_total:,.2f}\n"
+        )
+
     if late_fee > 0:
         late_fee_line = (
             f"Original invoice amount due: ${base_amount_due:,.2f}\n"
             f"Late fees accrued so far: ${late_fee:,.2f}\n"
             f"Current amount due including late fees: ${due_with_late_fee:,.2f}\n"
         )
-        if owner_pro_enabled:
-            online_total_line = (
-                f"Total if paid online (including card processing fee): ${online_total:,.2f}\n"
-            )
 
     late_fee_policy_line = ""
     if owner and bool(getattr(owner, "late_fee_enabled", False)):
@@ -2372,7 +2375,8 @@ def _send_payment_reminder_for_invoice(
         "due_date": due_dt.strftime("%B %d, %Y"),
         "timing_line": timing_line,
         "late_fee_policy_line": late_fee_policy_line.strip(),
-        "late_fee_line": html.escape(f"{late_fee_line}{online_total_line}".strip()).replace("\n", "<br>"),
+        "late_fee_line": html.escape(late_fee_line.strip()).replace("\n", "<br>"),
+        "online_total_line": html.escape(online_total_line.strip()).replace("\n", "<br>"),
         "action_label": ("View & Pay Invoice" if owner_pro_enabled else "View Invoice"),
     }
     subject, body, html_body = _customer_email_template_payload(
@@ -7378,6 +7382,7 @@ def create_app():
                 "estimate_amount": "Estimate Amount",
                 "amount_due": "Amount Due",
                 "due_date": "Due Date",
+                "online_total_line": "Online Total Line",
                 "card_fee_line": "Card Fee Line",
                 "portal_validity_line": "Portal Validity Line",
                 "timing_line": "Timing Line",
@@ -12996,11 +13001,16 @@ def create_app():
                 stripe_fixed=stripe_fee_fixed,
             )
             card_total = round(amount_due + convenience_fee, 2)
+            online_total_line = ""
             card_fee_line = ""
             if owner_pro_enabled and convenience_fee > 0:
                 card_fee_line = (
                     f"Paying by card online adds an additional ${convenience_fee:,.2f} "
                     f"(card total: ${card_total:,.2f}).\n"
+                )
+            if owner_pro_enabled and amount_due > 0:
+                online_total_line = (
+                    f"Total if paid online (including card processing fee): ${card_total:,.2f}\n"
                 )
             portal_line = (
                 "This secure link is valid for 90 days from the time this email was sent.\n\n"
@@ -13013,6 +13023,7 @@ def create_app():
                 f"Hello {customer_name or 'there'},\n\n"
                 f"Your invoice {display_no} from {business_name} is ready.\n"
                 f"Invoice amount: ${inv.invoice_total():,.2f}\n"
+                f"{online_total_line}"
                 f"{card_fee_line}\n"
                 f"{portal_line}"
                 "Thank you."
@@ -13022,6 +13033,7 @@ def create_app():
                 "business_name": business_name,
                 "document_number": display_no,
                 "invoice_amount": f"{inv.invoice_total():,.2f}",
+                "online_total_line": online_total_line.strip(),
                 "card_fee_line": card_fee_line.strip(),
                 "portal_validity_line": portal_line.strip(),
                 "action_label": ("View & Pay Invoice" if owner_pro_enabled else "Open Invoice"),
