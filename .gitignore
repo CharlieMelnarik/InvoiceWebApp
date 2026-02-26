@@ -9,3 +9,9 @@ evidence/
 
 # Local campaign imports
 campaign_leads.csv
+
+# Local notes
+sendgrid_stream_separation_steps.txt
+
+# Local campaign docs
+campaign_feature_quick_reference.txt

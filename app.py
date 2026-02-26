@@ -1908,6 +1908,7 @@ def _send_marketing_email(
     user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
     password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
     marketing_mail_from = (current_app.config.get("MARKETING_MAIL_FROM") or os.getenv("MARKETING_MAIL_FROM") or "").strip()
+    marketing_reply_to = (current_app.config.get("MARKETING_REPLY_TO") or os.getenv("MARKETING_REPLY_TO") or "").strip()
     mail_from = marketing_mail_from or current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
 
     if not all([host, port, user, password, mail_from]):
@@ -1917,6 +1918,8 @@ def _send_marketing_email(
     msg["Subject"] = (subject or "").strip() or "InvoiceRunner"
     msg["From"] = mail_from
     msg["To"] = (to_email or "").strip()
+    if marketing_reply_to and _looks_like_email(marketing_reply_to):
+        msg["Reply-To"] = marketing_reply_to
     msg.set_content((body_text or "").strip() or "Please view this message in an HTML-capable email client.")
     msg.add_alternative((html_body or "").strip() or "<p></p>", subtype="html")
 
@@ -3699,6 +3702,7 @@ def create_app():
     app.config.setdefault("MAIL_FROM", os.getenv("MAIL_FROM", os.getenv("SMTP_USER", "no-reply@example.com")))
     app.config.setdefault("TRANSACTIONAL_MAIL_FROM", os.getenv("TRANSACTIONAL_MAIL_FROM", ""))
     app.config.setdefault("MARKETING_MAIL_FROM", os.getenv("MARKETING_MAIL_FROM", ""))
+    app.config.setdefault("MARKETING_REPLY_TO", os.getenv("MARKETING_REPLY_TO", ""))
     app.config.setdefault("MARKETING_MAX_PER_HOUR", int(os.getenv("MARKETING_MAX_PER_HOUR", "120")))
     app.config.setdefault("TURNSTILE_SITE_KEY", os.getenv("TURNSTILE_SITE_KEY", ""))
     app.config.setdefault("TURNSTILE_SECRET_KEY", os.getenv("TURNSTILE_SECRET_KEY", ""))
