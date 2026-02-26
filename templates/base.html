@@ -619,6 +619,9 @@
           <a class="app-nav-link {% if ep in ['year_summary','profit_loss','profit_loss_pdf_preview','profit_loss_pdf_download'] %}active{% endif %}" href="{{ url_for('year_summary') }}"><i class="bi bi-bar-chart-line nav-icon" aria-hidden="true"></i><span class="nav-label">Financial Summary</span></a>
         {% endif %}
         <a class="app-nav-link {% if ep in ['settings','billing_page','invoice_builder','email_templates','email_template_edit'] %}active{% endif %}" href="{{ url_for('settings') }}"><i class="bi bi-gear nav-icon" aria-hidden="true"></i><span class="nav-label">Settings</span></a>
+        {% if can_use_marketing_campaigns and not is_employee_account %}
+          <a class="app-nav-link {% if ep in ['marketing_campaigns'] %}active{% endif %}" href="{{ url_for('marketing_campaigns') }}"><i class="bi bi-megaphone nav-icon" aria-hidden="true"></i><span class="nav-label">Campaigns</span></a>
+        {% endif %}
       </nav>
 
       <div class="app-sidebar-footer">

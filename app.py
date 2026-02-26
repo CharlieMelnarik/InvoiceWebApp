@@ -3531,6 +3531,7 @@ def create_app():
     app.config.setdefault("MAIL_FROM", os.getenv("MAIL_FROM", os.getenv("SMTP_USER", "no-reply@example.com")))
     app.config.setdefault("TURNSTILE_SITE_KEY", os.getenv("TURNSTILE_SITE_KEY", ""))
     app.config.setdefault("TURNSTILE_SECRET_KEY", os.getenv("TURNSTILE_SECRET_KEY", ""))
+    app.config.setdefault("MARKETING_ADMIN_EMAILS", os.getenv("MARKETING_ADMIN_EMAILS", ""))
 
     login_manager.init_app(app)
 
@@ -3587,6 +3588,22 @@ def create_app():
     def db_session():
         return SessionLocal()
 
+    def _marketing_admin_email_set() -> set[str]:
+        raw = app.config.get("MARKETING_ADMIN_EMAILS", "")
+        if isinstance(raw, (list, tuple, set)):
+            values = [str(v) for v in raw]
+        else:
+            values = re.split(r"[,\s;]+", str(raw or ""))
+        return {_normalize_email(v) for v in values if _normalize_email(v)}
+
+    def _is_marketing_admin_user(user: User | None) -> bool:
+        if not user:
+            return False
+        email = _normalize_email(getattr(user, "email", None) or "")
+        if not email:
+            return False
+        return email in _marketing_admin_email_set()
+
     @app.context_processor
     def inject_billing():
         if not current_user.is_authenticated:
@@ -3609,6 +3626,9 @@ def create_app():
             "subscription_tier": subscription_tier,
             "pro_features_enabled": pro_features_enabled,
             "is_employee_account": bool(getattr(actor, "is_employee", False)) if 'actor' in locals() and actor else False,
+            "can_use_marketing_campaigns": _is_marketing_admin_user(actor)
+            if 'actor' in locals() and actor and not bool(getattr(actor, "is_employee", False))
+            else False,
             "format_phone": _format_phone_display,
         }
 
@@ -3794,6 +3814,16 @@ def create_app():
                 if bool(getattr(actor, "is_employee", False)):
                     flash("You do not have permission for that action.", "error")
                     return redirect(url_for("customers_list"))
+            return view_fn(*args, **kwargs)
+        return wrapper
+
+    def marketing_admin_required(view_fn):
+        @wraps(view_fn)
+        def wrapper(*args, **kwargs):
+            with db_session() as s:
+                actor = s.get(User, _current_actor_user_id_int())
+                if not _is_marketing_admin_user(actor):
+                    abort(403)
             return view_fn(*args, **kwargs)
         return wrapper
 
@@ -6290,6 +6320,13 @@ def create_app():
                 flash("Invoice Builder importer is available on the Pro plan.", "error")
                 return redirect(url_for("billing"))
             return render_template("invoice_builder_importer.html", ai_import_enabled=_invoice_import_ai_enabled())
+
+    @app.get("/settings/campaigns")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaigns():
+        return render_template("marketing_campaigns.html")
 
     @app.get("/settings/invoice-builder")
     @login_required

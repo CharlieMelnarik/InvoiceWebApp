@@ -226,6 +226,9 @@
       <a class="settings-jump-link" href="#section-invoice-builder">Invoice Builder</a>
       <a class="settings-jump-link" href="#section-email-editor">Email Editor</a>
     {% endif %}
+    {% if can_use_marketing_campaigns %}
+      <a class="settings-jump-link" href="#section-campaigns">Campaigns</a>
+    {% endif %}
     <a class="settings-jump-link" href="#section-preview">PDF Preview</a>
     {% if pro_features_enabled %}
       <a class="settings-jump-link" href="#section-payments">Payments</a>
@@ -463,6 +466,16 @@
           </div>
           <div class="settings-help">Customize customer-facing email messages for invoice, estimate, and payment reminder sends.</div>
           <a class="btn btn-outline-primary btn-sm" href="{{ url_for('email_templates') }}">Open Customer Email Editor</a>
+        </section>
+      {% endif %}
+
+      {% if can_use_marketing_campaigns %}
+        <section class="settings-card" id="section-campaigns">
+          <div class="settings-card-head">
+            <h5>Campaigns (Admin)</h5>
+          </div>
+          <div class="settings-help">Owner-only outreach workspace restricted to approved admin email addresses.</div>
+          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('marketing_campaigns') }}">Open Campaigns</a>
         </section>
       {% endif %}
 
