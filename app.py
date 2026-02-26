@@ -12926,9 +12926,13 @@ def create_app():
     @subscription_required
     def invoice_pdf_download(invoice_id):
         with db_session() as s:
-            _invoice_owned_or_404(s, invoice_id)
+            inv = _invoice_owned_or_404(s, invoice_id)
             try:
-                pdf_path = generate_and_store_pdf(s, invoice_id)
+                pdf_path = generate_and_store_pdf(
+                    s,
+                    invoice_id,
+                    include_processing_fee=bool(float(getattr(inv, "paid_processing_fee", 0.0) or 0.0) > 0.0),
+                )
             except Exception as exc:
                 flash(f"Could not generate invoice PDF: {exc}", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
@@ -12945,9 +12949,13 @@ def create_app():
     @subscription_required
     def invoice_pdf_preview(invoice_id):
         with db_session() as s:
-            _invoice_owned_or_404(s, invoice_id)
+            inv = _invoice_owned_or_404(s, invoice_id)
             try:
-                pdf_path = generate_and_store_pdf(s, invoice_id)
+                pdf_path = generate_and_store_pdf(
+                    s,
+                    invoice_id,
+                    include_processing_fee=bool(float(getattr(inv, "paid_processing_fee", 0.0) or 0.0) > 0.0),
+                )
             except Exception as exc:
                 flash(f"Could not generate invoice PDF preview: {exc}", "error")
                 return redirect(url_for("invoice_view", invoice_id=invoice_id))
@@ -13445,9 +13453,6 @@ def create_app():
                 and owner.stripe_connect_payouts_enabled
             )
             owner_pro_enabled = _has_pro_features(owner)
-            late_fee_amount = _invoice_late_fee_amount(inv, owner)
-            due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
-
             payment_message = ""
             payment_error = ""
             paid_processing_fee = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
@@ -13476,6 +13481,7 @@ def create_app():
                             inv.paid = round(float(inv.paid or 0.0) + paid_base_amount, 2)
                             inv.paid_processing_fee = round(float(inv.paid_processing_fee or 0.0) + paid_fee_amount, 2)
                             s.commit()
+                            s.refresh(inv)
                         payment_message = "Payment received. Thank you."
                     else:
                         payment_error = "Payment could not be verified for this document."
@@ -13483,6 +13489,11 @@ def create_app():
                     payment_error = "Payment verification failed. Contact the business if you were charged."
             elif payment_state == "cancel":
                 payment_message = "Payment canceled."
+
+            late_fee_amount = _invoice_late_fee_amount(inv, owner)
+            due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
+            paid_processing_fee = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
+            paid_display = round(float(inv.paid or 0.0) + paid_processing_fee, 2)
 
             pdf_token = make_pdf_share_token(inv.user_id, inv.id)
             pdf_url_base = url_for("shared_pdf_download", token=pdf_token, include_processing_fee="0")
@@ -13660,7 +13671,7 @@ def create_app():
         if not decoded:
             abort(404)
         user_id, invoice_id = decoded
-        include_processing_fee_raw = (request.args.get("include_processing_fee") or "1").strip().lower()
+        include_processing_fee_raw = (request.args.get("include_processing_fee") or "0").strip().lower()
         include_processing_fee = include_processing_fee_raw not in {"0", "false", "no", "off"}
         with db_session() as s:
             inv = (
