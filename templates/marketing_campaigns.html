@@ -43,6 +43,10 @@
       <div class="card shadow-sm mb-3">
         <div class="card-body">
           <h5 class="card-title mb-2">Campaigns</h5>
+          <div class="small text-muted mb-2">
+            Send rate limit: {{ marketing_sent_last_hour }} / {{ marketing_max_per_hour }} sent in the last hour
+            ({{ marketing_remaining_this_hour }} remaining this hour)
+          </div>
           {% if campaigns %}
             <div class="table-responsive">
               <table class="table table-sm align-middle">
@@ -125,7 +129,7 @@
                 <button class="btn btn-success btn-sm" type="submit">Queue Eligible Recipients</button>
               </form>
               <form method="post" action="{{ url_for('marketing_campaign_process', campaign_id=selected_campaign.id) }}" class="d-inline-flex gap-2 ms-2">
-                <input class="form-control form-control-sm" style="max-width:90px;" type="number" name="batch_size" min="1" max="250" value="50">
+                <input class="form-control form-control-sm" style="max-width:90px;" type="number" name="batch_size" min="1" max="{{ [250, marketing_remaining_this_hour]|min if marketing_remaining_this_hour > 0 else 1 }}" value="{{ [50, marketing_remaining_this_hour]|min if marketing_remaining_this_hour > 0 else 1 }}">
                 <button class="btn btn-outline-success btn-sm" type="submit">Send Next Batch</button>
               </form>
             </div>

@@ -1912,6 +1912,31 @@ def _campaign_owned_or_404(session, campaign_id: int, *, owner_user_id: int) -> 
     return row
 
 
+def _marketing_send_rate_snapshot(session, owner_user_id: int) -> tuple[int, int, int]:
+    max_per_hour_raw = current_app.config.get("MARKETING_MAX_PER_HOUR") or os.getenv("MARKETING_MAX_PER_HOUR") or "120"
+    try:
+        max_per_hour = int(max_per_hour_raw)
+    except Exception:
+        max_per_hour = 120
+    max_per_hour = max(1, min(5000, max_per_hour))
+
+    cutoff = datetime.utcnow() - timedelta(hours=1)
+    sent_last_hour = (
+        session.query(func.count(MarketingCampaignRecipient.id))
+        .join(MarketingCampaign, MarketingCampaign.id == MarketingCampaignRecipient.campaign_id)
+        .filter(
+            MarketingCampaign.user_id == owner_user_id,
+            MarketingCampaignRecipient.status == "sent",
+            MarketingCampaignRecipient.sent_at.isnot(None),
+            MarketingCampaignRecipient.sent_at >= cutoff,
+        )
+        .scalar()
+    ) or 0
+    sent_last_hour = int(sent_last_hour)
+    remaining = max(0, max_per_hour - sent_last_hour)
+    return max_per_hour, sent_last_hour, remaining
+
+
 def _send_contact_us_email(
     *,
     contact_to_email: str,
@@ -3638,6 +3663,7 @@ def create_app():
     app.config.setdefault("SMTP_PASS", os.getenv("SMTP_PASS"))
     app.config.setdefault("MAIL_FROM", os.getenv("MAIL_FROM", os.getenv("SMTP_USER", "no-reply@example.com")))
     app.config.setdefault("MARKETING_MAIL_FROM", os.getenv("MARKETING_MAIL_FROM", ""))
+    app.config.setdefault("MARKETING_MAX_PER_HOUR", int(os.getenv("MARKETING_MAX_PER_HOUR", "120")))
     app.config.setdefault("TURNSTILE_SITE_KEY", os.getenv("TURNSTILE_SITE_KEY", ""))
     app.config.setdefault("TURNSTILE_SECRET_KEY", os.getenv("TURNSTILE_SECRET_KEY", ""))
     app.config.setdefault("MARKETING_ADMIN_EMAILS", os.getenv("MARKETING_ADMIN_EMAILS", ""))
@@ -6495,6 +6521,7 @@ def create_app():
                 .filter(EmailSuppression.user_id == owner.id)
                 .scalar()
             ) or 0
+            marketing_max_per_hour, marketing_sent_last_hour, marketing_remaining_this_hour = _marketing_send_rate_snapshot(s, owner.id)
 
             return render_template(
                 "marketing_campaigns.html",
@@ -6504,6 +6531,9 @@ def create_app():
                 campaign_counts=campaign_counts,
                 selected_counts=selected_counts,
                 suppression_count=int(suppression_count),
+                marketing_max_per_hour=marketing_max_per_hour,
+                marketing_sent_last_hour=marketing_sent_last_hour,
+                marketing_remaining_this_hour=marketing_remaining_this_hour,
                 default_campaign_html=(
                     "<p>Hi {{first_name}},</p>"
                     "<p>I wanted to quickly share InvoiceRunner in case it's useful for your business.</p>"
@@ -6827,16 +6857,24 @@ def create_app():
             if not owner:
                 abort(404)
             campaign = _campaign_owned_or_404(s, campaign_id, owner_user_id=owner.id)
+            max_per_hour, sent_last_hour, remaining_this_hour = _marketing_send_rate_snapshot(s, owner.id)
+            if remaining_this_hour <= 0:
+                flash(
+                    f"Rate limit reached: {sent_last_hour}/{max_per_hour} sent in the last hour. Try again later.",
+                    "error",
+                )
+                return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
             suppressions = {
                 (r.email or "").strip().lower()
                 for r in s.query(EmailSuppression).filter(EmailSuppression.user_id == owner.id).all()
             }
+            effective_batch_size = min(batch_size, remaining_this_hour)
             queued_rows = (
                 s.query(MarketingCampaignRecipient)
                 .filter(MarketingCampaignRecipient.campaign_id == campaign.id)
                 .filter(MarketingCampaignRecipient.status == "queued")
                 .order_by(MarketingCampaignRecipient.id.asc())
-                .limit(batch_size)
+                .limit(effective_batch_size)
                 .all()
             )
             if not queued_rows:
@@ -6908,10 +6946,14 @@ def create_app():
                 user_id=owner.id,
                 username=owner.username,
                 email=owner.email,
-                details=f"campaign_id={campaign_id};batch={batch_size};sent={sent};failed={failed};suppressed={suppressed};remaining={remaining}",
+                details=f"campaign_id={campaign_id};batch={effective_batch_size};sent={sent};failed={failed};suppressed={suppressed};remaining={remaining};hour_limit={max_per_hour};hour_sent_before={sent_last_hour}",
             )
             s.commit()
-        flash(f"Batch complete. Sent {sent}, failed {failed}, suppressed {suppressed}.", "success")
+        flash(
+            f"Batch complete. Sent {sent}, failed {failed}, suppressed {suppressed}. "
+            f"Hourly usage: {min(max_per_hour, sent_last_hour + sent)}/{max_per_hour}.",
+            "success",
+        )
         return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
 
     @app.post("/settings/campaigns/<int:campaign_id>/pause")
