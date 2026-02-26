@@ -3044,7 +3044,7 @@ def _render_simple_pdf(
     if not is_estimate and paid:
         paid_y = total_y - 20
         if paid_processing_fee > 0:
-            right_text(sum_left + 1.35 * inch, paid_y, "Stripe Fee", "Helvetica", 12, text_dark)
+            right_text(sum_left + 1.35 * inch, paid_y, "Processing Fee", "Helvetica", 12, text_dark)
             right_text(sum_right, paid_y, _money(paid_processing_fee), "Helvetica", 12, text_dark)
             paid_y -= 20
         right_text(sum_left + 1.35 * inch, paid_y, "Paid", "Helvetica", 12, text_dark)
@@ -3405,7 +3405,7 @@ def _render_blueprint_pdf(
     if not is_estimate and paid:
         paid_y = total_y - 18
         if paid_processing_fee > 0:
-            right_text(sx + sum_w - 10, paid_y, f"Stripe Fee   {_money(paid_processing_fee)}", "Helvetica", 11, ink)
+            right_text(sx + sum_w - 10, paid_y, f"Processing Fee   {_money(paid_processing_fee)}", "Helvetica", 11, ink)
             paid_y -= 18
         right_text(sx + sum_w - 10, paid_y, f"Paid   {_money(paid)}", "Helvetica", 11, ink)
         pdf.setStrokeColor(accent)

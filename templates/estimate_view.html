@@ -211,10 +211,10 @@
     </h1>
 
     <div class="small-muted">
-      {% if client %}
+      {% if customer %}
         Client:
-        <a href="{{ url_for('customer_view', customer_id=client.id) }}" class="text-decoration-none fw-semibold">
-          {{ client.name }}
+        <a href="{{ url_for('customer_view', customer_id=customer.id) }}" class="text-decoration-none fw-semibold">
+          {{ customer.name }}
         </a>
       {% else %}
         Client: <span class="text-danger">Missing</span>
@@ -225,8 +225,8 @@
 
   <div class="action-group">
     <a class="btn btn-outline-secondary" href="{{ url_for('customers_list') }}">Clients</a>
-    {% if client %}
-      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=client.id) }}">Back to Client</a>
+    {% if customer %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=customer.id) }}">Back to Client</a>
     {% endif %}
 
     <form method="post" action="{{ url_for('estimate_convert', estimate_id=inv.id) }}">
@@ -317,11 +317,11 @@
       <div class="doc-info-grid">
         <div class="doc-info-card doc-info-card-wide">
           <div class="label">Client Email</div>
-          <div class="value mono">{{ inv.customer_email or (client.email if client else "—") }}</div>
+          <div class="value mono">{{ inv.customer_email or (customer.email if customer else "—") }}</div>
         </div>
         <div class="doc-info-card">
           <div class="label">Client Phone</div>
-          <div class="value mono">{{ format_phone(inv.customer_phone or (client.phone if client else "")) or "—" }}</div>
+          <div class="value mono">{{ format_phone(inv.customer_phone or (customer.phone if customer else "")) or "—" }}</div>
         </div>
         {% if tmpl_key == "flipping_items" %}
           <div class="doc-info-card">
