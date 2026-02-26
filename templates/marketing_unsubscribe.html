@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% set title = "Unsubscribed" %}
+{% set hide_public_nav = true %}
+
+{% block content %}
+<div class="container py-5">
+  <div class="card shadow-sm mx-auto" style="max-width: 640px;">
+    <div class="card-body p-4">
+      <h1 class="h4 fw-bold mb-3">You are unsubscribed</h1>
+      <p class="mb-2">The email address below has been removed from future marketing campaigns for this sender:</p>
+      <p class="fw-semibold mb-0">{{ email }}</p>
+    </div>
+  </div>
+</div>
+{% endblock %}

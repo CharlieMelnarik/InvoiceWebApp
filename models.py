@@ -221,6 +221,16 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="EmailTemplate.template_key.asc()",
     )
+    marketing_campaigns: Mapped[list["MarketingCampaign"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="MarketingCampaign.created_at.desc(), MarketingCampaign.id.desc()",
+    )
+    email_suppressions: Mapped[list["EmailSuppression"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="EmailSuppression.created_at.desc(), EmailSuppression.id.desc()",
+    )
     custom_profession_presets: Mapped[list["CustomProfessionPreset"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -679,6 +689,77 @@ class EmailTemplate(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="email_templates")
+
+
+class MarketingCampaign(Base):
+    __tablename__ = "marketing_campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False, default="New Campaign")
+    subject: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    html_body: Mapped[str] = mapped_column(String(50000), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft", index=True)  # draft|queued|sending|paused|completed
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="marketing_campaigns")
+    recipients: Mapped[list["MarketingCampaignRecipient"]] = relationship(
+        back_populates="campaign",
+        cascade="all, delete-orphan",
+        order_by="MarketingCampaignRecipient.id.asc()",
+    )
+
+
+class MarketingCampaignRecipient(Base):
+    __tablename__ = "marketing_campaign_recipients"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "email", name="uq_marketing_campaign_recipient_email"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("marketing_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    first_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    business_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="new", index=True)  # new|queued|sent|failed|suppressed|unsubscribed
+    error_message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    campaign: Mapped["MarketingCampaign"] = relationship(back_populates="recipients")
+
+
+class EmailSuppression(Base):
+    __tablename__ = "email_suppressions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "email", name="uq_email_suppressions_user_email"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    reason: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="email_suppressions")
 
 
 class BusinessExpense(Base):

@@ -6,14 +6,171 @@
   <div class="page-header mb-3">
     <div>
       <h1 class="h3 fw-bold mb-1">Marketing Campaigns</h1>
-      <div class="subtitle">Admin-only workspace for outreach campaigns.</div>
+      <div class="subtitle">Admin-only outreach tools using your existing InvoiceRunner email pipeline.</div>
     </div>
   </div>
 
-  <div class="card shadow-sm border-0">
-    <div class="card-body">
-      <p class="mb-2">This section is restricted to allowlisted admin emails.</p>
-      <p class="small text-muted mb-0">Next step: wire campaign compose, lead import, suppression list, and send queue to the existing email pipeline.</p>
+  <div class="row g-3">
+    <div class="col-lg-4">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h5 class="card-title mb-2">New Campaign</h5>
+          <form method="post" action="{{ url_for('marketing_campaign_create') }}">
+            <div class="mb-2">
+              <label class="form-label">Name</label>
+              <input class="form-control" name="name" placeholder="Spring Outreach">
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Subject</label>
+              <input class="form-control" name="subject" value="A simpler way to run invoices and get paid" required>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">HTML Body</label>
+              <textarea class="form-control" name="html_body" rows="8" required>{{ default_campaign_html }}</textarea>
+            </div>
+            <button class="btn btn-primary btn-sm" type="submit">Create Campaign</button>
+          </form>
+          <hr>
+          <div class="small text-muted mb-2">Global suppression list size: <strong>{{ suppression_count }}</strong></div>
+          <div class="small text-muted">
+            Supported tokens: <code>{{ "{{first_name}}" }}</code>, <code>{{ "{{business_name}}" }}</code>, <code>{{ "{{email}}" }}</code>, <code>{{ "{{website_url}}" }}</code>, <code>{{ "{{sender_name}}" }}</code>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-8">
+      <div class="card shadow-sm mb-3">
+        <div class="card-body">
+          <h5 class="card-title mb-2">Campaigns</h5>
+          {% if campaigns %}
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Recipients</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for c in campaigns %}
+                    {% set ct = campaign_counts.get(c.id, {"total":0,"queued":0,"sent":0,"failed":0}) %}
+                    <tr>
+                      <td>{{ c.name }}</td>
+                      <td><span class="badge text-bg-light border text-uppercase">{{ c.status }}</span></td>
+                      <td>
+                        <span class="small">Total {{ ct.total }}</span>
+                        <span class="small text-muted">Queued {{ ct.queued }} • Sent {{ ct.sent }} • Failed {{ ct.failed }}</span>
+                      </td>
+                      <td class="text-end">
+                        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('marketing_campaigns', campaign_id=c.id) }}">Open</a>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="small text-muted">No campaigns yet.</div>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if selected_campaign %}
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="card-title mb-0">Manage: {{ selected_campaign.name }}</h5>
+            <span class="badge text-bg-light border text-uppercase">{{ selected_campaign.status }}</span>
+          </div>
+
+          <form method="post" action="{{ url_for('marketing_campaign_update', campaign_id=selected_campaign.id) }}" class="mb-3">
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label">Name</label>
+                <input class="form-control" name="name" value="{{ selected_campaign.name }}" required>
+              </div>
+              <div class="col-md-8">
+                <label class="form-label">Subject</label>
+                <input class="form-control" name="subject" value="{{ selected_campaign.subject }}" required>
+              </div>
+              <div class="col-12">
+                <label class="form-label">HTML Body</label>
+                <textarea class="form-control" name="html_body" rows="10" required>{{ selected_campaign.html_body }}</textarea>
+              </div>
+            </div>
+            <div class="mt-2 d-flex flex-wrap gap-2">
+              <button class="btn btn-primary btn-sm" type="submit">Save Campaign</button>
+              <button class="btn btn-outline-secondary btn-sm" type="submit" formaction="{{ url_for('marketing_campaign_send_test', campaign_id=selected_campaign.id) }}">Send Test To Me</button>
+              <button class="btn btn-outline-warning btn-sm" type="submit" formaction="{{ url_for('marketing_campaign_pause', campaign_id=selected_campaign.id) }}">Pause</button>
+              <button class="btn btn-outline-danger btn-sm" type="submit" formaction="{{ url_for('marketing_campaign_delete', campaign_id=selected_campaign.id) }}" onclick="return confirm('Delete this campaign and all recipient rows?');">Delete</button>
+            </div>
+          </form>
+
+          <hr>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <h6 class="mb-2">Import Recipients (CSV)</h6>
+              <form method="post" action="{{ url_for('marketing_campaign_upload_csv', campaign_id=selected_campaign.id) }}" enctype="multipart/form-data" class="d-flex gap-2">
+                <input class="form-control form-control-sm" type="file" name="recipients_csv" accept=".csv,text/csv" required>
+                <button class="btn btn-outline-primary btn-sm" type="submit">Import</button>
+              </form>
+              <div class="small text-muted mt-1">Headers: email, first_name, business_name</div>
+            </div>
+            <div class="col-md-6">
+              <h6 class="mb-2">Queue + Send</h6>
+              <form method="post" action="{{ url_for('marketing_campaign_queue', campaign_id=selected_campaign.id) }}" class="d-inline">
+                <button class="btn btn-success btn-sm" type="submit">Queue Eligible Recipients</button>
+              </form>
+              <form method="post" action="{{ url_for('marketing_campaign_process', campaign_id=selected_campaign.id) }}" class="d-inline-flex gap-2 ms-2">
+                <input class="form-control form-control-sm" style="max-width:90px;" type="number" name="batch_size" min="1" max="250" value="50">
+                <button class="btn btn-outline-success btn-sm" type="submit">Send Next Batch</button>
+              </form>
+            </div>
+          </div>
+
+          <div class="mt-3 small">
+            <strong>Current counts:</strong>
+            new {{ selected_counts['new'] }} •
+            queued {{ selected_counts['queued'] }} •
+            sent {{ selected_counts['sent'] }} •
+            failed {{ selected_counts['failed'] }} •
+            suppressed {{ selected_counts['suppressed'] }} •
+            unsubscribed {{ selected_counts['unsubscribed'] }}
+          </div>
+
+          <div class="table-responsive mt-2">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Name</th>
+                  <th>Business</th>
+                  <th>Status</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in recipients %}
+                  <tr>
+                    <td>{{ r.email }}</td>
+                    <td>{{ r.first_name or '' }}</td>
+                    <td>{{ r.business_name or '' }}</td>
+                    <td><span class="badge text-bg-light border">{{ r.status }}</span></td>
+                    <td class="small text-muted">{{ r.error_message or '' }}</td>
+                  </tr>
+                {% endfor %}
+                {% if not recipients %}
+                  <tr><td colspan="5" class="small text-muted">No recipients for this campaign yet.</td></tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>

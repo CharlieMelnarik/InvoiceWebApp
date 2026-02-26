@@ -47,6 +47,7 @@ from models import (
     User, Customer, Invoice, InvoicePart, InvoiceLabor, next_invoice_number, next_display_number,
     ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
     InvoiceDesignTemplate, EmailTemplate, CustomProfessionPreset, Contract, IncomeEntry,
+    MarketingCampaign, MarketingCampaignRecipient, EmailSuppression,
 )
 from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
 
@@ -1151,6 +1152,31 @@ def read_employee_invite_token(token: str, max_age_seconds: int) -> tuple[int, s
         return None
 
 
+def _marketing_unsubscribe_serializer():
+    secret = current_app.config.get("SECRET_KEY")
+    salt = current_app.config.get("MARKETING_UNSUBSCRIBE_SALT", "marketing-unsubscribe")
+    return URLSafeTimedSerializer(secret, salt=salt)
+
+
+def make_marketing_unsubscribe_token(user_id: int, email: str) -> str:
+    return _marketing_unsubscribe_serializer().dumps({
+        "uid": int(user_id),
+        "email": _normalize_email(email),
+    })
+
+
+def read_marketing_unsubscribe_token(token: str, max_age_seconds: int = 60 * 60 * 24 * 365 * 10) -> tuple[int, str] | None:
+    try:
+        data = _marketing_unsubscribe_serializer().loads(token, max_age=max_age_seconds)
+        uid = int(data.get("uid"))
+        email = _normalize_email(data.get("email") or "")
+        if uid <= 0 or not _looks_like_email(email):
+            return None
+        return uid, email
+    except (SignatureExpired, BadSignature, TypeError, ValueError):
+        return None
+
+
 def _normalize_phone(phone: str | None) -> str:
     return (phone or "").strip()
 
@@ -1802,6 +1828,89 @@ def _send_schedule_summary_email(to_email: str, subject: str, body_text: str) ->
         smtp.login(user, password)
         smtp.send_message(msg)
     print(f"[SCHEDULE SUMMARY] Sent email to {to_email}", flush=True)
+
+
+def _owner_mailing_address(owner: User | None) -> str:
+    if not owner:
+        return ""
+    addr = _format_user_address_legacy(
+        getattr(owner, "address_line1", None),
+        getattr(owner, "address_line2", None),
+        getattr(owner, "city", None),
+        getattr(owner, "state", None),
+        getattr(owner, "postal_code", None),
+    )
+    if addr:
+        return addr
+    return (getattr(owner, "address", None) or "").strip()
+
+
+def _campaign_footer_html(owner: User | None, unsub_url: str) -> str:
+    address_line = _owner_mailing_address(owner) or "Business mailing address unavailable"
+    return (
+        "<hr style=\"border:none;border-top:1px solid #ddd;margin:20px 0 12px 0;\">"
+        "<p style=\"font-family:Arial,Helvetica,sans-serif;color:#555;font-size:12px;line-height:1.5;margin:0;\">"
+        "You received this message because your business email was included in outreach for InvoiceRunner.<br>"
+        f"Business address: {html.escape(address_line)}<br>"
+        f"<a href=\"{html.escape(unsub_url, quote=True)}\" style=\"color:#2563eb;\">Unsubscribe</a>"
+        "</p>"
+    )
+
+
+def _campaign_with_footer(html_body: str, owner: User | None, unsub_url: str) -> str:
+    body = (html_body or "").strip()
+    footer = _campaign_footer_html(owner, unsub_url)
+    if not body:
+        return (
+            "<div style=\"font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.5;\">"
+            f"{footer}</div>"
+        )
+    if "<body" in body.lower():
+        return re.sub(r"(?is)</body\s*>", f"{footer}</body>", body, count=1)
+    return (
+        "<div style=\"font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.5;\">"
+        f"{body}{footer}</div>"
+    )
+
+
+def _send_marketing_email(
+    *,
+    to_email: str,
+    subject: str,
+    body_text: str,
+    html_body: str,
+) -> None:
+    host = current_app.config.get("SMTP_HOST") or os.getenv("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT") or os.getenv("SMTP_PORT", "587"))
+    user = current_app.config.get("SMTP_USER") or os.getenv("SMTP_USER")
+    password = current_app.config.get("SMTP_PASS") or os.getenv("SMTP_PASS")
+    mail_from = current_app.config.get("MAIL_FROM") or os.getenv("MAIL_FROM") or user
+
+    if not all([host, port, user, password, mail_from]):
+        raise RuntimeError("SMTP is not configured (SMTP_HOST/PORT/USER/PASS/MAIL_FROM).")
+
+    msg = EmailMessage()
+    msg["Subject"] = (subject or "").strip() or "InvoiceRunner"
+    msg["From"] = mail_from
+    msg["To"] = (to_email or "").strip()
+    msg.set_content((body_text or "").strip() or "Please view this message in an HTML-capable email client.")
+    msg.add_alternative((html_body or "").strip() or "<p></p>", subtype="html")
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, password)
+        smtp.send_message(msg)
+
+
+def _campaign_owned_or_404(session, campaign_id: int, *, owner_user_id: int) -> MarketingCampaign:
+    row = (
+        session.query(MarketingCampaign)
+        .filter(MarketingCampaign.id == campaign_id, MarketingCampaign.user_id == owner_user_id)
+        .first()
+    )
+    if not row:
+        abort(404)
+    return row
 
 
 def _send_contact_us_email(
@@ -3532,6 +3641,7 @@ def create_app():
     app.config.setdefault("TURNSTILE_SITE_KEY", os.getenv("TURNSTILE_SITE_KEY", ""))
     app.config.setdefault("TURNSTILE_SECRET_KEY", os.getenv("TURNSTILE_SECRET_KEY", ""))
     app.config.setdefault("MARKETING_ADMIN_EMAILS", os.getenv("MARKETING_ADMIN_EMAILS", ""))
+    app.config.setdefault("MARKETING_UNSUBSCRIBE_SALT", os.getenv("MARKETING_UNSUBSCRIBE_SALT", "marketing-unsubscribe"))
 
     login_manager.init_app(app)
 
@@ -6326,7 +6436,532 @@ def create_app():
     @owner_required
     @marketing_admin_required
     def marketing_campaigns():
-        return render_template("marketing_campaigns.html")
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+
+            campaigns = (
+                s.query(MarketingCampaign)
+                .filter(MarketingCampaign.user_id == owner.id)
+                .order_by(MarketingCampaign.created_at.desc(), MarketingCampaign.id.desc())
+                .all()
+            )
+            selected_id_raw = (request.args.get("campaign_id") or "").strip()
+            selected_id = int(selected_id_raw) if selected_id_raw.isdigit() else None
+            selected_campaign = None
+            if selected_id is not None:
+                selected_campaign = next((c for c in campaigns if int(c.id) == selected_id), None)
+            if selected_campaign is None and campaigns:
+                selected_campaign = campaigns[0]
+
+            campaign_counts: dict[int, dict[str, int]] = {}
+            count_rows = (
+                s.query(
+                    MarketingCampaignRecipient.campaign_id,
+                    MarketingCampaignRecipient.status,
+                    func.count(MarketingCampaignRecipient.id),
+                )
+                .join(MarketingCampaign, MarketingCampaign.id == MarketingCampaignRecipient.campaign_id)
+                .filter(MarketingCampaign.user_id == owner.id)
+                .group_by(MarketingCampaignRecipient.campaign_id, MarketingCampaignRecipient.status)
+                .all()
+            )
+            for cid, status, ct in count_rows:
+                cid_i = int(cid)
+                bucket = campaign_counts.setdefault(
+                    cid_i, {"new": 0, "queued": 0, "sent": 0, "failed": 0, "suppressed": 0, "unsubscribed": 0, "total": 0}
+                )
+                st = (status or "new").strip().lower()
+                if st not in bucket:
+                    st = "new"
+                bucket[st] += int(ct or 0)
+                bucket["total"] += int(ct or 0)
+
+            recipients = []
+            selected_counts = {"new": 0, "queued": 0, "sent": 0, "failed": 0, "suppressed": 0, "unsubscribed": 0, "total": 0}
+            if selected_campaign is not None:
+                recipients = (
+                    s.query(MarketingCampaignRecipient)
+                    .filter(MarketingCampaignRecipient.campaign_id == selected_campaign.id)
+                    .order_by(MarketingCampaignRecipient.id.asc())
+                    .limit(400)
+                    .all()
+                )
+                selected_counts = campaign_counts.get(int(selected_campaign.id), selected_counts)
+
+            suppression_count = (
+                s.query(func.count(EmailSuppression.id))
+                .filter(EmailSuppression.user_id == owner.id)
+                .scalar()
+            ) or 0
+
+            return render_template(
+                "marketing_campaigns.html",
+                campaigns=campaigns,
+                selected_campaign=selected_campaign,
+                recipients=recipients,
+                campaign_counts=campaign_counts,
+                selected_counts=selected_counts,
+                suppression_count=int(suppression_count),
+                default_campaign_html=(
+                    "<p>Hi {{first_name}},</p>"
+                    "<p>I wanted to quickly share InvoiceRunner in case it's useful for your business.</p>"
+                    "<p>It helps with invoices, estimates, payment reminders, expenses, and contracts in one place.</p>"
+                    "<p>If you'd like to check it out, you can start whenever you're ready.</p>"
+                    "<p><a href=\"{{website_url}}\" "
+                    "style=\"display:inline-block;background:#2563eb;color:#fff;text-decoration:none;"
+                    "padding:10px 16px;border-radius:8px;font-weight:600;\">Try InvoiceRunner</a></p>"
+                    "<p>Thank you,<br>{{sender_name}}</p>"
+                ),
+            )
+
+    @app.post("/settings/campaigns/create")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaign_create():
+        name = (request.form.get("name") or "").strip()
+        subject = (request.form.get("subject") or "").strip()
+        html_body = (request.form.get("html_body") or "").strip()
+        if not name:
+            name = "New Campaign"
+        if not subject:
+            flash("Subject is required.", "error")
+            return redirect(url_for("marketing_campaigns"))
+        if not html_body:
+            flash("HTML body is required.", "error")
+            return redirect(url_for("marketing_campaigns"))
+
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            row = MarketingCampaign(
+                user_id=owner.id,
+                name=name[:160],
+                subject=subject[:255],
+                html_body=html_body[:50000],
+                status="draft",
+            )
+            s.add(row)
+            s.flush()
+            cid = int(row.id)
+            _audit_log(
+                s,
+                event="campaign.create",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"campaign_id={cid}",
+            )
+            s.commit()
+        flash("Campaign created.", "success")
+        return redirect(url_for("marketing_campaigns", campaign_id=cid))
+
+    @app.post("/settings/campaigns/<int:campaign_id>/update")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaign_update(campaign_id: int):
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            row = _campaign_owned_or_404(s, campaign_id, owner_user_id=owner.id)
+            row.name = ((request.form.get("name") or "").strip() or row.name)[:160]
+            subject = (request.form.get("subject") or "").strip()
+            html_body = (request.form.get("html_body") or "").strip()
+            if not subject:
+                flash("Subject is required.", "error")
+                return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+            if not html_body:
+                flash("HTML body is required.", "error")
+                return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+            row.subject = subject[:255]
+            row.html_body = html_body[:50000]
+            s.add(row)
+            _audit_log(
+                s,
+                event="campaign.update",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"campaign_id={campaign_id}",
+            )
+            s.commit()
+        flash("Campaign updated.", "success")
+        return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+    @app.post("/settings/campaigns/<int:campaign_id>/upload-csv")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaign_upload_csv(campaign_id: int):
+        f = request.files.get("recipients_csv")
+        if not f or not (f.filename or "").strip():
+            flash("Choose a CSV file to import.", "error")
+            return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+        try:
+            raw = f.read()
+            text_data = raw.decode("utf-8-sig", errors="ignore")
+        except Exception:
+            flash("Could not read CSV file.", "error")
+            return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+        if not text_data.strip():
+            flash("CSV file is empty.", "error")
+            return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            campaign = _campaign_owned_or_404(s, campaign_id, owner_user_id=owner.id)
+
+            suppressions = {
+                (r.email or "").strip().lower()
+                for r in s.query(EmailSuppression).filter(EmailSuppression.user_id == owner.id).all()
+            }
+            existing = {
+                (r.email or "").strip().lower(): r
+                for r in s.query(MarketingCampaignRecipient).filter(MarketingCampaignRecipient.campaign_id == campaign.id).all()
+            }
+
+            imported = 0
+            updated = 0
+            skipped = 0
+            rdr = csv.DictReader(io.StringIO(text_data))
+            headers = [((h or "").strip().lower()) for h in (rdr.fieldnames or [])]
+            has_email_header = any(h in ("email", "email_address", "e-mail") for h in headers)
+            if has_email_header:
+                rows_iter = rdr
+            else:
+                # Fallback: first column is email, second optional first_name, third optional business_name.
+                rows_iter = []
+                for row in csv.reader(io.StringIO(text_data)):
+                    if not row:
+                        continue
+                    rows_iter.append(
+                        {
+                            "email": row[0] if len(row) >= 1 else "",
+                            "first_name": row[1] if len(row) >= 2 else "",
+                            "business_name": row[2] if len(row) >= 3 else "",
+                        }
+                    )
+
+            for row in rows_iter:
+                email = _normalize_email(
+                    (row.get("email") or row.get("email_address") or row.get("e-mail") or "")
+                )
+                if not _looks_like_email(email):
+                    skipped += 1
+                    continue
+                first_name = (
+                    (row.get("first_name") or row.get("firstname") or row.get("name") or "").strip()
+                )[:120] or None
+                business_name = (
+                    (row.get("business_name") or row.get("company") or row.get("business") or "").strip()
+                )[:200] or None
+                existing_row = existing.get(email)
+                target_status = "suppressed" if email in suppressions else "new"
+                if existing_row is None:
+                    nr = MarketingCampaignRecipient(
+                        campaign_id=campaign.id,
+                        email=email,
+                        first_name=first_name,
+                        business_name=business_name,
+                        status=target_status,
+                    )
+                    s.add(nr)
+                    imported += 1
+                    continue
+
+                changed = False
+                if first_name and first_name != (existing_row.first_name or ""):
+                    existing_row.first_name = first_name
+                    changed = True
+                if business_name and business_name != (existing_row.business_name or ""):
+                    existing_row.business_name = business_name
+                    changed = True
+                if existing_row.status in ("failed", "new", "suppressed") and existing_row.status != target_status:
+                    existing_row.status = target_status
+                    existing_row.error_message = None
+                    changed = True
+                if changed:
+                    s.add(existing_row)
+                    updated += 1
+                else:
+                    skipped += 1
+
+            _audit_log(
+                s,
+                event="campaign.import_csv",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"campaign_id={campaign_id};imported={imported};updated={updated};skipped={skipped}",
+            )
+            s.commit()
+        flash(f"CSV processed. Imported {imported}, updated {updated}, skipped {skipped}.", "success")
+        return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+    @app.post("/settings/campaigns/<int:campaign_id>/send-test")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaign_send_test(campaign_id: int):
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            campaign = _campaign_owned_or_404(s, campaign_id, owner_user_id=owner.id)
+            to_email = _normalize_email(getattr(owner, "email", None) or "")
+            if not _looks_like_email(to_email):
+                flash("Your account email is invalid. Update your account email first.", "error")
+                return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+            unsub_token = make_marketing_unsubscribe_token(owner.id, to_email)
+            unsub_url = _public_url(url_for("marketing_unsubscribe", token=unsub_token))
+            sender_name = ((owner.business_name or "").strip() or (owner.username or "").strip() or "InvoiceRunner")
+            render_ctx = {
+                "first_name": (owner.username or "there"),
+                "business_name": ((owner.business_name or "").strip() or "your business"),
+                "email": to_email,
+                "sender_name": sender_name,
+                "sender_business_name": sender_name,
+                "website_url": _public_url(url_for("index")),
+            }
+            subject = _render_email_template_tokens(campaign.subject or "", render_ctx).strip() or campaign.subject
+            html_body = _render_email_template_tokens(campaign.html_body or "", render_ctx)
+            html_with_footer = _campaign_with_footer(html_body, owner, unsub_url)
+            text_body = _strip_html_to_text(html_with_footer)
+
+            try:
+                _send_marketing_email(
+                    to_email=to_email,
+                    subject=subject,
+                    body_text=text_body,
+                    html_body=html_with_footer,
+                )
+            except Exception as exc:
+                flash(f"Could not send test email: {exc}", "error")
+                return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+            _audit_log(
+                s,
+                event="campaign.send_test",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"campaign_id={campaign_id};to={to_email}",
+            )
+            s.commit()
+        flash("Test email sent to your account email.", "success")
+        return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+    @app.post("/settings/campaigns/<int:campaign_id>/queue")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaign_queue(campaign_id: int):
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            campaign = _campaign_owned_or_404(s, campaign_id, owner_user_id=owner.id)
+            suppressions = {
+                (r.email or "").strip().lower()
+                for r in s.query(EmailSuppression).filter(EmailSuppression.user_id == owner.id).all()
+            }
+            rows = (
+                s.query(MarketingCampaignRecipient)
+                .filter(MarketingCampaignRecipient.campaign_id == campaign.id)
+                .filter(MarketingCampaignRecipient.status.in_(["new", "failed", "queued", "suppressed"]))
+                .all()
+            )
+            queued = 0
+            suppressed = 0
+            for r in rows:
+                email = _normalize_email(r.email or "")
+                if email in suppressions:
+                    r.status = "suppressed"
+                    suppressed += 1
+                else:
+                    r.status = "queued"
+                    r.error_message = None
+                    queued += 1
+                s.add(r)
+            campaign.status = "queued" if queued > 0 else "paused"
+            s.add(campaign)
+            _audit_log(
+                s,
+                event="campaign.queue",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"campaign_id={campaign_id};queued={queued};suppressed={suppressed}",
+            )
+            s.commit()
+        flash(f"Campaign queued: {queued} recipients ({suppressed} suppressed).", "success")
+        return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+    @app.post("/settings/campaigns/<int:campaign_id>/process")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaign_process(campaign_id: int):
+        batch_size_raw = (request.form.get("batch_size") or "").strip()
+        try:
+            batch_size = int(batch_size_raw or "50")
+        except Exception:
+            batch_size = 50
+        batch_size = max(1, min(250, batch_size))
+
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            campaign = _campaign_owned_or_404(s, campaign_id, owner_user_id=owner.id)
+            suppressions = {
+                (r.email or "").strip().lower()
+                for r in s.query(EmailSuppression).filter(EmailSuppression.user_id == owner.id).all()
+            }
+            queued_rows = (
+                s.query(MarketingCampaignRecipient)
+                .filter(MarketingCampaignRecipient.campaign_id == campaign.id)
+                .filter(MarketingCampaignRecipient.status == "queued")
+                .order_by(MarketingCampaignRecipient.id.asc())
+                .limit(batch_size)
+                .all()
+            )
+            if not queued_rows:
+                flash("No queued recipients to process.", "info")
+                return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+            campaign.status = "sending"
+            s.add(campaign)
+            s.flush()
+
+            sent = 0
+            failed = 0
+            suppressed = 0
+            sender_name = ((owner.business_name or "").strip() or (owner.username or "").strip() or "InvoiceRunner")
+            for r in queued_rows:
+                email = _normalize_email(r.email or "")
+                if email in suppressions:
+                    r.status = "suppressed"
+                    r.error_message = "Suppressed"
+                    s.add(r)
+                    suppressed += 1
+                    continue
+
+                unsub_token = make_marketing_unsubscribe_token(owner.id, email)
+                unsub_url = _public_url(url_for("marketing_unsubscribe", token=unsub_token))
+                render_ctx = {
+                    "first_name": (r.first_name or "there"),
+                    "business_name": (r.business_name or "your business"),
+                    "email": email,
+                    "sender_name": sender_name,
+                    "sender_business_name": sender_name,
+                    "website_url": _public_url(url_for("index")),
+                }
+                subject = _render_email_template_tokens(campaign.subject or "", render_ctx).strip() or campaign.subject
+                html_body = _render_email_template_tokens(campaign.html_body or "", render_ctx)
+                html_with_footer = _campaign_with_footer(html_body, owner, unsub_url)
+                text_body = _strip_html_to_text(html_with_footer)
+                try:
+                    _send_marketing_email(
+                        to_email=email,
+                        subject=subject,
+                        body_text=text_body,
+                        html_body=html_with_footer,
+                    )
+                    r.status = "sent"
+                    r.sent_at = datetime.utcnow()
+                    r.error_message = None
+                    sent += 1
+                except Exception as exc:
+                    r.status = "failed"
+                    r.error_message = str(exc)[:500]
+                    failed += 1
+                s.add(r)
+
+            remaining = (
+                s.query(func.count(MarketingCampaignRecipient.id))
+                .filter(
+                    MarketingCampaignRecipient.campaign_id == campaign.id,
+                    MarketingCampaignRecipient.status == "queued",
+                )
+                .scalar()
+            ) or 0
+            campaign.status = "completed" if int(remaining) == 0 else "queued"
+            s.add(campaign)
+            _audit_log(
+                s,
+                event="campaign.process",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"campaign_id={campaign_id};batch={batch_size};sent={sent};failed={failed};suppressed={suppressed};remaining={remaining}",
+            )
+            s.commit()
+        flash(f"Batch complete. Sent {sent}, failed {failed}, suppressed {suppressed}.", "success")
+        return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+    @app.post("/settings/campaigns/<int:campaign_id>/pause")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaign_pause(campaign_id: int):
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            campaign = _campaign_owned_or_404(s, campaign_id, owner_user_id=owner.id)
+            campaign.status = "paused"
+            s.add(campaign)
+            _audit_log(
+                s,
+                event="campaign.pause",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"campaign_id={campaign_id}",
+            )
+            s.commit()
+        flash("Campaign paused.", "success")
+        return redirect(url_for("marketing_campaigns", campaign_id=campaign_id))
+
+    @app.post("/settings/campaigns/<int:campaign_id>/delete")
+    @login_required
+    @owner_required
+    @marketing_admin_required
+    def marketing_campaign_delete(campaign_id: int):
+        with db_session() as s:
+            owner = s.get(User, _current_user_id_int())
+            if not owner:
+                abort(404)
+            campaign = _campaign_owned_or_404(s, campaign_id, owner_user_id=owner.id)
+            s.delete(campaign)
+            _audit_log(
+                s,
+                event="campaign.delete",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"campaign_id={campaign_id}",
+            )
+            s.commit()
+        flash("Campaign deleted.", "success")
+        return redirect(url_for("marketing_campaigns"))
 
     @app.get("/settings/invoice-builder")
     @login_required
@@ -12542,6 +13177,50 @@ def create_app():
                 download_name=filename,
                 mimetype="application/pdf",
             )
+
+    @app.get("/m/unsubscribe/<token>")
+    def marketing_unsubscribe(token: str):
+        decoded = read_marketing_unsubscribe_token(token)
+        if not decoded:
+            return render_template("shared_deleted.html"), 410
+
+        user_id, email = decoded
+        with db_session() as s:
+            owner = s.get(User, user_id)
+            if not owner:
+                return render_template("shared_deleted.html"), 410
+
+            existing = (
+                s.query(EmailSuppression)
+                .filter(EmailSuppression.user_id == owner.id, EmailSuppression.email == email)
+                .first()
+            )
+            if existing is None:
+                s.add(EmailSuppression(user_id=owner.id, email=email, reason="unsubscribe_link"))
+
+            rows = (
+                s.query(MarketingCampaignRecipient)
+                .join(MarketingCampaign, MarketingCampaign.id == MarketingCampaignRecipient.campaign_id)
+                .filter(MarketingCampaign.user_id == owner.id, MarketingCampaignRecipient.email == email)
+                .all()
+            )
+            for r in rows:
+                r.status = "unsubscribed"
+                r.error_message = "Unsubscribed"
+                s.add(r)
+
+            _audit_log(
+                s,
+                event="campaign.unsubscribe",
+                result="success",
+                user_id=owner.id,
+                username=owner.username,
+                email=owner.email,
+                details=f"recipient_email={email}",
+            )
+            s.commit()
+
+        return render_template("marketing_unsubscribe.html", email=email)
 
     @app.get("/shared/v/<token>")
     def shared_customer_portal(token: str):
