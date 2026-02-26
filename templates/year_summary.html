@@ -88,6 +88,10 @@
           <div class="small-muted">Late Fee Income (Paid Invoices)</div>
           <div class="fw-semibold">{{ money(total_late_fee_income) }}</div>
         </div>
+        <div class="col-6 col-md-3">
+          <div class="small-muted">Stripe Credit Card Processing Fee (Customer-Paid)</div>
+          <div class="fw-semibold">{{ money(total_stripe_processing_fees) }}</div>
+        </div>
       {% endif %}
 
       <div class="col-12"><hr class="my-2"></div>
@@ -128,6 +132,13 @@
         <div class="small-muted">Total Income (Paid Invoices + Other Income + Interest Income)</div>
         <div class="fw-bold text-success">{{ money(total_income_with_manual) }}</div>
       </div>
+      {% if pro_features_enabled %}
+        <div class="col-12">
+          <div class="small-muted">
+            These fees are not collected by you, they go straight to Stripe. This is just for visual reference.
+          </div>
+        </div>
+      {% endif %}
 
     </div>
   </div>

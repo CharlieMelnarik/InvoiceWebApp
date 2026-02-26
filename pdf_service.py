@@ -181,6 +181,16 @@ def _invoice_pdf_amounts(inv: Invoice, owner: User | None, *, is_estimate: bool)
     if late_fee > 0.0:
         total += late_fee
         due += late_fee
+    # Optional transient override for portal/base-vs-paid download variants.
+    override_processing_fee = getattr(inv, "_pdf_paid_processing_fee_override", None)
+    if override_processing_fee is not None:
+        paid_processing_fee = float(override_processing_fee or 0.0)
+    else:
+        paid_processing_fee = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
+    # When the invoice has been paid online, include the paid processing fee in
+    # the PDF total so the downloaded paid invoice reflects the full card charge.
+    if paid_processing_fee > 0.0:
+        total += paid_processing_fee
     return round(total, 2), round(max(0.0, due), 2), round(late_fee, 2)
 
 
@@ -3729,6 +3739,7 @@ def generate_and_store_pdf(
     pdf_template_override: str | None = None,
     builder_cfg_override: dict | None = None,
     invoice_builder_design_override: dict | None = None,
+    include_processing_fee: bool = True,
 ) -> str:
     """
     Generates (or regenerates) a PDF for the given invoice_id.
@@ -3739,6 +3750,8 @@ def generate_and_store_pdf(
     inv = session.get(Invoice, invoice_id)
     if not inv:
         raise ValueError(f"Invoice not found: id={invoice_id}")
+    # Transient flag consumed by _invoice_pdf_amounts; not persisted to DB.
+    inv._pdf_paid_processing_fee_override = None if include_processing_fee else 0.0
 
     is_estimate = bool(getattr(inv, "is_estimate", False))
 

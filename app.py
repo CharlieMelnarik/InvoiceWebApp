@@ -11200,6 +11200,7 @@ def create_app():
 
         total_paid_invoices_amount = 0.0
         total_late_fee_income = 0.0
+        total_stripe_processing_fees = 0.0
         total_outstanding_unpaid = 0.0
         labor_unpaid = 0.0
         labor_unpaid_raw = 0.0
@@ -11317,6 +11318,8 @@ def create_app():
 
                 recognized_income, late_fee_income = _paid_invoice_income_components(inv, eps=EPS)
                 fully_paid = recognized_income > 0.0
+                processing_fee_paid = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
+                total_stripe_processing_fees += processing_fee_paid
 
                 if fully_paid:
                     total_paid_invoices_amount += recognized_income
@@ -11404,6 +11407,7 @@ def create_app():
             "total_tax_collected": total_tax_collected,
             "total_paid_invoices_amount": total_paid_invoices_amount,
             "total_late_fee_income": total_late_fee_income,
+            "total_stripe_processing_fees": total_stripe_processing_fees,
             "total_outstanding_unpaid": total_outstanding_unpaid,
             "unpaid_count": len(unpaid),
             "profit_paid_labor_only": profit_paid_labor_only,
@@ -13481,7 +13485,8 @@ def create_app():
                 payment_message = "Payment canceled."
 
             pdf_token = make_pdf_share_token(inv.user_id, inv.id)
-            pdf_url = url_for("shared_pdf_download", token=pdf_token)
+            pdf_url_base = url_for("shared_pdf_download", token=pdf_token, include_processing_fee="0")
+            pdf_url_paid = url_for("shared_pdf_download", token=pdf_token, include_processing_fee="1")
             pay_url = url_for("shared_customer_portal_pay", token=token)
             can_pay_online = (
                 (not bool(inv.is_estimate))
@@ -13531,7 +13536,8 @@ def create_app():
                 tmpl=tmpl,
                 business_name=business_name,
                 doc_number=doc_number,
-                pdf_url=pdf_url,
+                pdf_url_base=pdf_url_base,
+                pdf_url_paid=pdf_url_paid,
                 pay_url=pay_url,
                 can_pay_online=can_pay_online,
                 payment_message=payment_message,
@@ -13544,6 +13550,7 @@ def create_app():
                 due_with_late_fee=due_with_late_fee,
                 effective_amount_due=effective_amount_due,
                 paid_display=paid_display,
+                has_paid_online_receipt=(paid_processing_fee > 0.0),
                 fee_percent=fee_percent,
                 fee_fixed=fee_fixed,
                 fee_auto_enabled=fee_auto_enabled,
@@ -13653,6 +13660,8 @@ def create_app():
         if not decoded:
             abort(404)
         user_id, invoice_id = decoded
+        include_processing_fee_raw = (request.args.get("include_processing_fee") or "1").strip().lower()
+        include_processing_fee = include_processing_fee_raw not in {"0", "false", "no", "off"}
         with db_session() as s:
             inv = (
                 s.query(Invoice)
@@ -13662,7 +13671,7 @@ def create_app():
             if not inv:
                 abort(404)
             try:
-                pdf_path = generate_and_store_pdf(s, invoice_id)
+                pdf_path = generate_and_store_pdf(s, invoice_id, include_processing_fee=include_processing_fee)
             except Exception:
                 abort(500)
             return send_file(

@@ -68,7 +68,10 @@
         </div>
 
         <div class="d-flex flex-wrap gap-2 mb-4">
-          <a class="btn btn-outline-secondary" href="{{ pdf_url }}">Download PDF</a>
+          <a class="btn btn-outline-secondary" href="{{ pdf_url_base }}">Download Invoice PDF</a>
+          {% if has_paid_online_receipt %}
+            <a class="btn btn-outline-primary" href="{{ pdf_url_paid }}">Download Paid Receipt PDF (includes processing fee)</a>
+          {% endif %}
           {% if can_pay_online %}
             <form method="post" action="{{ pay_url }}">
               <button class="btn btn-success" type="submit">
@@ -77,6 +80,17 @@
             </form>
           {% endif %}
         </div>
+        {% if can_pay_online and not has_paid_online_receipt %}
+          <div class="small-muted mb-2">
+            If you download the PDF before online payment, it will not include the card processing fee.
+            After payment, download it again for the paid invoice total.
+          </div>
+        {% endif %}
+        {% if has_paid_online_receipt %}
+          <div class="small-muted mb-2">
+            This paid invoice PDF includes the card processing fee paid at checkout.
+          </div>
+        {% endif %}
         {% if can_pay_online and convenience_fee and convenience_fee > 0 %}
           <div class="small-muted mb-2">
             Credit Card Processing Fee: ${{ "%.2f"|format(convenience_fee) }}
