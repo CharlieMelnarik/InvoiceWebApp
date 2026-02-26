@@ -9113,9 +9113,6 @@ def create_app():
         with db_session() as s:
             customer = _customer_owned_or_404(s, customer_id)
             owner = s.get(User, uid)
-            if not _has_pro_features(owner):
-                flash("Contracts are available on the Pro plan.", "error")
-                return redirect(url_for("customer_view", customer_id=customer_id))
 
             if request.method == "POST":
                 title = (request.form.get("title") or "").strip() or "Service Agreement"
@@ -9226,10 +9223,6 @@ def create_app():
             if not contract:
                 abort(404)
             customer = contract.customer
-            owner = s.get(User, uid)
-            if not _has_pro_features(owner):
-                flash("Contracts are available on the Pro plan.", "error")
-                return redirect(url_for("customer_view", customer_id=customer.id if customer else 0))
 
             if contract.status == "e_signed":
                 flash("Signed contracts cannot be edited. Create a new contract if needed.", "error")
