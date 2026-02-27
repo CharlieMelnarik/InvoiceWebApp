@@ -119,6 +119,101 @@ def _business_header_info_lines(owner: User | None) -> list[str]:
     return lines
 
 
+_PAYMENT_METHOD_META = {
+    "cash": {"label": "Cash", "badge": "CASH", "badge_color": colors.HexColor("#166534")},
+    "check": {"label": "Check", "badge": "CHECK", "badge_color": colors.HexColor("#1f2937")},
+    "card": {"label": "Credit / Debit Card", "badge": "CARD", "badge_color": colors.HexColor("#1d4ed8")},
+    "apple_pay": {"label": "Apple Pay", "badge": "APPLE", "badge_color": colors.black},
+    "google_pay": {"label": "Google Pay", "badge": "GPAY", "badge_color": colors.HexColor("#0f766e")},
+    "venmo": {"label": "Venmo", "badge": "VENMO", "badge_color": colors.HexColor("#2563eb")},
+    "paypal": {"label": "PayPal", "badge": "PAYPAL", "badge_color": colors.HexColor("#0c4a6e")},
+    "cash_app": {"label": "Cash App", "badge": "CASHAPP", "badge_color": colors.HexColor("#15803d")},
+    "zelle": {"label": "Zelle", "badge": "ZELLE", "badge_color": colors.HexColor("#6d28d9")},
+    "ach": {"label": "ACH / Bank Transfer", "badge": "ACH", "badge_color": colors.HexColor("#7c2d12")},
+}
+
+
+def _owner_payment_methods(owner: User | None) -> list[dict[str, str]]:
+    raw = (getattr(owner, "payment_methods_json", None) or "").strip() if owner else ""
+    if not raw:
+        return []
+    try:
+        rows = json.loads(raw)
+    except Exception:
+        return []
+    out: list[dict[str, str]] = []
+    if not isinstance(rows, list):
+        return []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = (row.get("key") or "").strip()
+        meta = _PAYMENT_METHOD_META.get(key)
+        if not meta:
+            continue
+        out.append(
+            {
+                "key": key,
+                "label": meta["label"],
+                "badge": meta["badge"],
+                "detail": (row.get("detail") or "").strip(),
+                "badge_color": meta["badge_color"],
+            }
+        )
+    return out
+
+
+def _payment_methods_footer_height(owner: User | None, max_width: float) -> float:
+    rows = _owner_payment_methods(owner)
+    if not rows:
+        return 0.0
+    cols = 2 if max_width >= (4.8 * inch) else 1
+    row_count = (len(rows) + cols - 1) // cols
+    return 34 + (row_count * 16)
+
+
+def _draw_payment_methods_footer(
+    pdf,
+    owner: User | None,
+    left_x: float,
+    base_y: float,
+    max_width: float,
+    *,
+    title_color=colors.HexColor("#475569"),
+    text_color=colors.HexColor("#374151"),
+):
+    rows = _owner_payment_methods(owner)
+    if not rows:
+        return
+
+    cols = 2 if max_width >= (4.8 * inch) else 1
+    col_w = max_width / cols
+    title_y = base_y + 40
+    pdf.setFont("Helvetica-Bold", 8)
+    pdf.setFillColor(title_color)
+    pdf.drawString(left_x, title_y, "Payment methods:")
+
+    row_y = title_y - 16
+    for idx, row in enumerate(rows):
+        col = idx % cols
+        if idx > 0 and col == 0:
+            row_y -= 16
+        x = left_x + (col * col_w)
+        badge_w = max(30, stringWidth(row["badge"], "Helvetica-Bold", 6.5) + 10)
+        pdf.setFillColor(row["badge_color"])
+        pdf.roundRect(x, row_y - 8, badge_w, 10, 2, stroke=0, fill=1)
+        pdf.setFillColor(colors.white)
+        pdf.setFont("Helvetica-Bold", 6.5)
+        pdf.drawCentredString(x + (badge_w / 2.0), row_y - 5.5, row["badge"])
+        pdf.setFillColor(text_color)
+        pdf.setFont("Helvetica", 7.5)
+        text_val = row["detail"] or row["label"]
+        max_text_w = max(30, col_w - badge_w - 8)
+        line = (_wrap_text(text_val, "Helvetica", 7.5, max_text_w) or [text_val])[0]
+        pdf.drawString(x + badge_w + 4, row_y - 5, line)
+    pdf.setFillColor(colors.black)
+
+
 def _invoice_due_date_line(inv: Invoice, owner: User | None, *, is_estimate: bool) -> str:
     if is_estimate:
         return ""
@@ -1516,7 +1611,8 @@ def _render_modern_pdf(
 
     footer_y = 0.55 * inch
     footer_clearance = 0.20 * inch
-    page_bottom_limit = footer_y + footer_clearance
+    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * M))
+    page_bottom_limit = footer_y + footer_clearance + payment_methods_h
 
     needed_text_h = 0
     for ln in all_note_lines:
@@ -1611,12 +1707,13 @@ def _render_modern_pdf(
         right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 26, f"AMOUNT DUE: {_money(price_owed)}", "Helvetica-Bold", 12, brand_dark)
 
     def footer():
+        _draw_payment_methods_footer(pdf, owner, M, footer_y, PAGE_W - (2 * M))
         pdf.setFont("Helvetica-Oblique", 9)
         pdf.setFillColor(brand_muted)
         if is_estimate:
             pdf.drawString(M, footer_y, "Total is an estimated cost of service. Actual amount may differ.")
         else:
-            pdf.drawString(M, footer_y, "Thank you for your business.")
+            pdf.drawRightString(PAGE_W - M, footer_y, "Thank you for your business.")
         pdf.setFillColor(colors.black)
 
     def start_new_page_with_header():
@@ -2080,7 +2177,8 @@ def _render_split_panel_pdf(
 
     footer_y = 0.55 * inch
     footer_clearance = 0.2 * inch
-    page_bottom_limit = footer_y + footer_clearance
+    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * content_x))
+    page_bottom_limit = footer_y + footer_clearance + payment_methods_h
 
     needed_text_h = 0
     for ln in all_note_lines:
@@ -2119,12 +2217,13 @@ def _render_split_panel_pdf(
         remaining_lines = all_note_lines[lines_fit:]
 
     def footer():
+        _draw_payment_methods_footer(pdf, owner, content_x, footer_y, PAGE_W - content_x - M)
         pdf.setFont("Helvetica-Oblique", 9)
         pdf.setFillColor(colors.HexColor("#94a3b8"))
         if is_estimate:
             pdf.drawString(content_x, footer_y, "Total is an estimated cost of service. Actual amount may differ.")
         else:
-            pdf.drawString(content_x, footer_y, "Thank you for your business.")
+            pdf.drawRightString(PAGE_W - M, footer_y, "Thank you for your business.")
         pdf.setFillColor(colors.black)
 
     def start_new_page_with_header():
@@ -2608,12 +2707,13 @@ def _render_strip_pdf(
         label_right_value(sum_x + 10, right_edge, y, "Amount Due:", _money(price_owed))
 
     # Footer
+    _draw_payment_methods_footer(pdf, owner, M, 0.55 * inch, PAGE_W - (2 * M))
     pdf.setFont("Helvetica-Oblique", 9)
     pdf.setFillColor(muted)
     if is_estimate:
         pdf.drawString(M, 0.55 * inch, "Total is an estimated cost of service. Actual amount may differ.")
     else:
-        pdf.drawString(M, 0.55 * inch, "Thank you for your business.")
+        pdf.drawRightString(PAGE_W - M, 0.55 * inch, "Thank you for your business.")
     pdf.setFillColor(colors.black)
 
     pdf.save()
@@ -2751,6 +2851,9 @@ def _render_basic_pdf(
     tax_amt = float(inv.tax_amount() or 0.0)
     if late_fee_amount > 0 and not is_estimate:
         items.append(("Late Fee", late_fee_amount))
+    paid_processing_fee = _invoice_processing_fee_paid(inv)
+    if paid_processing_fee > 0 and not is_estimate:
+        items.append(("Processing Fee", paid_processing_fee))
     if tax_amt:
         items.append((_tax_label(inv), tax_amt))
 
@@ -2778,12 +2881,15 @@ def _render_basic_pdf(
     right_text(table_x + table_w - 8, total_row_y - 4, _money(total_with_fees), "Helvetica-Bold", 12)
 
     foot_y = M + 18
-    pdf.setFont("Helvetica", 8)
-    contact = (header_name or "[Name]")
-    email = ((getattr(owner, "email", None) or "").strip()) if owner else ""
-    phone = header_phone or "[Phone]"
-    pdf.drawCentredString(PAGE_W / 2.0, foot_y + 14, f"If you have any questions about this {doc_label.lower()}, please contact")
-    pdf.drawCentredString(PAGE_W / 2.0, foot_y + 2, f"{contact}, {phone}{(', ' + email) if email else ''}")
+    _draw_payment_methods_footer(pdf, owner, M, foot_y, PAGE_W - (2 * M))
+    notes_text = (inv.notes or "").strip()
+    if notes_text:
+        pdf.setFont("Helvetica", 8)
+        wrapped_notes = _wrap_text(notes_text, "Helvetica", 8, PAGE_W - (2 * M) - 40)[:3]
+        note_y = foot_y + 14 + _payment_methods_footer_height(owner, PAGE_W - (2 * M))
+        for line in wrapped_notes:
+            pdf.drawCentredString(PAGE_W / 2.0, note_y, line)
+            note_y -= 12
 
     pdf.save()
     inv.pdf_path = pdf_path
@@ -3084,6 +3190,7 @@ def _render_simple_pdf(
         due_days = int(getattr(owner, "payment_due_days", 30) or 30) if owner else 30
         terms_text = f"Please pay within {max(0, due_days)} days using the link in your invoice email."
     pdf.drawString(M, M + 0.05 * inch, _wrap_text(terms_text, "Helvetica", 10, 5.4 * inch)[0])
+    _draw_payment_methods_footer(pdf, owner, PAGE_W - M - (2.85 * inch), M + 0.02 * inch, 2.85 * inch)
 
     pdf.save()
     inv.pdf_path = pdf_path
@@ -3432,6 +3539,15 @@ def _render_blueprint_pdf(
     note_text = (inv.notes or "Thank you for your business.").strip()
     note_line = _wrap_text(note_text, "Helvetica", 9, right_w - 24)[0]
     pdf.drawString(right_x0 + 10, notes_y - 31, note_line)
+    _draw_payment_methods_footer(
+        pdf,
+        owner,
+        M + 10,
+        M + 1.05 * inch,
+        rail_w - 20,
+        title_color=colors.white,
+        text_color=colors.HexColor("#cbd5e1"),
+    )
 
     pdf.save()
     inv.pdf_path = pdf_path
@@ -3724,8 +3840,9 @@ def _render_luxe_pdf(
     total = float(total_with_fees or 0.0)
     due = float(due_with_fees or 0.0)
 
+    payment_methods_h = _payment_methods_footer_height(owner, table_w)
     notes_h = 0.56 * inch
-    notes_bottom = M + 0.16 * inch
+    notes_bottom = M + 0.16 * inch + (payment_methods_h if payment_methods_h else 0)
     notes_top = notes_bottom + notes_h
     fy = max(notes_top + 58, y2 - 4)
     pdf.setFillColor(navy)
@@ -3756,6 +3873,7 @@ def _render_luxe_pdf(
     pdf.setFillColor(ink)
     pdf.setFont("Helvetica", 9)
     pdf.drawString(M + 10, notes_top - 30, note_line)
+    _draw_payment_methods_footer(pdf, owner, M, M + 0.02 * inch, table_w)
 
     pdf.save()
     inv.pdf_path = pdf_path
@@ -4577,7 +4695,8 @@ def generate_and_store_pdf(
 
     footer_y = 0.55 * inch
     footer_clearance = 0.20 * inch
-    page_bottom_limit = footer_y + footer_clearance
+    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * M))
+    page_bottom_limit = footer_y + footer_clearance + payment_methods_h
 
     needed_text_h = 0
     for ln in all_note_lines:
@@ -4687,12 +4806,13 @@ def generate_and_store_pdf(
     # Continuation pages for notes
     # -----------------------------
     def footer():
+        _draw_payment_methods_footer(pdf, owner, M, footer_y, PAGE_W - (2 * M))
         pdf.setFont("Helvetica-Oblique", 9)
         pdf.setFillColor(colors.grey)
         if is_estimate:
             pdf.drawString(M, footer_y, "Total is an estimated cost of service. Actual amount may differ.")
         else:
-            pdf.drawString(M, footer_y, "Thank you for your business.")
+            pdf.drawRightString(PAGE_W - M, footer_y, "Thank you for your business.")
         pdf.setFillColorRGB(0, 0, 0)
 
     if show_notes and remaining_lines:

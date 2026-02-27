@@ -677,6 +677,48 @@
         </div>
       </section>
 
+      <section class="settings-card span-2" id="section-payment-methods">
+        <div class="settings-card-head">
+          <h5>Payment Methods</h5>
+        </div>
+        <div class="settings-help">Selected methods appear at the bottom of invoice and estimate PDFs. Leave everything unchecked to hide this section.</div>
+        <div class="row g-3">
+          {% for pm in payment_method_options %}
+            {% set pm_state = payment_methods_selected.get(pm.key, {}) %}
+            <div class="col-12 col-lg-6">
+              <div class="border rounded p-3 bg-white h-100">
+                <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
+                  <div class="form-check mb-0">
+                    <input
+                      class="form-check-input payment-method-toggle"
+                      type="checkbox"
+                      id="pm_{{ pm.key }}_enabled"
+                      name="pm_{{ pm.key }}_enabled"
+                      value="1"
+                      data-payment-method="{{ pm.key }}"
+                      {% if pm_state %}checked{% endif %}
+                    >
+                    <label class="form-check-label fw-semibold" for="pm_{{ pm.key }}_enabled">{{ pm.label }}</label>
+                  </div>
+                  <span class="badge text-bg-light border mono">{{ pm.badge }}</span>
+                </div>
+                <div class="small-muted mb-2">Shown as small text at the bottom of the PDF.</div>
+                <label class="form-label compact-label">{{ pm.detail_label or 'Details (optional)' }}</label>
+                <input
+                  type="text"
+                  class="form-control payment-method-detail"
+                  id="pm_{{ pm.key }}_detail"
+                  name="pm_{{ pm.key }}_detail"
+                  value="{{ pm_state.detail or '' }}"
+                  placeholder="{{ pm.placeholder or 'Optional details' }}"
+                  data-payment-method="{{ pm.key }}"
+                >
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+
       <section class="settings-card" id="section-scheduler">
         <div class="settings-card-head">
           <h5>Scheduler Email Summaries</h5>
@@ -863,6 +905,7 @@
   const lateFeeModeSelect = document.getElementById("lateFeeMode");
   const lateFeeFixedWrap = document.getElementById("lateFeeFixedWrap");
   const lateFeePercentWrap = document.getElementById("lateFeePercentWrap");
+  const paymentMethodToggles = Array.from(document.querySelectorAll(".payment-method-toggle"));
   function toggleCustomCard() {
     if (!templateSelect || !customCard) return;
     const selectedValue = (templateSelect.value || "").toLowerCase();
@@ -895,6 +938,14 @@
     lateFeeFixedWrap.style.display = (mode === "fixed") ? "" : "none";
     lateFeePercentWrap.style.display = (mode === "percent") ? "" : "none";
   }
+  function syncPaymentMethodInputs() {
+    paymentMethodToggles.forEach((toggle) => {
+      const key = toggle.dataset.paymentMethod;
+      const input = document.querySelector(`.payment-method-detail[data-payment-method="${key}"]`);
+      if (!input) return;
+      input.disabled = !toggle.checked;
+    });
+  }
   if (templateSelect) {
     templateSelect.addEventListener("change", toggleCustomCard);
     toggleCustomCard();
@@ -918,6 +969,12 @@
   if (lateFeeModeSelect) {
     lateFeeModeSelect.addEventListener("change", toggleLateFeeModeFields);
     toggleLateFeeModeFields();
+  }
+  if (paymentMethodToggles.length) {
+    paymentMethodToggles.forEach((toggle) => {
+      toggle.addEventListener("change", syncPaymentMethodInputs);
+    });
+    syncPaymentMethodInputs();
   }
 
   function getInput(name) {
@@ -963,6 +1020,11 @@
     params.set("show_business_phone", checkboxVal("show_business_phone", true) ? "1" : "0");
     params.set("show_business_address", checkboxVal("show_business_address", true) ? "1" : "0");
     params.set("show_business_email", checkboxVal("show_business_email", true) ? "1" : "0");
+    paymentMethodToggles.forEach((toggle) => {
+      const key = toggle.dataset.paymentMethod;
+      params.set(`pm_${key}_enabled`, toggle.checked ? "1" : "0");
+      params.set(`pm_${key}_detail`, inputVal(`pm_${key}_detail`));
+    });
     params.set("invoice_builder_enabled", checkboxVal("invoice_builder_enabled", false) ? "1" : "0");
     params.set("invoice_builder_accent_color", inputVal("invoice_builder_accent_color", "#0f172a"));
     params.set("invoice_builder_header_style", inputVal("invoice_builder_header_style", "classic"));

@@ -95,6 +95,7 @@ class User(Base):
     show_business_phone: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     show_business_address: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     show_business_email: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    payment_methods_json: Mapped[Optional[str]] = mapped_column(String(4000), nullable=True)
 
     # Stripe billing fields
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

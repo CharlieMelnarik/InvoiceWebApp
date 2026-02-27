@@ -203,6 +203,78 @@ def _invoice_import_ai_enabled() -> bool:
     return bool((os.getenv("OPENAI_API_KEY") or "").strip())
 
 
+PAYMENT_METHOD_OPTIONS = [
+    {"key": "cash", "label": "Cash", "badge": "CASH", "placeholder": "", "detail_label": ""},
+    {"key": "check", "label": "Check", "badge": "CHECK", "placeholder": "", "detail_label": ""},
+    {"key": "card", "label": "Credit / Debit Card", "badge": "CARD", "placeholder": "", "detail_label": ""},
+    {"key": "apple_pay", "label": "Apple Pay", "badge": "APPLE", "placeholder": "", "detail_label": ""},
+    {"key": "google_pay", "label": "Google Pay", "badge": "GPAY", "placeholder": "", "detail_label": ""},
+    {"key": "venmo", "label": "Venmo", "badge": "VENMO", "placeholder": "@your-venmo", "detail_label": "Handle"},
+    {"key": "paypal", "label": "PayPal", "badge": "PAYPAL", "placeholder": "paypal.me/yourname", "detail_label": "Link / Username"},
+    {"key": "cash_app", "label": "Cash App", "badge": "CASHAPP", "placeholder": "$yourcashtag", "detail_label": "Cashtag"},
+    {"key": "zelle", "label": "Zelle", "badge": "ZELLE", "placeholder": "phone or email", "detail_label": "Phone / Email"},
+    {"key": "ach", "label": "ACH / Bank Transfer", "badge": "ACH", "placeholder": "Routing and account details", "detail_label": "Details"},
+]
+
+
+def _payment_method_map() -> dict[str, dict]:
+    return {row["key"]: row for row in PAYMENT_METHOD_OPTIONS}
+
+
+def _payment_methods_from_source(source) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    method_map = _payment_method_map()
+    for row in PAYMENT_METHOD_OPTIONS:
+        key = row["key"]
+        enabled = (source.get(f"pm_{key}_enabled") or "").strip().lower()
+        if enabled not in ("1", "true", "yes", "on"):
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        detail = (source.get(f"pm_{key}_detail") or "").strip()
+        out.append(
+            {
+                "key": key,
+                "label": row["label"],
+                "badge": row["badge"],
+                "detail": detail,
+            }
+        )
+    return out
+
+
+def _payment_methods_json_from_source(source) -> str | None:
+    rows = _payment_methods_from_source(source)
+    if not rows:
+        return None
+    return json.dumps(rows, separators=(",", ":"))
+
+
+def _payment_methods_selected_map(raw_json: str | None) -> dict[str, dict[str, str]]:
+    if not raw_json:
+        return {}
+    try:
+        rows = json.loads(raw_json)
+    except Exception:
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    method_map = _payment_method_map()
+    if not isinstance(rows, list):
+        return {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = (row.get("key") or "").strip()
+        if not key or key not in method_map:
+            continue
+        out[key] = {
+            "detail": (row.get("detail") or "").strip(),
+        }
+    return out
+
+
 def _process_logo_upload_to_png_bytes(file_storage) -> bytes:
     """
     Resize/compress uploaded logo for DB storage.
@@ -2686,6 +2758,8 @@ def _migrate_user_profile_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN show_business_address BOOLEAN")
     if not _column_exists(engine, "users", "show_business_email"):
         stmts.append("ALTER TABLE users ADD COLUMN show_business_email BOOLEAN")
+    if not _column_exists(engine, "users", "payment_methods_json"):
+        stmts.append("ALTER TABLE users ADD COLUMN payment_methods_json VARCHAR(4000)")
 
     if stmts:
         with engine.begin() as conn:
@@ -4926,6 +5000,7 @@ def create_app():
                 owner_pro_enabled = _has_pro_features(owner)
                 visible_pdf_templates = _pdf_templates_for_user(owner)
                 selected_pdf_template = _pdf_template_for_user(owner, getattr(u, "pdf_template", None))
+                payment_methods_selected = _payment_methods_selected_map(getattr(u, "payment_methods_json", None))
                 if (not is_employee) and owner_pro_enabled:
                     employees = (
                         s.query(User)
@@ -4947,6 +5022,8 @@ def create_app():
                     pdf_templates=visible_pdf_templates,
                     selected_pdf_template=selected_pdf_template,
                     docs_for_preview=docs_for_preview,
+                    payment_method_options=PAYMENT_METHOD_OPTIONS,
+                    payment_methods_selected=payment_methods_selected,
                 )
 
             if request.method == "POST":
@@ -5980,6 +6057,7 @@ def create_app():
                 u.show_business_phone = (request.form.get("show_business_phone") == "1")
                 u.show_business_address = (request.form.get("show_business_address") == "1")
                 u.show_business_email = (request.form.get("show_business_email") == "1")
+                u.payment_methods_json = _payment_methods_json_from_source(request.form)
                 u.address = _format_user_address_legacy(
                     u.address_line1,
                     u.address_line2,
@@ -6128,6 +6206,7 @@ def create_app():
             u.show_business_phone = _arg_bool("show_business_phone", bool(getattr(u, "show_business_phone", True)))
             u.show_business_address = _arg_bool("show_business_address", bool(getattr(u, "show_business_address", True)))
             u.show_business_email = _arg_bool("show_business_email", bool(getattr(u, "show_business_email", True)))
+            u.payment_methods_json = _payment_methods_json_from_source(request.args)
 
             preview_no = f"PV{uid}{uuid.uuid4().hex[:18]}".upper()
             preview_display_no = f"{_user_local_now(u).strftime('%Y')}PREVIEW"
@@ -6373,7 +6452,7 @@ def create_app():
                 "payment_fee_percent", "payment_fee_fixed", "stripe_fee_percent", "stripe_fee_fixed",
                 "business_name", "phone", "address", "address_line1", "address_line2", "city", "state",
                 "postal_code", "show_business_name", "show_business_phone", "show_business_address",
-                "show_business_email", "subscription_status", "subscription_tier", "trial_ends_at",
+                "show_business_email", "payment_methods_json", "subscription_status", "subscription_tier", "trial_ends_at",
                 "current_period_end", "schedule_summary_frequency", "schedule_summary_time",
                 "schedule_summary_last_sent", "schedule_summary_tz_offset_minutes",
                 "payment_reminders_enabled", "payment_due_days", "payment_reminder_before_enabled",
