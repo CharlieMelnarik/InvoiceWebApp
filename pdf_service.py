@@ -1611,7 +1611,7 @@ def _render_modern_pdf(
 
     footer_y = 0.55 * inch
     footer_clearance = 0.20 * inch
-    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * M))
+    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * M)) if not is_estimate else 0.0
     page_bottom_limit = footer_y + footer_clearance + payment_methods_h
 
     needed_text_h = 0
@@ -1707,7 +1707,8 @@ def _render_modern_pdf(
         right_text(sum_x + sum_w - 12, (notes_y_top - sum_h) - 26, f"AMOUNT DUE: {_money(price_owed)}", "Helvetica-Bold", 12, brand_dark)
 
     def footer():
-        _draw_payment_methods_footer(pdf, owner, M, footer_y, PAGE_W - (2 * M))
+        if not is_estimate:
+            _draw_payment_methods_footer(pdf, owner, M, footer_y, PAGE_W - (2 * M))
         pdf.setFont("Helvetica-Oblique", 9)
         pdf.setFillColor(brand_muted)
         if is_estimate:
@@ -2177,7 +2178,7 @@ def _render_split_panel_pdf(
 
     footer_y = 0.55 * inch
     footer_clearance = 0.2 * inch
-    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * content_x))
+    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * content_x)) if not is_estimate else 0.0
     page_bottom_limit = footer_y + footer_clearance + payment_methods_h
 
     needed_text_h = 0
@@ -2217,7 +2218,8 @@ def _render_split_panel_pdf(
         remaining_lines = all_note_lines[lines_fit:]
 
     def footer():
-        _draw_payment_methods_footer(pdf, owner, content_x, footer_y, PAGE_W - content_x - M)
+        if not is_estimate:
+            _draw_payment_methods_footer(pdf, owner, content_x, footer_y, PAGE_W - content_x - M)
         pdf.setFont("Helvetica-Oblique", 9)
         pdf.setFillColor(colors.HexColor("#94a3b8"))
         if is_estimate:
@@ -2707,7 +2709,8 @@ def _render_strip_pdf(
         label_right_value(sum_x + 10, right_edge, y, "Amount Due:", _money(price_owed))
 
     # Footer
-    _draw_payment_methods_footer(pdf, owner, M, 0.55 * inch, PAGE_W - (2 * M))
+    if not is_estimate:
+        _draw_payment_methods_footer(pdf, owner, M, 0.55 * inch, PAGE_W - (2 * M))
     pdf.setFont("Helvetica-Oblique", 9)
     pdf.setFillColor(muted)
     if is_estimate:
@@ -2881,12 +2884,13 @@ def _render_basic_pdf(
     right_text(table_x + table_w - 8, total_row_y - 4, _money(total_with_fees), "Helvetica-Bold", 12)
 
     foot_y = M + 18
-    _draw_payment_methods_footer(pdf, owner, M, foot_y, PAGE_W - (2 * M))
+    if not is_estimate:
+        _draw_payment_methods_footer(pdf, owner, M, foot_y, PAGE_W - (2 * M))
     notes_text = (inv.notes or "").strip()
     if notes_text:
         pdf.setFont("Helvetica", 8)
         wrapped_notes = _wrap_text(notes_text, "Helvetica", 8, PAGE_W - (2 * M) - 40)[:3]
-        note_y = foot_y + 14 + _payment_methods_footer_height(owner, PAGE_W - (2 * M))
+        note_y = foot_y + 14 + (_payment_methods_footer_height(owner, PAGE_W - (2 * M)) if not is_estimate else 0.0)
         for line in wrapped_notes:
             pdf.drawCentredString(PAGE_W / 2.0, note_y, line)
             note_y -= 12
@@ -3190,7 +3194,8 @@ def _render_simple_pdf(
         due_days = int(getattr(owner, "payment_due_days", 30) or 30) if owner else 30
         terms_text = f"Please pay within {max(0, due_days)} days using the link in your invoice email."
     pdf.drawString(M, M + 0.05 * inch, _wrap_text(terms_text, "Helvetica", 10, 5.4 * inch)[0])
-    _draw_payment_methods_footer(pdf, owner, PAGE_W - M - (2.85 * inch), M + 0.02 * inch, 2.85 * inch)
+    if not is_estimate:
+        _draw_payment_methods_footer(pdf, owner, PAGE_W - M - (2.85 * inch), M + 0.02 * inch, 2.85 * inch)
 
     pdf.save()
     inv.pdf_path = pdf_path
@@ -3539,15 +3544,16 @@ def _render_blueprint_pdf(
     note_text = (inv.notes or "Thank you for your business.").strip()
     note_line = _wrap_text(note_text, "Helvetica", 9, right_w - 24)[0]
     pdf.drawString(right_x0 + 10, notes_y - 31, note_line)
-    _draw_payment_methods_footer(
-        pdf,
-        owner,
-        M + 10,
-        M + 1.05 * inch,
-        rail_w - 20,
-        title_color=colors.white,
-        text_color=colors.HexColor("#cbd5e1"),
-    )
+    if not is_estimate:
+        _draw_payment_methods_footer(
+            pdf,
+            owner,
+            M + 10,
+            M + 1.05 * inch,
+            rail_w - 20,
+            title_color=colors.white,
+            text_color=colors.HexColor("#cbd5e1"),
+        )
 
     pdf.save()
     inv.pdf_path = pdf_path
@@ -3840,7 +3846,7 @@ def _render_luxe_pdf(
     total = float(total_with_fees or 0.0)
     due = float(due_with_fees or 0.0)
 
-    payment_methods_h = _payment_methods_footer_height(owner, table_w)
+    payment_methods_h = _payment_methods_footer_height(owner, table_w) if not is_estimate else 0.0
     notes_h = 0.56 * inch
     notes_bottom = M + 0.16 * inch + (payment_methods_h if payment_methods_h else 0)
     notes_top = notes_bottom + notes_h
@@ -3873,7 +3879,8 @@ def _render_luxe_pdf(
     pdf.setFillColor(ink)
     pdf.setFont("Helvetica", 9)
     pdf.drawString(M + 10, notes_top - 30, note_line)
-    _draw_payment_methods_footer(pdf, owner, M, M + 0.02 * inch, table_w)
+    if not is_estimate:
+        _draw_payment_methods_footer(pdf, owner, M, M + 0.02 * inch, table_w)
 
     pdf.save()
     inv.pdf_path = pdf_path
@@ -4695,7 +4702,7 @@ def generate_and_store_pdf(
 
     footer_y = 0.55 * inch
     footer_clearance = 0.20 * inch
-    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * M))
+    payment_methods_h = _payment_methods_footer_height(owner, PAGE_W - (2 * M)) if not is_estimate else 0.0
     page_bottom_limit = footer_y + footer_clearance + payment_methods_h
 
     needed_text_h = 0
@@ -4806,7 +4813,8 @@ def generate_and_store_pdf(
     # Continuation pages for notes
     # -----------------------------
     def footer():
-        _draw_payment_methods_footer(pdf, owner, M, footer_y, PAGE_W - (2 * M))
+        if not is_estimate:
+            _draw_payment_methods_footer(pdf, owner, M, footer_y, PAGE_W - (2 * M))
         pdf.setFont("Helvetica-Oblique", 9)
         pdf.setFillColor(colors.grey)
         if is_estimate:
