@@ -1,7 +1,39 @@
 {% extends "base.html" %}
 {% set title = "Financial Summary" %}
+{% macro metric_label(text, help_text) -%}
+  <div class="small-muted d-inline-flex align-items-center gap-1">
+    <span>{{ text }}</span>
+    <button
+      type="button"
+      class="btn btn-link p-0 text-decoration-none metric-help-icon"
+      data-bs-toggle="tooltip"
+      data-bs-placement="top"
+      title="{{ help_text }}"
+      aria-label="How {{ text }} is calculated"
+    >i</button>
+  </div>
+{%- endmacro %}
 
 {% block content %}
+<style>
+  .metric-help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 0.95rem;
+    height: 0.95rem;
+    border: 1px solid #94a3b8;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #64748b !important;
+    line-height: 1;
+  }
+  .metric-help-icon:hover {
+    color: #334155 !important;
+    border-color: #64748b;
+  }
+</style>
 <div class="page-header">
   <div>
     <h1 class="h3 fw-bold mb-1">Financial Summary</h1>
@@ -43,53 +75,51 @@
   <div class="card-body">
     <div class="row g-2">
       <div class="col-12 col-md-6">
-        <div class="small-muted">Invoices included</div>
+        {{ metric_label("Invoices included", "Count of invoices in the selected month/year range.") }}
         <div class="h5 fw-bold mb-0">{{ count }}</div>
       </div>
       <div class="col-12 col-md-6">
-        <div class="small-muted">Total Invoice Amount (expenses + supplies + income)</div>
+        {{ metric_label("Total Invoice Amount (expenses + supplies + income)", "Sum of invoice totals in the selected range before manual income and business expense entries.") }}
         <div class="h5 fw-bold mb-0">{{ money(total_invoice_amount) }}</div>
       </div>
 
       <div class="col-12"><hr class="my-2"></div>
 
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Invoiced Profit</div>
+        {{ metric_label("Total Invoiced Profit", "Sum of labor income from all invoices in the selected date range.") }}
         <div class="fw-semibold">{{ money(total_labor) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">Parts Markup Profit</div>
+        {{ metric_label("Parts Markup Profit", "Sum of markup earned on parts across invoices in the selected range.") }}
         <div class="fw-semibold">{{ money(total_parts_markup_profit) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Supplies</div>
+        {{ metric_label("Total Supplies", "Sum of shop supplies/additional fee lines on invoices in the selected range.") }}
         <div class="fw-semibold">{{ money(total_supplies) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Taxes Collected</div>
+        {{ metric_label("Total Taxes Collected", "Sum of invoice tax amounts in the selected range.") }}
         <div class="fw-semibold">{{ money(total_tax_collected) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">Total Invoiced Expenses</div>
+        {{ metric_label("Total Invoiced Expenses", "Calculated as Total Invoice Amount minus Total Invoiced Profit.") }}
         <div class="fw-semibold">{{ money(total_invoice_amount - total_labor) }}</div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="small-muted">
-          {% if pro_features_enabled %}
-            Total Paid Invoices (incl. Late Fees)
-          {% else %}
-            Total Paid Invoices
-          {% endif %}
-        </div>
+        {% if pro_features_enabled %}
+          {{ metric_label("Total Paid Invoices (incl. Late Fees)", "Sum of payments received on invoices in the selected range, including paid late fees.") }}
+        {% else %}
+          {{ metric_label("Total Paid Invoices", "Sum of payments received on invoices in the selected range.") }}
+        {% endif %}
         <div class="fw-semibold">{{ money(total_paid_invoices_amount) }}</div>
       </div>
       {% if pro_features_enabled %}
         <div class="col-6 col-md-3">
-          <div class="small-muted">Late Fee Income (Paid Invoices)</div>
+          {{ metric_label("Late Fee Income (Paid Invoices)", "Total late fees paid by clients on invoices in the selected range.") }}
           <div class="fw-semibold">{{ money(total_late_fee_income) }}</div>
         </div>
         <div class="col-6 col-md-3">
-          <div class="small-muted">Stripe Credit Card Processing Fee (Client-Paid)</div>
+          {{ metric_label("Stripe Credit Card Processing Fee (Client-Paid)", "Sum of customer-paid processing fees on online card payments. This is shown for reference only.") }}
           <div class="fw-semibold">{{ money(total_stripe_processing_fees) }}</div>
           <div class="small-muted mt-1">
             These fees are not collected by you, they go straight to Stripe. This is just for visual reference.
@@ -100,39 +130,35 @@
       <div class="col-12"><hr class="my-2"></div>
 
       <div class="col-6 col-md-6">
-        <div class="small-muted">Total Outstanding (Unpaid)</div>
+        {{ metric_label("Total Outstanding (Unpaid)", "Sum of remaining balances on unpaid invoices in the selected range.") }}
         <div class="fw-semibold text-warning">{{ money(total_outstanding_unpaid) }}</div>
       </div>
       <div class="col-6 col-md-6">
-        <div class="small-muted">Unpaid invoices</div>
+        {{ metric_label("Unpaid invoices", "Count of invoices in the selected range that still have an outstanding balance.") }}
         <div class="fw-semibold">{{ unpaid_count }}</div>
       </div>
       <div class="col-6 col-md-6">
-        <div class="small-muted">Total Expenses</div>
-        <div class="fw-semibold">{{ money(total_parts + total_supplies) }}</div>
-      </div>
-      <div class="col-6 col-md-6">
-        <div class="small-muted">Total Paid Labor Income</div>
+        {{ metric_label("Total Paid Labor Income", "Labor income received from paid invoices in the selected range.") }}
         <div class="fw-bold">{{ money(profit_paid_labor_only) }}</div>
       </div>
 
       <div class="col-6 col-md-6">
-        <div class="small-muted">Total Business Expenses</div>
+        {{ metric_label("Total Business Expenses", "Sum of manual business expense entries in the selected range.") }}
         <div class="fw-semibold">{{ money(total_business_expenses) }}</div>
         <a class="btn btn-sm btn-outline-primary mt-2" href="{{ url_for('profit_loss', year=year, month=month) }}">
           Show Breakdown
         </a>
       </div>
       <div class="col-6 col-md-6">
-        <div class="small-muted">Other Income (Manual)</div>
+        {{ metric_label("Other Income (Manual)", "Sum of manual entries saved as Other Income in the selected range.") }}
         <div class="fw-semibold text-success">{{ money(total_other_income) }}</div>
       </div>
       <div class="col-6 col-md-6">
-        <div class="small-muted">Interest Income (Manual)</div>
+        {{ metric_label("Interest Income (Manual)", "Sum of manual entries saved as Interest Income in the selected range.") }}
         <div class="fw-semibold text-success">{{ money(total_interest_income) }}</div>
       </div>
       <div class="col-6 col-md-6">
-        <div class="small-muted">Total Income (Paid Invoices + Other Income + Interest Income)</div>
+        {{ metric_label("Total Income (Paid Invoices + Other Income + Interest Income)", "Calculated as Total Paid Invoices plus Other Income plus Interest Income.") }}
         <div class="fw-bold text-success">{{ money(total_income_with_manual) }}</div>
       </div>
 
@@ -214,6 +240,21 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  (function () {
+    function initMetricTooltips() {
+      if (!window.bootstrap || !window.bootstrap.Tooltip) return;
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((el) => {
+        new bootstrap.Tooltip(el, { trigger: "hover focus click" });
+      });
+    }
+    if (document.readyState === "complete") {
+      initMetricTooltips();
+    } else {
+      window.addEventListener("load", initMetricTooltips, { once: true });
+    }
+  })();
+</script>
 <script>
   (function () {
     const chartData = {{ chart_data|tojson }};
