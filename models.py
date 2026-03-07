@@ -101,6 +101,8 @@ class User(Base):
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     stripe_connect_account_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # "standard" (new OAuth flow) or "express" (legacy existing accounts)
+    stripe_connect_account_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     stripe_connect_charges_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     stripe_connect_payouts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     stripe_connect_details_submitted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

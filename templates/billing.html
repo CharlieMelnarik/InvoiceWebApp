@@ -210,14 +210,19 @@
     <div class="card-body">
       <h5 class="mb-2">Client Payments (Stripe Connect)</h5>
       <p class="small-muted mb-3">
-        Create a Stripe account here to get paid by your clients in the client portal.
-        Payments go directly to your Stripe connect account.
+        Connect your existing Stripe account to get paid by your clients in the client portal.
+        Payments go directly to your connected Stripe account.
       </p>
 
       {% if connect_account_id %}
         <div class="mb-3">
           <div class="small-muted">Connected Account</div>
           <div class="mono">{{ connect_account_id }}</div>
+          {% if connect_account_type == "standard" %}
+            <span class="badge text-bg-primary mt-2">Connected (Standard)</span>
+          {% elif connect_account_type == "express" %}
+            <span class="badge text-bg-secondary mt-2">Connected (Express legacy)</span>
+          {% endif %}
         </div>
 
         <div class="d-flex flex-wrap gap-2 mb-2">
@@ -237,19 +242,21 @@
         {% endif %}
 
         <div class="d-flex flex-wrap gap-2">
-          <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline js-stripe-loading-form">
-            <button class="btn btn-outline-primary">
-              {% if connect_ready %}Update Connect setup{% else %}Finish Connect setup{% endif %}
-            </button>
-          </form>
+          {% if connect_account_type == "express" %}
+            <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline js-stripe-loading-form">
+              <button class="btn btn-outline-primary">
+                {% if connect_ready %}Update Express setup{% else %}Finish Express setup{% endif %}
+              </button>
+            </form>
+          {% else %}
+            <a href="{{ url_for('stripe_connect_start') }}" class="btn btn-outline-primary">Reconnect Stripe Account</a>
+          {% endif %}
           <form method="post" action="{{ url_for('billing_connect_dashboard') }}" class="d-inline js-stripe-loading-form">
             <button class="btn btn-outline-secondary">Open Stripe Dashboard</button>
           </form>
         </div>
       {% else %}
-        <form method="post" action="{{ url_for('billing_connect_start') }}" class="d-inline js-stripe-loading-form">
-          <button class="btn btn-primary">Connect Stripe Account</button>
-        </form>
+        <a href="{{ url_for('stripe_connect_start') }}" class="btn btn-primary">Connect your existing Stripe account</a>
         {% if connect_message %}
           <div class="small-muted mt-2">{{ connect_message }}</div>
         {% endif %}

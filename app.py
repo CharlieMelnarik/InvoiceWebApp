@@ -1251,6 +1251,27 @@ def read_marketing_unsubscribe_token(token: str, max_age_seconds: int = 60 * 60 
         return None
 
 
+def _stripe_connect_oauth_state_serializer():
+    state_secret = (
+        (current_app.config.get("STRIPE_OAUTH_STATE_SECRET") or "").strip()
+        or (current_app.config.get("SECRET_KEY") or "")
+    )
+    salt = current_app.config.get("STRIPE_CONNECT_OAUTH_SALT", "stripe-connect-oauth")
+    return URLSafeTimedSerializer(state_secret, salt=salt)
+
+
+def make_stripe_connect_oauth_state(user_id: int) -> str:
+    return _stripe_connect_oauth_state_serializer().dumps({"uid": int(user_id)})
+
+
+def read_stripe_connect_oauth_state(token: str, max_age_seconds: int = 15 * 60) -> int | None:
+    try:
+        data = _stripe_connect_oauth_state_serializer().loads(token, max_age=max_age_seconds)
+        return int(data.get("uid"))
+    except (SignatureExpired, BadSignature, TypeError, ValueError):
+        return None
+
+
 def _normalize_phone(phone: str | None) -> str:
     return (phone or "").strip()
 
@@ -1679,11 +1700,30 @@ def _stripe_err_msg(exc: Exception) -> str:
     return text_msg or "Stripe request failed."
 
 
+def _normalize_connect_account_type(raw: str | None) -> str:
+    t = (raw or "").strip().lower()
+    if t in ("standard", "express"):
+        return t
+    return ""
+
+
+def _connect_account_type_for_user(user: User | None) -> str:
+    if not user:
+        return ""
+    saved = _normalize_connect_account_type(getattr(user, "stripe_connect_account_type", None))
+    if saved:
+        return saved
+    # Legacy rows with an existing account id are Express by default.
+    acct_id = (getattr(user, "stripe_connect_account_id", None) or "").strip()
+    return "express" if acct_id else ""
+
+
 def _refresh_connect_status_for_user(session, user: User | None) -> tuple[bool, str]:
     if not user:
         return False, "User not found."
     acct_id = (getattr(user, "stripe_connect_account_id", None) or "").strip()
     if not acct_id:
+        user.stripe_connect_account_type = None
         user.stripe_connect_charges_enabled = False
         user.stripe_connect_payouts_enabled = False
         user.stripe_connect_details_submitted = False
@@ -1699,6 +1739,7 @@ def _refresh_connect_status_for_user(session, user: User | None) -> tuple[bool, 
         text_msg = str(exc or "")
         if "No such account" in text_msg:
             user.stripe_connect_account_id = None
+            user.stripe_connect_account_type = None
             user.stripe_connect_charges_enabled = False
             user.stripe_connect_payouts_enabled = False
             user.stripe_connect_details_submitted = False
@@ -1707,6 +1748,10 @@ def _refresh_connect_status_for_user(session, user: User | None) -> tuple[bool, 
             return False, "Connected Stripe account was not found. Please reconnect."
         return False, _stripe_err_msg(exc)
 
+    acct_type = _normalize_connect_account_type(acct.get("type"))
+    if not acct_type:
+        acct_type = _connect_account_type_for_user(user)
+    user.stripe_connect_account_type = acct_type or None
     user.stripe_connect_charges_enabled = bool(acct.get("charges_enabled"))
     user.stripe_connect_payouts_enabled = bool(acct.get("payouts_enabled"))
     user.stripe_connect_details_submitted = bool(acct.get("details_submitted"))
@@ -3344,6 +3389,8 @@ def _migrate_user_billing_fields(engine):
         stmts.append("ALTER TABLE users ADD COLUMN trial_used_pro_at TIMESTAMP NULL")
     if not _column_exists(engine, "users", "stripe_connect_account_id"):
         stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_account_id VARCHAR(255)")
+    if not _column_exists(engine, "users", "stripe_connect_account_type"):
+        stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_account_type VARCHAR(20)")
     if not _column_exists(engine, "users", "stripe_connect_charges_enabled"):
         stmts.append("ALTER TABLE users ADD COLUMN stripe_connect_charges_enabled BOOLEAN")
     if not _column_exists(engine, "users", "stripe_connect_payouts_enabled"):
@@ -3363,6 +3410,12 @@ def _migrate_user_billing_fields(engine):
             conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_customer_idx ON users (stripe_customer_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_sub_idx ON users (stripe_subscription_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS users_stripe_connect_acct_idx ON users (stripe_connect_account_id)"))
+            conn.execute(text(
+                "UPDATE users SET stripe_connect_account_type = 'express' "
+                "WHERE stripe_connect_account_id IS NOT NULL "
+                "AND TRIM(stripe_connect_account_id) <> '' "
+                "AND (stripe_connect_account_type IS NULL OR TRIM(stripe_connect_account_type) = '')"
+            ))
             conn.execute(text(
                 "UPDATE users SET stripe_connect_charges_enabled = FALSE WHERE stripe_connect_charges_enabled IS NULL"
             ))
@@ -4234,6 +4287,10 @@ def create_app():
     STRIPE_PRICE_ID_PRO = app.config.get("STRIPE_PRICE_ID_PRO") or os.getenv("STRIPE_PRICE_ID_PRO")
     STRIPE_PUBLISHABLE_KEY = app.config.get("STRIPE_PUBLISHABLE_KEY") or os.getenv("STRIPE_PUBLISHABLE_KEY")
     STRIPE_WEBHOOK_SECRET = app.config.get("STRIPE_WEBHOOK_SECRET") or os.getenv("STRIPE_WEBHOOK_SECRET")
+    STRIPE_CONNECT_CLIENT_ID = app.config.get("STRIPE_CONNECT_CLIENT_ID") or os.getenv("STRIPE_CONNECT_CLIENT_ID")
+    STRIPE_CONNECT_REDIRECT_URI = (
+        app.config.get("STRIPE_CONNECT_REDIRECT_URI") or os.getenv("STRIPE_CONNECT_REDIRECT_URI")
+    )
     REFERRAL_MIN_ACTIVE_DAYS = int(os.getenv("REFERRAL_MIN_ACTIVE_DAYS", "0"))
     REFERRAL_MAX_CREDITS_PER_YEAR = int(os.getenv("REFERRAL_MAX_CREDITS_PER_YEAR", "12"))
     REFERRAL_CREDIT_BASIC_CENTS = int(os.getenv("REFERRAL_CREDIT_BASIC_CENTS", "999"))
@@ -4242,6 +4299,12 @@ def create_app():
     def _base_url():
         base = (current_app.config.get("APP_BASE_URL") or "").rstrip("/")
         return base or request.host_url.rstrip("/")
+
+    def _stripe_connect_redirect_uri() -> str:
+        custom = (STRIPE_CONNECT_REDIRECT_URI or "").strip()
+        if custom:
+            return custom
+        return f"{_base_url()}{url_for('stripe_oauth_callback')}"
 
     def _normalize_referral_code(raw: str | None) -> str:
         code = re.sub(r"[^A-Za-z0-9]", "", (raw or "").strip().upper())
@@ -6452,7 +6515,10 @@ def create_app():
                 "payment_fee_percent", "payment_fee_fixed", "stripe_fee_percent", "stripe_fee_fixed",
                 "business_name", "phone", "address", "address_line1", "address_line2", "city", "state",
                 "postal_code", "show_business_name", "show_business_phone", "show_business_address",
-                "show_business_email", "payment_methods_json", "subscription_status", "subscription_tier", "trial_ends_at",
+                "show_business_email", "payment_methods_json",
+                "stripe_connect_account_id", "stripe_connect_account_type", "stripe_connect_charges_enabled",
+                "stripe_connect_payouts_enabled", "stripe_connect_details_submitted", "stripe_connect_last_synced_at",
+                "subscription_status", "subscription_tier", "trial_ends_at",
                 "current_period_end", "schedule_summary_frequency", "schedule_summary_time",
                 "schedule_summary_last_sent", "schedule_summary_tz_offset_minutes",
                 "payment_reminders_enabled", "payment_due_days", "payment_reminder_before_enabled",
@@ -8005,6 +8071,7 @@ def create_app():
         connect_ok = False
         connect_message = ""
         connect_account_id = ""
+        connect_account_type = ""
         connect_charges_enabled = False
         connect_payouts_enabled = False
         connect_details_submitted = False
@@ -8033,6 +8100,7 @@ def create_app():
                 connect_ok, connect_message = _refresh_connect_status_for_user(s, u)
                 s.commit()
                 connect_account_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
+                connect_account_type = _connect_account_type_for_user(u)
                 connect_charges_enabled = bool(getattr(u, "stripe_connect_charges_enabled", False))
                 connect_payouts_enabled = bool(getattr(u, "stripe_connect_payouts_enabled", False))
                 connect_details_submitted = bool(getattr(u, "stripe_connect_details_submitted", False))
@@ -8086,6 +8154,7 @@ def create_app():
             pro_price_configured=bool(STRIPE_PRICE_ID_PRO),
             publishable_key=STRIPE_PUBLISHABLE_KEY,
             connect_account_id=connect_account_id,
+            connect_account_type=connect_account_type,
             connect_charges_enabled=connect_charges_enabled,
             connect_payouts_enabled=connect_payouts_enabled,
             connect_details_submitted=connect_details_submitted,
@@ -8571,6 +8640,103 @@ def create_app():
                 flash(f"Stripe error: {_stripe_err_msg(e)}", "error")
                 return redirect(url_for("billing"))
 
+    @app.route("/stripe/connect", methods=["GET"])
+    @login_required
+    @owner_required
+    def stripe_connect_start():
+        if not stripe.api_key:
+            abort(500)
+        if not STRIPE_CONNECT_CLIENT_ID:
+            flash("Stripe Connect is not configured (missing STRIPE_CONNECT_CLIENT_ID).", "error")
+            return redirect(url_for("billing"))
+
+        uid = _current_user_id_int()
+        with db_session() as s:
+            u = s.get(User, uid)
+            if not u:
+                abort(403)
+            if not _has_pro_features(u):
+                flash("Stripe Connect client payments are available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
+
+            state = make_stripe_connect_oauth_state(uid)
+            params = {
+                "response_type": "code",
+                "client_id": STRIPE_CONNECT_CLIENT_ID,
+                "scope": "read_write",
+                "redirect_uri": _stripe_connect_redirect_uri(),
+                "state": state,
+            }
+            email = (u.email or "").strip()
+            if email:
+                params["stripe_user[email]"] = email
+
+        url = "https://connect.stripe.com/oauth/authorize?" + urllib.parse.urlencode(params)
+        return redirect(url, code=303)
+
+    @app.route("/stripe/oauth/callback", methods=["GET"])
+    @login_required
+    @owner_required
+    def stripe_oauth_callback():
+        if not stripe.api_key:
+            abort(500)
+        if not STRIPE_CONNECT_CLIENT_ID:
+            flash("Stripe Connect is not configured (missing STRIPE_CONNECT_CLIENT_ID).", "error")
+            return redirect(url_for("billing"))
+
+        err = (request.args.get("error") or "").strip()
+        if err:
+            desc = (request.args.get("error_description") or "").strip()
+            msg = f"Stripe Connect was not completed ({err})."
+            if desc:
+                msg = f"{msg} {desc}"
+            flash(msg, "error")
+            return redirect(url_for("billing"))
+
+        state = (request.args.get("state") or "").strip()
+        code = (request.args.get("code") or "").strip()
+        if not state or not code:
+            flash("Stripe Connect callback is missing required parameters.", "error")
+            return redirect(url_for("billing"))
+
+        expected_uid = read_stripe_connect_oauth_state(state, max_age_seconds=15 * 60)
+        if expected_uid is None or expected_uid != _current_user_id_int():
+            flash("Stripe Connect state validation failed. Please try again.", "error")
+            return redirect(url_for("billing"))
+
+        try:
+            oauth_resp = stripe.OAuth.token(
+                grant_type="authorization_code",
+                code=code,
+                redirect_uri=_stripe_connect_redirect_uri(),
+            )
+        except Exception as exc:
+            flash(f"Stripe Connect error: {_stripe_err_msg(exc)}", "error")
+            return redirect(url_for("billing"))
+
+        acct_id = ((oauth_resp or {}).get("stripe_user_id") or "").strip()
+        if not acct_id:
+            flash("Stripe Connect did not return an account id. Please try again.", "error")
+            return redirect(url_for("billing"))
+
+        with db_session() as s:
+            u = s.get(User, _current_user_id_int())
+            if not u:
+                abort(403)
+            if not _has_pro_features(u):
+                flash("Stripe Connect client payments are available on the Pro plan.", "error")
+                return redirect(url_for("billing"))
+
+            u.stripe_connect_account_id = acct_id
+            u.stripe_connect_account_type = "standard"
+            u.stripe_connect_last_synced_at = datetime.utcnow()
+            s.add(u)
+            _refresh_connect_status_for_user(s, u)
+            s.commit()
+
+        flash("Stripe account connected (Standard).", "success")
+        return redirect(url_for("billing"))
+
     @app.route("/billing/connect/start", methods=["POST"])
     @login_required
     @owner_required
@@ -8590,31 +8756,10 @@ def create_app():
                 return redirect(url_for("billing"))
 
             acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
-            if not acct_id:
-                try:
-                    acct = stripe.Account.create(
-                        type="express",
-                        country="US",
-                        email=((u.email or "").strip() or None),
-                        capabilities={
-                            "card_payments": {"requested": True},
-                            "transfers": {"requested": True},
-                        },
-                        metadata={"app_user_id": str(uid)},
-                    )
-                    acct_id = (acct.get("id") or "").strip()
-                except Exception as exc:
-                    flash(f"Stripe Connect error: {_stripe_err_msg(exc)}", "error")
-                    return redirect(url_for("billing"))
-                if not acct_id:
-                    flash("Stripe Connect setup failed. Please try again.", "error")
-                    return redirect(url_for("billing"))
-                u.stripe_connect_account_id = acct_id
-                u.stripe_connect_charges_enabled = False
-                u.stripe_connect_payouts_enabled = False
-                u.stripe_connect_details_submitted = False
-                u.stripe_connect_last_synced_at = datetime.utcnow()
-                s.commit()
+            acct_type = _connect_account_type_for_user(u)
+            if not acct_id or acct_type != "express":
+                # Standard OAuth is default for all new connections.
+                return redirect(url_for("stripe_connect_start"))
 
         try:
             account_link = stripe.AccountLink.create(
@@ -8643,9 +8788,12 @@ def create_app():
                 flash("Stripe Connect client payments are available on the Pro plan.", "error")
                 return redirect(url_for("billing"))
             acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip() if u else ""
+            acct_type = _connect_account_type_for_user(u)
             if not acct_id:
                 flash("Connect a Stripe account first.", "error")
                 return redirect(url_for("billing"))
+            if acct_type == "standard":
+                return redirect("https://dashboard.stripe.com/", code=303)
         try:
             login_link = stripe.Account.create_login_link(acct_id)
         except Exception as exc:
