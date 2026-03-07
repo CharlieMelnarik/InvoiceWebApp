@@ -8757,9 +8757,35 @@ def create_app():
 
             acct_id = (getattr(u, "stripe_connect_account_id", None) or "").strip()
             acct_type = _connect_account_type_for_user(u)
-            if not acct_id or acct_type != "express":
-                # Standard OAuth is default for all new connections.
-                return redirect(url_for("stripe_connect_start"))
+            if acct_id and acct_type == "standard":
+                flash("This account is currently connected as Standard. Keep using it or disconnect before switching to Express.", "error")
+                return redirect(url_for("billing"))
+            if not acct_id:
+                try:
+                    acct = stripe.Account.create(
+                        type="express",
+                        country="US",
+                        email=((u.email or "").strip() or None),
+                        capabilities={
+                            "card_payments": {"requested": True},
+                            "transfers": {"requested": True},
+                        },
+                        metadata={"app_user_id": str(uid)},
+                    )
+                    acct_id = (acct.get("id") or "").strip()
+                except Exception as exc:
+                    flash(f"Stripe Connect error: {_stripe_err_msg(exc)}", "error")
+                    return redirect(url_for("billing"))
+                if not acct_id:
+                    flash("Stripe Connect setup failed. Please try again.", "error")
+                    return redirect(url_for("billing"))
+                u.stripe_connect_account_id = acct_id
+                u.stripe_connect_account_type = "express"
+                u.stripe_connect_charges_enabled = False
+                u.stripe_connect_payouts_enabled = False
+                u.stripe_connect_details_submitted = False
+                u.stripe_connect_last_synced_at = datetime.utcnow()
+                s.commit()
 
         try:
             account_link = stripe.AccountLink.create(
