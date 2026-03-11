@@ -13,6 +13,7 @@ from app import (
     _send_schedule_summary_email,
     _format_event_line,
     _run_automatic_payment_reminders,
+    _run_automatic_client_autopay,
 )
 from config import Config
 from models import Customer, ScheduleEvent, User, make_engine, make_session_factory
@@ -34,6 +35,7 @@ def main() -> None:
                 try:
                     print(f"[PAYMENT REMINDER] cron checking user={user.id}", flush=True)
                     _run_automatic_payment_reminders(s, user)
+                    _run_automatic_client_autopay(s, user)
                     s.commit()
                 except Exception as exc:
                     print(

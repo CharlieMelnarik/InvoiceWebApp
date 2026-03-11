@@ -14162,7 +14162,7 @@ def create_app():
                     payment_error = "Payment verification failed. Contact the business if you were charged."
             elif setup_state == "success" and setup_session_id and stripe.api_key:
                 try:
-                    retrieve_kwargs = {}
+                    retrieve_kwargs = {"expand": ["setup_intent.payment_method"]}
                     if owner_connect_acct:
                         retrieve_kwargs["stripe_account"] = owner_connect_acct
                     cs = stripe.checkout.Session.retrieve(setup_session_id, **retrieve_kwargs)
@@ -14171,7 +14171,11 @@ def create_app():
                     iid_meta = int((metadata.get("iid") or "0"))
                     cid_meta = int((metadata.get("cid") or "0"))
                     status = (cs.get("status") or "").lower()
-                    setup_intent_id = ((cs.get("setup_intent") or "").strip())
+                    setup_intent_raw = cs.get("setup_intent") or {}
+                    if isinstance(setup_intent_raw, dict):
+                        setup_intent_id = ((setup_intent_raw.get("id") or "").strip())
+                    else:
+                        setup_intent_id = ((setup_intent_raw or "").strip())
                     connect_customer_id = ((cs.get("customer") or "").strip())
                     if (
                         uid_meta == user_id
@@ -14182,16 +14186,31 @@ def create_app():
                         and setup_intent_id
                         and connect_customer_id
                     ):
-                        si = stripe.SetupIntent.retrieve(setup_intent_id, **retrieve_kwargs)
-                        payment_method_id = ((si.get("payment_method") or "").strip())
+                        setup_intent_obj = setup_intent_raw
+                        si = setup_intent_obj if isinstance(setup_intent_obj, dict) else stripe.SetupIntent.retrieve(setup_intent_id, **retrieve_kwargs)
+                        payment_method_obj = si.get("payment_method") or {}
+                        payment_method_id = ""
+                        if isinstance(payment_method_obj, dict):
+                            payment_method_id = ((payment_method_obj.get("id") or "").strip())
+                        else:
+                            payment_method_id = ((payment_method_obj or "").strip())
                         if payment_method_id:
-                            pm = stripe.PaymentMethod.retrieve(payment_method_id, **retrieve_kwargs)
+                            pm = payment_method_obj if isinstance(payment_method_obj, dict) and payment_method_obj.get("id") else stripe.PaymentMethod.retrieve(payment_method_id, **retrieve_kwargs)
                             customer.stripe_connect_customer_id = connect_customer_id
+                            customer.stripe_default_payment_method_id = payment_method_id
                             _sync_customer_payment_method(customer, pm, clear_error=True)
                             enable_autopay = ((metadata.get("enable_autopay") or "").strip() == "1")
                             customer.autopay_enabled = enable_autopay
                             if enable_autopay:
                                 customer.autopay_consent_at = datetime.utcnow()
+                            try:
+                                stripe.Customer.modify(
+                                    connect_customer_id,
+                                    invoice_settings={"default_payment_method": payment_method_id},
+                                    stripe_account=owner_connect_acct,
+                                )
+                            except Exception as exc:
+                                print(f"[AUTOPAY] default payment method update failed customer={customer.id}: {exc!r}", flush=True)
                             s.add(customer)
                             s.commit()
                             payment_message = (
@@ -14202,7 +14221,8 @@ def create_app():
                             payment_error = "The saved card could not be verified."
                     else:
                         payment_error = "Saved card verification failed for this client."
-                except Exception:
+                except Exception as exc:
+                    print(f"[AUTOPAY] setup save failed invoice={invoice_id}: {exc!r}", flush=True)
                     payment_error = "Saved card verification failed. Please try again."
             elif setup_state == "cancel":
                 payment_message = "Card setup canceled."
