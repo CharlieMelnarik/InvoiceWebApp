@@ -75,7 +75,7 @@
             <div class="fw-semibold mb-1">Saved Card for Automatic Recurring Payments</div>
             {% if has_saved_card %}
               <div class="small-muted mb-2">
-                Card on file: {{ saved_card_label }}{% if autopay_enabled %} · Automatic recurring payments enabled{% endif %}
+                Card on file: {{ saved_card_label }}{% if autopay_enabled %} - Automatic recurring payments enabled{% endif %}
               </div>
             {% else %}
               <div class="small-muted mb-2">
@@ -137,6 +137,11 @@
         {% if has_paid_online_receipt %}
           <div class="small-muted mb-2">
             This paid invoice PDF includes the card processing fee paid at checkout.
+          </div>
+        {% endif %}
+        {% if not can_save_card and not is_estimate %}
+          <div class="small-muted mb-2">
+            After this invoice is paid, you can return here to save a card for future automatic recurring payments.
           </div>
         {% endif %}
         {% if can_pay_online and convenience_fee and convenience_fee > 0 %}

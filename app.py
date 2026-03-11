@@ -14256,6 +14256,7 @@ def create_app():
                 and bool(stripe.api_key)
                 and owner_connect_ready
                 and owner_pro_enabled
+                and effective_amount_due <= 0.01
             )
             doc_number = inv.display_number or inv.invoice_number
             business_name = (owner.business_name if owner else "") or "InvoiceRunner"
@@ -14434,6 +14435,10 @@ def create_app():
             )
             owner_pro_enabled = _has_pro_features(owner)
             if not owner_pro_enabled or not owner_connect_acct or not owner_connect_ready or not customer:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+            due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
+            effective_amount_due = due_with_late_fee if due_with_late_fee > 0 else float(inv.amount_due() or 0.0)
+            if effective_amount_due > 0.01:
                 return redirect(url_for("shared_customer_portal", token=token), code=303)
 
             enable_autopay = request.form.get("enable_autopay") == "1"
