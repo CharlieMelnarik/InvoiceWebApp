@@ -14107,6 +14107,12 @@ def create_app():
             owner_pro_enabled = _has_pro_features(owner)
             payment_message = ""
             payment_error = ""
+            portal_notice = (request.args.get("notice") or "").strip()
+            portal_error = (request.args.get("error") or "").strip()
+            if portal_notice and not payment_message:
+                payment_message = portal_notice
+            if portal_error and not payment_error:
+                payment_error = portal_error
             paid_processing_fee = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
             paid_tip = float(getattr(inv, "paid_tip", 0.0) or 0.0)
             paid_display = round(float(inv.paid or 0.0) + paid_processing_fee + paid_tip, 2)
@@ -14444,7 +14450,7 @@ def create_app():
             if not inv:
                 return redirect(url_for("shared_document_deleted"), code=303)
             if bool(inv.is_estimate) or not getattr(inv, "customer_id", None):
-                return redirect(url_for("shared_customer_portal", token=token), code=303)
+                return redirect(url_for("shared_customer_portal", token=token, error="Card saving is only available for invoices linked to a client."), code=303)
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
             customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
             owner_connect_acct = ((owner.stripe_connect_account_id or "").strip() if owner else "")
@@ -14455,11 +14461,11 @@ def create_app():
             )
             owner_pro_enabled = _has_pro_features(owner)
             if not owner_pro_enabled or not owner_connect_acct or not owner_connect_ready or not customer:
-                return redirect(url_for("shared_customer_portal", token=token), code=303)
+                return redirect(url_for("shared_customer_portal", token=token, error="The business is not ready to save cards yet."), code=303)
             due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
             effective_amount_due = due_with_late_fee if due_with_late_fee > 0 else float(inv.amount_due() or 0.0)
             if effective_amount_due > 0.01:
-                return redirect(url_for("shared_customer_portal", token=token), code=303)
+                return redirect(url_for("shared_customer_portal", token=token, error="Please pay this invoice before saving a card for future automatic recurring payments."), code=303)
 
             enable_autopay = request.form.get("enable_autopay") == "1"
             connect_customer_id = _ensure_connect_customer_for_client(s, owner, customer)
@@ -14473,6 +14479,7 @@ def create_app():
                 cs = stripe.checkout.Session.create(
                     mode="setup",
                     customer=connect_customer_id,
+                    payment_method_types=["card"],
                     success_url=success_url,
                     cancel_url=cancel_url,
                     metadata={
@@ -14484,12 +14491,14 @@ def create_app():
                     },
                     stripe_account=owner_connect_acct,
                 )
-            except Exception:
-                return redirect(url_for("shared_customer_portal", token=token), code=303)
+            except Exception as exc:
+                error_message = _stripe_err_msg(exc)[:300] or "Stripe could not start card setup."
+                print(f"[AUTOPAY] setup session create failed invoice={invoice_id}: {exc!r}", flush=True)
+                return redirect(url_for("shared_customer_portal", token=token, error=error_message), code=303)
 
             checkout_url = (cs.get("url") or "").strip()
             if not checkout_url:
-                return redirect(url_for("shared_customer_portal", token=token), code=303)
+                return redirect(url_for("shared_customer_portal", token=token, error="Stripe did not return a card setup page."), code=303)
             return redirect(checkout_url, code=303)
 
     @app.get("/shared/deleted")
