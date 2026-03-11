@@ -2841,20 +2841,28 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
 
 def _run_automatic_client_autopay(session, owner: User | None) -> None:
     if not owner or not stripe.api_key:
+        print("[AUTOPAY] skipped (missing owner or Stripe key)", flush=True)
         return
     owner_status = (getattr(owner, "subscription_status", None) or "").strip().lower()
     owner_tier = _normalize_plan_tier(getattr(owner, "subscription_tier", None))
     if owner_status not in ("trialing", "active") or owner_tier != "pro":
+        print(
+            f"[AUTOPAY] user={(getattr(owner, 'id', None) or 'unknown')} skipped (plan/status not eligible: tier={owner_tier}, status={owner_status})",
+            flush=True,
+        )
         return
     acct_id = ((getattr(owner, "stripe_connect_account_id", None) or "").strip())
     if not acct_id:
+        print(f"[AUTOPAY] user={owner.id} skipped (no connected Stripe account)", flush=True)
         return
     if not bool(getattr(owner, "stripe_connect_charges_enabled", False)) or not bool(getattr(owner, "stripe_connect_payouts_enabled", False)):
+        print(f"[AUTOPAY] user={owner.id} skipped (Stripe connect not ready)", flush=True)
         return
 
     now_utc = datetime.utcnow()
     last_run = getattr(owner, "client_autopay_last_run_at", None)
     if last_run and (now_utc - last_run) < timedelta(minutes=30):
+        print(f"[AUTOPAY] user={owner.id} skipped (throttled; last_run={last_run.isoformat()})", flush=True)
         return
 
     invoices = (
@@ -2863,28 +2871,51 @@ def _run_automatic_client_autopay(session, owner: User | None) -> None:
         .filter(Invoice.user_id == owner.id, Invoice.is_estimate.is_(False))
         .all()
     )
+    print(f"[AUTOPAY] user={owner.id} run start invoice_count={len(invoices)}", flush=True)
+
+    skipped_paid = 0
+    skipped_missing_customer = 0
+    skipped_disabled = 0
+    skipped_missing_payment_profile = 0
+    skipped_not_due = 0
+    skipped_recent_attempt = 0
+    skipped_no_due_amount = 0
+    charged_count = 0
+    failed_count = 0
 
     for inv in invoices:
         if float(inv.amount_due() or 0.0) <= 0.0:
+            skipped_paid += 1
             continue
         customer = getattr(inv, "customer", None)
         if not customer:
+            skipped_missing_customer += 1
+            print(f"[AUTOPAY] user={owner.id} invoice={inv.id} skipped (no client attached)", flush=True)
             continue
         if not bool(getattr(customer, "autopay_enabled", False)):
+            skipped_disabled += 1
             continue
         connect_customer_id = ((getattr(customer, "stripe_connect_customer_id", None) or "").strip())
         payment_method_id = ((getattr(customer, "stripe_default_payment_method_id", None) or "").strip())
         if not connect_customer_id or not payment_method_id:
+            skipped_missing_payment_profile += 1
+            print(f"[AUTOPAY] user={owner.id} invoice={inv.id} skipped (missing saved card/profile)", flush=True)
             continue
         due_dt = _invoice_due_date_utc(inv, owner)
         if now_utc < due_dt:
+            skipped_not_due += 1
+            print(f"[AUTOPAY] user={owner.id} invoice={inv.id} skipped (not due until {due_dt.isoformat()})", flush=True)
             continue
         last_attempt_at = getattr(inv, "autopay_last_attempt_at", None)
         if last_attempt_at and (now_utc - last_attempt_at) < timedelta(hours=24):
+            skipped_recent_attempt += 1
+            print(f"[AUTOPAY] user={owner.id} invoice={inv.id} skipped (recent attempt at {last_attempt_at.isoformat()})", flush=True)
             continue
 
         base_due = _invoice_due_with_late_fee(inv, owner, as_of=now_utc)
         if base_due <= 0.0:
+            skipped_no_due_amount += 1
+            print(f"[AUTOPAY] user={owner.id} invoice={inv.id} skipped (no due amount after recalculation)", flush=True)
             continue
         fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0)
         fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0)
@@ -2934,6 +2965,11 @@ def _run_automatic_client_autopay(session, owner: User | None) -> None:
             customer.autopay_last_failed_at = None
             customer.autopay_last_error = None
             session.add(customer)
+            charged_count += 1
+            print(
+                f"[AUTOPAY] user={owner.id} invoice={inv.id} charged amount={base_due:.2f} fee={paid_fee_amount:.2f}",
+                flush=True,
+            )
             try:
                 _send_paid_invoice_receipt_email(session=session, inv=inv, owner=owner, customer=customer, subject_suffix="(Autopay)")
             except Exception as exc:
@@ -2950,10 +2986,19 @@ def _run_automatic_client_autopay(session, owner: User | None) -> None:
             customer.autopay_last_failed_at = now_utc
             customer.autopay_last_error = error_message
             session.add(customer)
+            failed_count += 1
             print(f"[AUTOPAY] failed invoice={inv.id}: {error_message}", flush=True)
 
     owner.client_autopay_last_run_at = now_utc
     session.add(owner)
+    print(
+        f"[AUTOPAY] user={owner.id} done charged={charged_count} failed={failed_count} "
+        f"skipped_paid={skipped_paid} skipped_missing_customer={skipped_missing_customer} "
+        f"skipped_disabled={skipped_disabled} skipped_missing_payment_profile={skipped_missing_payment_profile} "
+        f"skipped_not_due={skipped_not_due} skipped_recent_attempt={skipped_recent_attempt} "
+        f"skipped_no_due_amount={skipped_no_due_amount}",
+        flush=True,
+    )
 
 
 # -----------------------------
