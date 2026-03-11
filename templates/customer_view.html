@@ -90,6 +90,47 @@
   </div>
 </div>
 
+{% if pro_features_enabled %}
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-3 align-items-start">
+      <div class="col-12 col-md-5">
+        <div class="small-muted">Saved Card</div>
+        <div class="fw-semibold">
+          {% if saved_card_label %}
+            {{ saved_card_label }}
+          {% else %}
+            <span class="small-muted">No card saved yet.</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="small-muted">Automatic Recurring Payments</div>
+        <div class="fw-semibold">
+          {% if autopay_enabled %}
+            <span class="text-success">Enabled</span>
+          {% else %}
+            <span class="small-muted">Disabled</span>
+          {% endif %}
+        </div>
+        {% if autopay_last_error %}
+          <div class="small text-danger mt-1">{{ autopay_last_error }}</div>
+        {% endif %}
+      </div>
+      <div class="col-12 col-md-3 text-md-end">
+        {% if saved_card_label %}
+          <form method="post" action="{{ url_for('customer_clear_payment_profile', customer_id=c.id) }}" onsubmit="return confirm('Remove the saved card and disable recurring payments for this client?');">
+            <button class="btn btn-outline-danger btn-sm" type="submit">Clear Saved Card</button>
+          </form>
+        {% else %}
+          <div class="small-muted">Client can save a card from the payment portal.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- ✅ Dashboard summary -->
 <div class="card shadow-sm mb-3">
   <div class="card-body">

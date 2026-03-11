@@ -175,6 +175,148 @@ def _invoice_due_with_late_fee(inv: Invoice, owner: User | None, *, as_of: datet
     return round(max(0.0, float(inv.amount_due() or 0.0) + _invoice_late_fee_amount(inv, owner, as_of=as_of)), 2)
 
 
+def _portal_tip_amount(raw_value, *, max_amount: float = 10000.0) -> float:
+    tip = round(max(0.0, _to_float(raw_value, 0.0)), 2)
+    return min(tip, max_amount)
+
+
+def _sync_customer_payment_method(
+    customer: Customer | None,
+    payment_method_obj: dict | None,
+    *,
+    clear_error: bool = False,
+) -> None:
+    if not customer:
+        return
+    pm = payment_method_obj or {}
+    card = (pm.get("card") or {}) if isinstance(pm, dict) else {}
+    customer.stripe_default_payment_method_id = ((pm.get("id") or "").strip() if isinstance(pm, dict) else "") or None
+    customer.stripe_payment_method_brand = ((card.get("brand") or "").strip() if isinstance(card, dict) else "") or None
+    customer.stripe_payment_method_last4 = ((card.get("last4") or "").strip() if isinstance(card, dict) else "") or None
+    try:
+        customer.stripe_payment_method_exp_month = int(card.get("exp_month")) if card.get("exp_month") is not None else None
+    except Exception:
+        customer.stripe_payment_method_exp_month = None
+    try:
+        customer.stripe_payment_method_exp_year = int(card.get("exp_year")) if card.get("exp_year") is not None else None
+    except Exception:
+        customer.stripe_payment_method_exp_year = None
+    if clear_error:
+        customer.autopay_last_error = None
+        customer.autopay_last_failed_at = None
+
+
+def _client_saved_card_label(customer: Customer | None) -> str:
+    if not customer:
+        return ""
+    brand = ((getattr(customer, "stripe_payment_method_brand", None) or "").strip() or "Card").title()
+    last4 = (getattr(customer, "stripe_payment_method_last4", None) or "").strip()
+    exp_month = getattr(customer, "stripe_payment_method_exp_month", None)
+    exp_year = getattr(customer, "stripe_payment_method_exp_year", None)
+    if not last4:
+        return ""
+    exp_suffix = ""
+    if exp_month and exp_year:
+        exp_suffix = f" exp {int(exp_month):02d}/{int(exp_year) % 100:02d}"
+    return f"{brand} ending in {last4}{exp_suffix}"
+
+
+def _ensure_connect_customer_for_client(session, owner: User | None, customer: Customer | None) -> str:
+    if not owner or not customer or not stripe.api_key:
+        return ""
+    acct_id = ((getattr(owner, "stripe_connect_account_id", None) or "").strip())
+    if not acct_id:
+        return ""
+
+    connect_customer_id = ((getattr(customer, "stripe_connect_customer_id", None) or "").strip())
+    if connect_customer_id:
+        try:
+            stripe.Customer.retrieve(connect_customer_id, stripe_account=acct_id)
+            return connect_customer_id
+        except Exception as exc:
+            if "No such customer" not in str(exc or ""):
+                raise
+            customer.stripe_connect_customer_id = None
+            connect_customer_id = ""
+
+    name = (getattr(customer, "name", None) or "").strip() or "Client"
+    email = _normalize_email(getattr(customer, "email", None) or "") or None
+    created = stripe.Customer.create(
+        name=name,
+        email=email,
+        metadata={
+            "app_owner_user_id": str(int(getattr(owner, "id", 0) or 0)),
+            "app_client_id": str(int(getattr(customer, "id", 0) or 0)),
+        },
+        stripe_account=acct_id,
+    )
+    connect_customer_id = ((created.get("id") or "").strip())
+    customer.stripe_connect_customer_id = connect_customer_id or None
+    session.add(customer)
+    return connect_customer_id
+
+
+def _send_paid_invoice_receipt_email(
+    *,
+    session,
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    subject_suffix: str = "",
+) -> None:
+    to_email = _normalize_email((getattr(inv, "customer_email", None) or getattr(customer, "email", None) or ""))
+    if not _looks_like_email(to_email):
+        return
+    pdf_path = generate_and_store_pdf(
+        session,
+        int(inv.id),
+        include_processing_fee=bool(float(getattr(inv, "paid_processing_fee", 0.0) or 0.0) > 0.0),
+    )
+    business_name = (((getattr(owner, "business_name", None) if owner else None) or (getattr(owner, "username", None) if owner else None) or "InvoiceRunner")).strip()
+    doc_number = (getattr(inv, "display_number", None) or getattr(inv, "invoice_number", None) or "").strip()
+    body_lines = [
+        f"Hello {(getattr(customer, 'name', None) or 'there').strip()},",
+        "",
+        f"Payment received for invoice {doc_number}. Thank you.",
+    ]
+    if float(getattr(inv, "paid_processing_fee", 0.0) or 0.0) > 0.0:
+        body_lines.append(f"Processing fee paid: ${float(getattr(inv, 'paid_processing_fee', 0.0) or 0.0):,.2f}")
+    if float(getattr(inv, "paid_tip", 0.0) or 0.0) > 0.0:
+        body_lines.append(f"Tip paid: ${float(getattr(inv, 'paid_tip', 0.0) or 0.0):,.2f}")
+    body_lines.extend(["", "Your paid invoice is attached.", "", f"Thank you,", business_name])
+    subject = f"Payment received for invoice {doc_number}"
+    if subject_suffix:
+        subject = f"{subject} {subject_suffix}".strip()
+    _send_invoice_pdf_email(
+        to_email,
+        subject,
+        "\n".join(body_lines).strip(),
+        pdf_path=pdf_path,
+    )
+
+
+def _record_invoice_payment(
+    session,
+    inv: Invoice,
+    *,
+    paid_base_amount: float,
+    paid_fee_amount: float = 0.0,
+    paid_tip_amount: float = 0.0,
+    payment_error: str | None = None,
+    attempt_time: datetime | None = None,
+) -> None:
+    now_utc = attempt_time or datetime.utcnow()
+    inv.autopay_last_attempt_at = now_utc
+    inv.autopay_last_error = (payment_error or "").strip()[:500] or None
+    if payment_error:
+        session.add(inv)
+        return
+    inv.paid = round(float(inv.paid or 0.0) + max(0.0, float(paid_base_amount or 0.0)), 2)
+    inv.paid_processing_fee = round(float(inv.paid_processing_fee or 0.0) + max(0.0, float(paid_fee_amount or 0.0)), 2)
+    inv.paid_tip = round(float(getattr(inv, "paid_tip", 0.0) or 0.0) + max(0.0, float(paid_tip_amount or 0.0)), 2)
+    session.add(inv)
+
+
 def _parse_repeating_fields(names, prices):
     out = []
     n = max(len(names), len(prices))
@@ -2697,6 +2839,123 @@ def _run_automatic_payment_reminders(session, owner: User | None) -> None:
     )
 
 
+def _run_automatic_client_autopay(session, owner: User | None) -> None:
+    if not owner or not stripe.api_key:
+        return
+    owner_status = (getattr(owner, "subscription_status", None) or "").strip().lower()
+    owner_tier = _normalize_plan_tier(getattr(owner, "subscription_tier", None))
+    if owner_status not in ("trialing", "active") or owner_tier != "pro":
+        return
+    acct_id = ((getattr(owner, "stripe_connect_account_id", None) or "").strip())
+    if not acct_id:
+        return
+    if not bool(getattr(owner, "stripe_connect_charges_enabled", False)) or not bool(getattr(owner, "stripe_connect_payouts_enabled", False)):
+        return
+
+    now_utc = datetime.utcnow()
+    last_run = getattr(owner, "client_autopay_last_run_at", None)
+    if last_run and (now_utc - last_run) < timedelta(minutes=30):
+        return
+
+    invoices = (
+        session.query(Invoice)
+        .options(selectinload(Invoice.customer))
+        .filter(Invoice.user_id == owner.id, Invoice.is_estimate.is_(False))
+        .all()
+    )
+
+    for inv in invoices:
+        if float(inv.amount_due() or 0.0) <= 0.0:
+            continue
+        customer = getattr(inv, "customer", None)
+        if not customer:
+            continue
+        if not bool(getattr(customer, "autopay_enabled", False)):
+            continue
+        connect_customer_id = ((getattr(customer, "stripe_connect_customer_id", None) or "").strip())
+        payment_method_id = ((getattr(customer, "stripe_default_payment_method_id", None) or "").strip())
+        if not connect_customer_id or not payment_method_id:
+            continue
+        due_dt = _invoice_due_date_utc(inv, owner)
+        if now_utc < due_dt:
+            continue
+        last_attempt_at = getattr(inv, "autopay_last_attempt_at", None)
+        if last_attempt_at and (now_utc - last_attempt_at) < timedelta(hours=24):
+            continue
+
+        base_due = _invoice_due_with_late_fee(inv, owner, as_of=now_utc)
+        if base_due <= 0.0:
+            continue
+        fee_percent = float(getattr(owner, "payment_fee_percent", 0.0) or 0.0)
+        fee_fixed = float(getattr(owner, "payment_fee_fixed", 0.0) or 0.0)
+        fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False))
+        stripe_fee_percent = float(getattr(owner, "stripe_fee_percent", 2.9) or 2.9)
+        stripe_fee_fixed = float(getattr(owner, "stripe_fee_fixed", 0.30) or 0.30)
+        paid_fee_amount = _payment_fee_amount(
+            base_due,
+            fee_percent,
+            fee_fixed,
+            auto_enabled=fee_auto_enabled,
+            stripe_percent=stripe_fee_percent,
+            stripe_fixed=stripe_fee_fixed,
+        )
+        amount_cents = int(round((base_due + paid_fee_amount) * 100))
+        if amount_cents <= 0:
+            continue
+
+        try:
+            stripe.PaymentIntent.create(
+                amount=amount_cents,
+                currency="usd",
+                customer=connect_customer_id,
+                payment_method=payment_method_id,
+                confirm=True,
+                off_session=True,
+                metadata={
+                    "uid": str(int(owner.id)),
+                    "iid": str(int(inv.id)),
+                    "cid": str(int(customer.id)),
+                    "type": "invoice_autopay",
+                    "base_amount": f"{base_due:.2f}",
+                    "convenience_fee": f"{paid_fee_amount:.2f}",
+                    "tip_amount": "0.00",
+                },
+                description=f"InvoiceRunner Autopay {(getattr(inv, 'display_number', None) or inv.invoice_number or '').strip()}",
+                stripe_account=acct_id,
+            )
+            _record_invoice_payment(
+                session,
+                inv,
+                paid_base_amount=base_due,
+                paid_fee_amount=paid_fee_amount,
+                paid_tip_amount=0.0,
+                attempt_time=now_utc,
+            )
+            customer.autopay_last_failed_at = None
+            customer.autopay_last_error = None
+            session.add(customer)
+            try:
+                _send_paid_invoice_receipt_email(session=session, inv=inv, owner=owner, customer=customer, subject_suffix="(Autopay)")
+            except Exception as exc:
+                print(f"[AUTOPAY] receipt email failed invoice={inv.id}: {exc!r}", flush=True)
+        except Exception as exc:
+            error_message = _stripe_err_msg(exc)[:500]
+            _record_invoice_payment(
+                session,
+                inv,
+                paid_base_amount=0.0,
+                payment_error=error_message,
+                attempt_time=now_utc,
+            )
+            customer.autopay_last_failed_at = now_utc
+            customer.autopay_last_error = error_message
+            session.add(customer)
+            print(f"[AUTOPAY] failed invoice={inv.id}: {error_message}", flush=True)
+
+    owner.client_autopay_last_run_at = now_utc
+    session.add(owner)
+
+
 # -----------------------------
 # DB migration (lightweight)
 # -----------------------------
@@ -3327,6 +3586,77 @@ def _migrate_invoice_paid_processing_fee(engine):
             pass
 
 
+def _migrate_user_client_autopay_fields(engine):
+    if not _table_exists(engine, "users"):
+        return
+    if not _column_exists(engine, "users", "client_autopay_last_run_at"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN client_autopay_last_run_at TIMESTAMP NULL"))
+
+
+def _migrate_customer_payment_profile_fields(engine):
+    if not _table_exists(engine, "customers"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "customers", "stripe_connect_customer_id"):
+        stmts.append("ALTER TABLE customers ADD COLUMN stripe_connect_customer_id VARCHAR(255)")
+    if not _column_exists(engine, "customers", "stripe_default_payment_method_id"):
+        stmts.append("ALTER TABLE customers ADD COLUMN stripe_default_payment_method_id VARCHAR(255)")
+    if not _column_exists(engine, "customers", "stripe_payment_method_brand"):
+        stmts.append("ALTER TABLE customers ADD COLUMN stripe_payment_method_brand VARCHAR(50)")
+    if not _column_exists(engine, "customers", "stripe_payment_method_last4"):
+        stmts.append("ALTER TABLE customers ADD COLUMN stripe_payment_method_last4 VARCHAR(8)")
+    if not _column_exists(engine, "customers", "stripe_payment_method_exp_month"):
+        stmts.append("ALTER TABLE customers ADD COLUMN stripe_payment_method_exp_month INTEGER")
+    if not _column_exists(engine, "customers", "stripe_payment_method_exp_year"):
+        stmts.append("ALTER TABLE customers ADD COLUMN stripe_payment_method_exp_year INTEGER")
+    if not _column_exists(engine, "customers", "autopay_enabled"):
+        stmts.append("ALTER TABLE customers ADD COLUMN autopay_enabled BOOLEAN")
+    if not _column_exists(engine, "customers", "autopay_consent_at"):
+        stmts.append("ALTER TABLE customers ADD COLUMN autopay_consent_at TIMESTAMP NULL")
+    if not _column_exists(engine, "customers", "autopay_last_failed_at"):
+        stmts.append("ALTER TABLE customers ADD COLUMN autopay_last_failed_at TIMESTAMP NULL")
+    if not _column_exists(engine, "customers", "autopay_last_error"):
+        stmts.append("ALTER TABLE customers ADD COLUMN autopay_last_error VARCHAR(500)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE customers SET autopay_enabled = FALSE WHERE autopay_enabled IS NULL"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS customers_stripe_connect_customer_idx ON customers (stripe_connect_customer_id)"))
+    except Exception:
+        pass
+
+
+def _migrate_invoice_autopay_tip_fields(engine):
+    if not _table_exists(engine, "invoices"):
+        return
+
+    stmts = []
+    if not _column_exists(engine, "invoices", "paid_tip"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN paid_tip FLOAT")
+    if not _column_exists(engine, "invoices", "autopay_last_attempt_at"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN autopay_last_attempt_at TIMESTAMP NULL")
+    if not _column_exists(engine, "invoices", "autopay_last_error"):
+        stmts.append("ALTER TABLE invoices ADD COLUMN autopay_last_error VARCHAR(500)")
+
+    if stmts:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE invoices SET paid_tip = 0.0 WHERE paid_tip IS NULL"))
+    except Exception:
+        pass
+
+
 def _migrate_invoice_display_number(engine):
     if not _table_exists(engine, "invoices"):
         return
@@ -3894,6 +4224,9 @@ def create_app():
     _migrate_invoice_is_estimate(engine)
     _migrate_invoice_parts_markup_percent(engine)
     _migrate_invoice_paid_processing_fee(engine)
+    _migrate_user_client_autopay_fields(engine)
+    _migrate_customer_payment_profile_fields(engine)
+    _migrate_invoice_autopay_tip_fields(engine)
     _migrate_invoice_display_number(engine)
     _migrate_invoice_created_by(engine)
     _migrate_invoice_display_sequences(engine)
@@ -3940,6 +4273,16 @@ def create_app():
     def inject_billing():
         if not current_user.is_authenticated:
             return {"format_phone": _format_phone_display}
+
+        try:
+            with db_session() as s:
+                actor_for_run = s.get(User, _current_actor_user_id_int())
+                owner_for_run = s.get(User, _current_user_id_int())
+                if owner_for_run and actor_for_run and not bool(getattr(actor_for_run, "is_employee", False)):
+                    _run_automatic_client_autopay(s, owner_for_run)
+                    s.commit()
+        except Exception as exc:
+            print(f"[AUTOPAY] inject run failed: {exc!r}", flush=True)
 
         with db_session() as s:
             actor = s.get(User, _current_actor_user_id_int())
@@ -5472,6 +5815,16 @@ def create_app():
                             service_title=_csv_str(row.get("service_title")),
                             service_notes=_csv_str(row.get("service_notes")),
                             recurring_horizon_dt=_csv_dt(row.get("recurring_horizon_dt")),
+                            stripe_connect_customer_id=_csv_str(row.get("stripe_connect_customer_id")),
+                            stripe_default_payment_method_id=_csv_str(row.get("stripe_default_payment_method_id")),
+                            stripe_payment_method_brand=_csv_str(row.get("stripe_payment_method_brand")),
+                            stripe_payment_method_last4=_csv_str(row.get("stripe_payment_method_last4")),
+                            stripe_payment_method_exp_month=_csv_int(row.get("stripe_payment_method_exp_month"), None),
+                            stripe_payment_method_exp_year=_csv_int(row.get("stripe_payment_method_exp_year"), None),
+                            autopay_enabled=_csv_bool(row.get("autopay_enabled"), False),
+                            autopay_consent_at=_csv_dt(row.get("autopay_consent_at")),
+                            autopay_last_failed_at=_csv_dt(row.get("autopay_last_failed_at")),
+                            autopay_last_error=_csv_str(row.get("autopay_last_error")),
                         )
                         created_at = _csv_dt(row.get("created_at"))
                         updated_at = _csv_dt(row.get("updated_at"))
@@ -5517,11 +5870,14 @@ def create_app():
                             converted_to_invoice=_csv_bool(row.get("converted_to_invoice"), False),
                             paid=_csv_float(row.get("paid"), 0.0) or 0.0,
                             paid_processing_fee=_csv_float(row.get("paid_processing_fee"), 0.0) or 0.0,
+                            paid_tip=_csv_float(row.get("paid_tip"), 0.0) or 0.0,
                             date_in=(row.get("date_in") or "").strip(),
                             payment_reminder_before_sent_at=_csv_dt(row.get("payment_reminder_before_sent_at")),
                             payment_reminder_due_today_sent_at=_csv_dt(row.get("payment_reminder_due_today_sent_at")),
                             payment_reminder_after_sent_at=_csv_dt(row.get("payment_reminder_after_sent_at")),
                             payment_reminder_last_sent_at=_csv_dt(row.get("payment_reminder_last_sent_at")),
+                            autopay_last_attempt_at=_csv_dt(row.get("autopay_last_attempt_at")),
+                            autopay_last_error=_csv_str(row.get("autopay_last_error")),
                             pdf_generated_at=_csv_dt(row.get("pdf_generated_at")),
                         )
                         created_at = _csv_dt(row.get("created_at"))
@@ -5747,7 +6103,7 @@ def create_app():
                         "payment_fee_fixed", "stripe_fee_percent", "stripe_fee_fixed",
                         "late_fee_fixed", "late_fee_percent",
                     }
-                    owner_dt_fields = {"trial_ends_at", "current_period_end", "schedule_summary_last_sent", "payment_reminder_last_run_at"}
+                    owner_dt_fields = {"trial_ends_at", "current_period_end", "schedule_summary_last_sent", "payment_reminder_last_run_at", "client_autopay_last_run_at"}
                     skip_owner_fields = {"id", "username", "password_hash", "created_at", "updated_at"}
                     for key, value in owner_row.items():
                         if key in skip_owner_fields or not hasattr(u, key):
@@ -6526,7 +6882,7 @@ def create_app():
                 "payment_reminder_days_before", "payment_reminder_days_after",
                 "payment_reminder_after_repeat_enabled", "payment_reminder_after_repeat_interval",
                 "payment_reminder_after_repeat_unit",
-                "payment_reminder_last_run_at", "late_fee_enabled", "late_fee_mode", "late_fee_fixed",
+                "payment_reminder_last_run_at", "client_autopay_last_run_at", "late_fee_enabled", "late_fee_mode", "late_fee_fixed",
                 "late_fee_percent", "late_fee_frequency_days", "custom_profession_name",
                 "custom_job_label", "custom_labor_title", "custom_labor_desc_label",
                 "custom_parts_title", "custom_parts_name_label", "custom_shop_supplies_label",
@@ -6538,6 +6894,9 @@ def create_app():
                 "id", "user_id", "name", "email", "phone", "address", "address_line1", "address_line2",
                 "city", "state", "postal_code", "next_service_dt", "service_interval_days",
                 "default_service_minutes", "service_title", "service_notes", "recurring_horizon_dt",
+                "stripe_connect_customer_id", "stripe_default_payment_method_id", "stripe_payment_method_brand",
+                "stripe_payment_method_last4", "stripe_payment_method_exp_month", "stripe_payment_method_exp_year",
+                "autopay_enabled", "autopay_consent_at", "autopay_last_failed_at", "autopay_last_error",
                 "created_at", "updated_at",
             ]
             invoice_fields = [
@@ -6545,9 +6904,10 @@ def create_app():
                 "is_estimate", "invoice_template", "pdf_template", "tax_rate", "tax_override",
                 "customer_email", "customer_phone", "name", "vehicle", "hours", "price_per_hour",
                 "shop_supplies", "parts_markup_percent", "notes", "useful_info",
-                "converted_from_estimate", "converted_to_invoice", "paid", "paid_processing_fee", "date_in",
+                "converted_from_estimate", "converted_to_invoice", "paid", "paid_processing_fee", "paid_tip", "date_in",
                 "payment_reminder_before_sent_at", "payment_reminder_due_today_sent_at",
                 "payment_reminder_after_sent_at", "payment_reminder_last_sent_at",
+                "autopay_last_attempt_at", "autopay_last_error",
                 "pdf_generated_at", "created_at", "updated_at",
             ]
             part_fields = ["id", "invoice_id", "part_name", "part_price"]
@@ -10140,7 +10500,39 @@ def create_app():
             total_paid=total_paid,
             total_unpaid=total_unpaid,
             next_event=next_event,
+            saved_card_label=_client_saved_card_label(c),
+            autopay_enabled=bool(getattr(c, "autopay_enabled", False)),
+            autopay_last_error=(getattr(c, "autopay_last_error", None) or "").strip(),
         )
+
+    @app.post("/customers/<int:customer_id>/payment-profile/clear")
+    @login_required
+    @subscription_required
+    @owner_required
+    def customer_clear_payment_profile(customer_id: int):
+        with db_session() as s:
+            c = _customer_owned_or_404(s, customer_id)
+            owner = s.get(User, _current_user_id_int())
+            acct_id = ((getattr(owner, "stripe_connect_account_id", None) or "").strip()) if owner else ""
+            pm_id = ((getattr(c, "stripe_default_payment_method_id", None) or "").strip())
+            if acct_id and pm_id and stripe.api_key:
+                try:
+                    stripe.PaymentMethod.detach(pm_id, stripe_account=acct_id)
+                except Exception as exc:
+                    print(f"[AUTOPAY] detach payment method failed customer={customer_id}: {exc!r}", flush=True)
+            c.stripe_default_payment_method_id = None
+            c.stripe_payment_method_brand = None
+            c.stripe_payment_method_last4 = None
+            c.stripe_payment_method_exp_month = None
+            c.stripe_payment_method_exp_year = None
+            c.autopay_enabled = False
+            c.autopay_consent_at = None
+            c.autopay_last_failed_at = None
+            c.autopay_last_error = None
+            s.add(c)
+            s.commit()
+        flash("Saved card and automatic recurring payment settings cleared for this client.", "success")
+        return redirect(url_for("customer_view", customer_id=customer_id))
 
     @app.route("/customers/<int:customer_id>/contracts/new", methods=["GET", "POST"])
     @login_required
@@ -11367,19 +11759,21 @@ def create_app():
         except Exception:
             return str(x)
 
-    def _paid_invoice_income_components(inv: Invoice, *, eps: float = 0.01) -> tuple[float, float]:
+    def _paid_invoice_income_components(inv: Invoice, *, eps: float = 0.01) -> tuple[float, float, float]:
         """
-        Returns (recognized_income, late_fee_income) for a single invoice.
+        Returns (recognized_income, late_fee_income, tip_income) for a single invoice.
         Late-fee income is treated as any amount paid above invoice_total, and is only
         recognized when the invoice is fully paid.
         """
         paid = float(inv.paid or 0.0)
+        tip_paid = float(getattr(inv, "paid_tip", 0.0) or 0.0)
         invoice_total = float(inv.invoice_total() or 0.0)
         if paid + eps < invoice_total:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
         late_fee_income = max(0.0, round(paid - invoice_total, 2))
-        recognized_income = invoice_total + late_fee_income
-        return recognized_income, late_fee_income
+        tip_income = max(0.0, round(tip_paid, 2))
+        recognized_income = invoice_total + late_fee_income + tip_income
+        return recognized_income, late_fee_income, tip_income
 
     def _profit_loss_income_for_period(
         s,
@@ -11392,6 +11786,7 @@ def create_app():
         EPS = 0.01
         business_income = 0.0
         total_late_fee_income = 0.0
+        total_tip_income = 0.0
         invs = (
             s.query(Invoice)
             .options(selectinload(Invoice.parts), selectinload(Invoice.labor_items))
@@ -11408,9 +11803,10 @@ def create_app():
                 mo = _parse_month_from_datein(inv.date_in)
                 if mo != target_month:
                     continue
-            recognized_income, late_fee_income = _paid_invoice_income_components(inv, eps=EPS)
+            recognized_income, late_fee_income, tip_income = _paid_invoice_income_components(inv, eps=EPS)
             business_income += recognized_income
             total_late_fee_income += late_fee_income
+            total_tip_income += tip_income
         manual = _manual_income_totals_for_period(s, uid, target_year, target_month)
         other_income = float(manual.get("other", 0.0) or 0.0)
         interest_income = float(manual.get("interest", 0.0) or 0.0)
@@ -11422,6 +11818,7 @@ def create_app():
                 "other_income": other_income,
                 "interest_income": interest_income,
                 "late_fee_income": total_late_fee_income,
+                "tip_income": total_tip_income,
             }
         return income_total
 
@@ -11523,7 +11920,7 @@ def create_app():
 
                 invoice_total = float(inv.invoice_total() or 0.0)
                 paid = float(inv.paid or 0.0)
-                recognized_income, late_fee_income = _paid_invoice_income_components(inv, eps=EPS)
+                recognized_income, late_fee_income, _tip_income = _paid_invoice_income_components(inv, eps=EPS)
                 fully_paid = recognized_income > 0.0
                 outstanding_amount = 0.0 if fully_paid else max(0.0, invoice_total - paid)
 
@@ -11569,7 +11966,7 @@ def create_app():
                 total_invoice_amount += invoice_total
                 count += 1
 
-                recognized_income, late_fee_income = _paid_invoice_income_components(inv, eps=EPS)
+                recognized_income, late_fee_income, tip_income = _paid_invoice_income_components(inv, eps=EPS)
                 fully_paid = recognized_income > 0.0
                 processing_fee_paid = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
                 total_stripe_processing_fees += processing_fee_paid
@@ -13685,6 +14082,8 @@ def create_app():
         user_id, invoice_id = decoded
         payment_state = (request.args.get("payment") or "").strip().lower()
         checkout_session_id = (request.args.get("session_id") or "").strip()
+        setup_state = (request.args.get("setup") or "").strip().lower()
+        setup_session_id = (request.args.get("setup_session_id") or "").strip()
 
         with db_session() as s:
             inv = (
@@ -13709,7 +14108,16 @@ def create_app():
             payment_message = ""
             payment_error = ""
             paid_processing_fee = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
-            paid_display = round(float(inv.paid or 0.0) + paid_processing_fee, 2)
+            paid_tip = float(getattr(inv, "paid_tip", 0.0) or 0.0)
+            paid_display = round(float(inv.paid or 0.0) + paid_processing_fee + paid_tip, 2)
+            try:
+                _run_automatic_client_autopay(s, owner)
+                s.commit()
+                s.refresh(inv)
+                if customer:
+                    s.refresh(customer)
+            except Exception as exc:
+                print(f"[AUTOPAY] portal run failed invoice={invoice_id}: {exc!r}", flush=True)
             if payment_state == "success" and checkout_session_id and stripe.api_key:
                 try:
                     retrieve_kwargs = {}
@@ -13725,33 +14133,93 @@ def create_app():
                         paid_total = round(max(0.0, amount_total_cents / 100.0), 2) if amount_total_cents > 0 else 0.0
                         meta_base_amount = _to_float(metadata.get("base_amount"), 0.0)
                         meta_convenience_fee = _to_float(metadata.get("convenience_fee"), 0.0)
+                        meta_tip_amount = _to_float(metadata.get("tip_amount"), 0.0)
                         invoice_total = float(inv.invoice_total() or 0.0)
                         paid_base_amount = meta_base_amount if meta_base_amount > 0 else round(max(0.0, min(invoice_total, paid_total)), 2)
                         paid_fee_amount = meta_convenience_fee if meta_convenience_fee > 0 else round(max(0.0, paid_total - paid_base_amount), 2)
+                        paid_tip_amount = meta_tip_amount if meta_tip_amount > 0 else 0.0
                         if paid_total > 0:
                             paid_display = paid_total
                         if inv.amount_due() > 0.0:
-                            inv.paid = round(float(inv.paid or 0.0) + paid_base_amount, 2)
-                            inv.paid_processing_fee = round(float(inv.paid_processing_fee or 0.0) + paid_fee_amount, 2)
+                            _record_invoice_payment(
+                                s,
+                                inv,
+                                paid_base_amount=paid_base_amount,
+                                paid_fee_amount=paid_fee_amount,
+                                paid_tip_amount=paid_tip_amount,
+                            )
                             s.commit()
                             s.refresh(inv)
+                            try:
+                                _send_paid_invoice_receipt_email(session=s, inv=inv, owner=owner, customer=customer)
+                            except Exception as exc:
+                                print(f"[PORTAL] paid receipt email failed invoice={inv.id}: {exc!r}", flush=True)
+                        paid_tip = float(getattr(inv, "paid_tip", 0.0) or 0.0)
                         payment_message = "Payment received. Thank you."
                     else:
                         payment_error = "Payment could not be verified for this document."
                 except Exception:
                     payment_error = "Payment verification failed. Contact the business if you were charged."
+            elif setup_state == "success" and setup_session_id and stripe.api_key:
+                try:
+                    retrieve_kwargs = {}
+                    if owner_connect_acct:
+                        retrieve_kwargs["stripe_account"] = owner_connect_acct
+                    cs = stripe.checkout.Session.retrieve(setup_session_id, **retrieve_kwargs)
+                    metadata = cs.get("metadata") or {}
+                    uid_meta = int((metadata.get("uid") or "0"))
+                    iid_meta = int((metadata.get("iid") or "0"))
+                    cid_meta = int((metadata.get("cid") or "0"))
+                    status = (cs.get("status") or "").lower()
+                    setup_intent_id = ((cs.get("setup_intent") or "").strip())
+                    connect_customer_id = ((cs.get("customer") or "").strip())
+                    if (
+                        uid_meta == user_id
+                        and iid_meta == invoice_id
+                        and customer
+                        and int(getattr(customer, "id", 0) or 0) == cid_meta
+                        and status == "complete"
+                        and setup_intent_id
+                        and connect_customer_id
+                    ):
+                        si = stripe.SetupIntent.retrieve(setup_intent_id, **retrieve_kwargs)
+                        payment_method_id = ((si.get("payment_method") or "").strip())
+                        if payment_method_id:
+                            pm = stripe.PaymentMethod.retrieve(payment_method_id, **retrieve_kwargs)
+                            customer.stripe_connect_customer_id = connect_customer_id
+                            _sync_customer_payment_method(customer, pm, clear_error=True)
+                            enable_autopay = ((metadata.get("enable_autopay") or "").strip() == "1")
+                            customer.autopay_enabled = enable_autopay
+                            if enable_autopay:
+                                customer.autopay_consent_at = datetime.utcnow()
+                            s.add(customer)
+                            s.commit()
+                            payment_message = (
+                                "Card saved for future payments."
+                                + (" Automatic recurring payments are enabled." if enable_autopay else "")
+                            )
+                        else:
+                            payment_error = "The saved card could not be verified."
+                    else:
+                        payment_error = "Saved card verification failed for this client."
+                except Exception:
+                    payment_error = "Saved card verification failed. Please try again."
+            elif setup_state == "cancel":
+                payment_message = "Card setup canceled."
             elif payment_state == "cancel":
                 payment_message = "Payment canceled."
 
             late_fee_amount = _invoice_late_fee_amount(inv, owner)
             due_with_late_fee = _invoice_due_with_late_fee(inv, owner)
             paid_processing_fee = float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)
-            paid_display = round(float(inv.paid or 0.0) + paid_processing_fee, 2)
+            paid_tip = float(getattr(inv, "paid_tip", 0.0) or 0.0)
+            paid_display = round(float(inv.paid or 0.0) + paid_processing_fee + paid_tip, 2)
 
             pdf_token = make_pdf_share_token(inv.user_id, inv.id)
             pdf_url_base = url_for("shared_pdf_download", token=pdf_token, include_processing_fee="0")
             pdf_url_paid = url_for("shared_pdf_download", token=pdf_token, include_processing_fee="1")
             pay_url = url_for("shared_customer_portal_pay", token=token)
+            save_card_url = url_for("shared_customer_portal_save_card", token=token)
             can_pay_online = (
                 (not bool(inv.is_estimate))
                 and (due_with_late_fee > 0.0)
@@ -13780,6 +14248,15 @@ def create_app():
             )
             amount_due_display = round(effective_amount_due, 2) if effective_amount_due > 0.0 else 0.0
             pay_total = round(amount_due_display + convenience_fee_display, 2) if amount_due_display > 0.0 else 0.0
+            saved_card_label = _client_saved_card_label(customer)
+            has_saved_card = bool(saved_card_label)
+            can_save_card = (
+                (not bool(inv.is_estimate))
+                and bool(customer)
+                and bool(stripe.api_key)
+                and owner_connect_ready
+                and owner_pro_enabled
+            )
             doc_number = inv.display_number or inv.invoice_number
             business_name = (owner.business_name if owner else "") or "InvoiceRunner"
             payment_unavailable_reason = ""
@@ -13800,10 +14277,13 @@ def create_app():
                 tmpl=tmpl,
                 business_name=business_name,
                 doc_number=doc_number,
+                client=customer,
                 pdf_url_base=pdf_url_base,
                 pdf_url_paid=pdf_url_paid,
                 pay_url=pay_url,
+                save_card_url=save_card_url,
                 can_pay_online=can_pay_online,
+                can_save_card=can_save_card,
                 payment_message=payment_message,
                 payment_error=payment_error,
                 payment_unavailable_reason=payment_unavailable_reason,
@@ -13814,12 +14294,17 @@ def create_app():
                 due_with_late_fee=due_with_late_fee,
                 effective_amount_due=effective_amount_due,
                 paid_display=paid_display,
-                has_paid_online_receipt=(paid_processing_fee > 0.0),
+                has_paid_online_receipt=(paid_processing_fee > 0.0 or paid_tip > 0.0),
                 fee_percent=fee_percent,
                 fee_fixed=fee_fixed,
                 fee_auto_enabled=fee_auto_enabled,
                 stripe_fee_percent=stripe_fee_percent,
                 stripe_fee_fixed=stripe_fee_fixed,
+                paid_tip=paid_tip,
+                saved_card_label=saved_card_label,
+                has_saved_card=has_saved_card,
+                autopay_enabled=bool(getattr(customer, "autopay_enabled", False)) if customer else False,
+                autopay_last_error=(getattr(customer, "autopay_last_error", None) or "").strip() if customer else "",
             )
 
     @app.post("/shared/v/<token>/pay")
@@ -13874,7 +14359,8 @@ def create_app():
                 stripe_percent=stripe_fee_percent,
                 stripe_fixed=stripe_fee_fixed,
             )
-            checkout_total = round(payment_base_due + convenience_fee, 2)
+            tip_amount = _portal_tip_amount(request.form.get("tip_amount"))
+            checkout_total = round(payment_base_due + convenience_fee + tip_amount, 2)
             amount_cents = int(round(checkout_total * 100))
             display_no = inv.display_number or inv.invoice_number
             doc_label = "Estimate" if inv.is_estimate else "Invoice"
@@ -13902,6 +14388,74 @@ def create_app():
                         "type": "invoice_payment",
                         "base_amount": f"{payment_base_due:.2f}",
                         "convenience_fee": f"{convenience_fee:.2f}",
+                        "tip_amount": f"{tip_amount:.2f}",
+                    },
+                    stripe_account=owner_connect_acct,
+                )
+            except Exception:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+
+            checkout_url = (cs.get("url") or "").strip()
+            if not checkout_url:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+            return redirect(checkout_url, code=303)
+
+    @app.post("/shared/v/<token>/save-card")
+    def shared_customer_portal_save_card(token: str):
+        max_age = int(
+            current_app.config.get("CUSTOMER_PORTAL_MAX_AGE_SECONDS")
+            or os.getenv("CUSTOMER_PORTAL_MAX_AGE_SECONDS")
+            or "7776000"
+        )
+        decoded = read_customer_portal_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+        if not stripe.api_key:
+            abort(503)
+
+        user_id, invoice_id = decoded
+        with db_session() as s:
+            inv = (
+                s.query(Invoice)
+                .filter(Invoice.id == invoice_id, Invoice.user_id == user_id)
+                .first()
+            )
+            if not inv:
+                return redirect(url_for("shared_document_deleted"), code=303)
+            if bool(inv.is_estimate) or not getattr(inv, "customer_id", None):
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            owner_connect_acct = ((owner.stripe_connect_account_id or "").strip() if owner else "")
+            owner_connect_ready = bool(
+                owner
+                and owner.stripe_connect_charges_enabled
+                and owner.stripe_connect_payouts_enabled
+            )
+            owner_pro_enabled = _has_pro_features(owner)
+            if not owner_pro_enabled or not owner_connect_acct or not owner_connect_ready or not customer:
+                return redirect(url_for("shared_customer_portal", token=token), code=303)
+
+            enable_autopay = request.form.get("enable_autopay") == "1"
+            connect_customer_id = _ensure_connect_customer_for_client(s, owner, customer)
+            s.commit()
+            success_url = _public_url(url_for("shared_customer_portal", token=token, setup="success"))
+            sep = "&" if "?" in success_url else "?"
+            success_url = f"{success_url}{sep}setup_session_id={{CHECKOUT_SESSION_ID}}"
+            cancel_url = _public_url(url_for("shared_customer_portal", token=token, setup="cancel"))
+
+            try:
+                cs = stripe.checkout.Session.create(
+                    mode="setup",
+                    customer=connect_customer_id,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    metadata={
+                        "uid": str(user_id),
+                        "iid": str(invoice_id),
+                        "cid": str(int(customer.id)),
+                        "type": "client_card_setup",
+                        "enable_autopay": "1" if enable_autopay else "0",
                     },
                     stripe_account=owner_connect_acct,
                 )

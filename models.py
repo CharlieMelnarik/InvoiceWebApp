@@ -153,6 +153,7 @@ class User(Base):
     payment_reminder_after_repeat_interval: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     payment_reminder_after_repeat_unit: Mapped[str] = mapped_column(String(20), nullable=False, default="month")
     payment_reminder_last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    client_autopay_last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     late_fee_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     late_fee_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="fixed")  # fixed|percent
@@ -382,6 +383,16 @@ class Customer(Base):
     city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     state: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    stripe_connect_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    stripe_default_payment_method_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    stripe_payment_method_brand: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    stripe_payment_method_last4: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    stripe_payment_method_exp_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    stripe_payment_method_exp_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    autopay_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    autopay_consent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    autopay_last_failed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    autopay_last_error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -494,6 +505,7 @@ class Invoice(Base):
     converted_to_invoice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     paid_processing_fee: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    paid_tip: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     date_in: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     is_estimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -503,6 +515,8 @@ class Invoice(Base):
     payment_reminder_due_today_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     payment_reminder_after_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     payment_reminder_last_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    autopay_last_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    autopay_last_error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

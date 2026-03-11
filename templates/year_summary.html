@@ -107,9 +107,9 @@
       </div>
       <div class="col-6 col-md-3">
         {% if pro_features_enabled %}
-          {{ metric_label("Total Paid Invoices (incl. Late Fees)", "Sum of payments received on invoices in the selected range, including paid late fees.") }}
+          {{ metric_label("Total Paid Invoices (incl. Late Fees + Tips)", "Sum of payments received on invoices in the selected range, including paid late fees and tips.") }}
         {% else %}
-          {{ metric_label("Total Paid Invoices", "Sum of payments received on invoices in the selected range.") }}
+          {{ metric_label("Total Paid Invoices", "Sum of payments received on invoices in the selected range, including tips.") }}
         {% endif %}
         <div class="fw-semibold">{{ money(total_paid_invoices_amount) }}</div>
       </div>

@@ -54,6 +54,9 @@
             <div class="border rounded p-3 h-100">
               <div class="small-muted mb-1">Paid</div>
               <div class="h5 mb-0 mono">${{ "%.2f"|format(paid_display if paid_display is defined else (inv.paid or 0)) }}</div>
+              {% if paid_tip is defined and paid_tip > 0 %}
+                <div class="small-muted mt-1">Includes tip: ${{ "%.2f"|format(paid_tip) }}</div>
+              {% endif %}
             </div>
           </div>
           <div class="col-12 col-md-4">
@@ -67,15 +70,60 @@
           </div>
         </div>
 
+        {% if can_save_card %}
+          <div class="border rounded p-3 mb-3 bg-light">
+            <div class="fw-semibold mb-1">Saved Card for Automatic Recurring Payments</div>
+            {% if has_saved_card %}
+              <div class="small-muted mb-2">
+                Card on file: {{ saved_card_label }}{% if autopay_enabled %} · Automatic recurring payments enabled{% endif %}
+              </div>
+            {% else %}
+              <div class="small-muted mb-2">
+                Save a card securely with Stripe so future due invoices can be charged automatically.
+                InvoiceRunner does not store raw card numbers in its database.
+              </div>
+            {% endif %}
+            {% if autopay_last_error %}
+              <div class="text-danger small mb-2">{{ autopay_last_error }}</div>
+            {% endif %}
+            <form method="post" action="{{ save_card_url }}" class="d-flex flex-column gap-2 gap-md-3 flex-md-row align-items-md-center">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" value="1" id="enableAutopayPortal" name="enable_autopay" {% if autopay_enabled or not has_saved_card %}checked{% endif %}>
+                <label class="form-check-label" for="enableAutopayPortal">
+                  Enable automatic recurring payments for future invoices
+                </label>
+              </div>
+              <button class="btn btn-outline-primary" type="submit">
+                {% if has_saved_card %}Update Saved Card{% else %}Save Card{% endif %}
+              </button>
+            </form>
+          </div>
+        {% endif %}
+
         <div class="d-flex flex-wrap gap-2 mb-4">
           <a class="btn btn-outline-secondary" href="{{ pdf_url_base }}">Download Invoice PDF</a>
           {% if has_paid_online_receipt %}
             <a class="btn btn-outline-primary" href="{{ pdf_url_paid }}">Download Paid Receipt PDF (includes processing fee)</a>
           {% endif %}
           {% if can_pay_online %}
-            <form method="post" action="{{ pay_url }}">
+            <form method="post" action="{{ pay_url }}" class="d-flex flex-column gap-2 flex-md-row align-items-md-end">
+              <div>
+                <label class="form-label small-muted mb-1" for="tipAmountInput">Tip (optional)</label>
+                <input
+                  id="tipAmountInput"
+                  name="tip_amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputmode="decimal"
+                  class="form-control"
+                  style="max-width: 180px;"
+                  placeholder="0.00"
+                  data-base-total="{{ "%.2f"|format(pay_total) }}"
+                >
+              </div>
               <button class="btn btn-success" type="submit">
-                Pay Now (${{ "%.2f"|format(pay_total) }})
+                <span id="payNowLabel">Pay Now (${{ "%.2f"|format(pay_total) }})</span>
               </button>
             </form>
           {% endif %}
@@ -123,4 +171,20 @@
     </div>
   </div>
 </div>
+
+<script>
+  (function () {
+    const tipInput = document.getElementById("tipAmountInput");
+    const payLabel = document.getElementById("payNowLabel");
+    if (!tipInput || !payLabel) return;
+    const baseTotal = parseFloat(tipInput.dataset.baseTotal || "0");
+    function updatePayLabel() {
+      const tip = Math.max(0, parseFloat(tipInput.value || "0") || 0);
+      const total = (baseTotal + tip).toFixed(2);
+      payLabel.textContent = `Pay Now ($${total})`;
+    }
+    tipInput.addEventListener("input", updatePayLabel);
+    updatePayLabel();
+  })();
+</script>
 {% endblock %}

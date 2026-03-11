@@ -293,9 +293,13 @@ def _invoice_processing_fee_paid(inv: Invoice) -> float:
     return round(max(0.0, float(getattr(inv, "paid_processing_fee", 0.0) or 0.0)), 2)
 
 
+def _invoice_tip_paid(inv: Invoice) -> float:
+    return round(max(0.0, float(getattr(inv, "paid_tip", 0.0) or 0.0)), 2)
+
+
 def _invoice_paid_total_with_processing(inv: Invoice) -> float:
     paid_base = float(getattr(inv, "paid", 0.0) or 0.0)
-    return round(max(0.0, paid_base + _invoice_processing_fee_paid(inv)), 2)
+    return round(max(0.0, paid_base + _invoice_processing_fee_paid(inv) + _invoice_tip_paid(inv)), 2)
 
 
 def _tax_label(inv: Invoice) -> str:
@@ -1692,9 +1696,12 @@ def _render_modern_pdf(
 
     paid_amount = _invoice_paid_total_with_processing(inv)
     paid_processing_fee = _invoice_processing_fee_paid(inv)
+    paid_tip = _invoice_tip_paid(inv)
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
             label_right_value(sum_x + 12, right_edge, y, "Processing Fee:", _money(paid_processing_fee)); y -= 16
+        if paid_tip > 0:
+            label_right_value(sum_x + 12, right_edge, y, "Tip:", _money(paid_tip)); y -= 16
         label_right_value(sum_x + 12, right_edge, y, "Paid:", _money(paid_amount)); y -= 18
 
     pdf.setFont("Helvetica-Bold", 12)
@@ -1933,11 +1940,14 @@ def _render_split_panel_pdf(
     pdf.drawString(rail_x + 12, y, f"{label}: {_money(total_price)}"); y -= 16
     paid_amount = _invoice_paid_total_with_processing(inv)
     paid_processing_fee = _invoice_processing_fee_paid(inv)
+    paid_tip = _invoice_tip_paid(inv)
     if not is_estimate:
         pdf.setFont("Helvetica", 9)
         if paid_amount:
             if paid_processing_fee > 0:
                 pdf.drawString(rail_x + 12, y, f"Processing Fee: {_money(paid_processing_fee)}"); y -= 14
+            if paid_tip > 0:
+                pdf.drawString(rail_x + 12, y, f"Tip: {_money(paid_tip)}"); y -= 14
             pdf.drawString(rail_x + 12, y, f"Paid: {_money(paid_amount)}"); y -= 14
         pdf.setFont("Helvetica-Bold", 10)
         if price_owed < 0:
@@ -2669,9 +2679,12 @@ def _render_strip_pdf(
         row_count += 1
     paid_amount = _invoice_paid_total_with_processing(inv)
     paid_processing_fee = _invoice_processing_fee_paid(inv)
+    paid_tip = _invoice_tip_paid(inv)
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
             row_count += 1  # stripe fee
+        if paid_tip > 0:
+            row_count += 1  # tip
         row_count += 1  # paid
     if not is_estimate:
         row_count += 1  # amount due
@@ -2704,6 +2717,8 @@ def _render_strip_pdf(
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
             label_right_value(sum_x + 10, right_edge, y, "Processing Fee:", _money(paid_processing_fee)); y -= 14
+        if paid_tip > 0:
+            label_right_value(sum_x + 10, right_edge, y, "Tip:", _money(paid_tip)); y -= 14
         label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(paid_amount)); y -= 16
     if not is_estimate:
         label_right_value(sum_x + 10, right_edge, y, "Amount Due:", _money(price_owed))
@@ -2857,6 +2872,9 @@ def _render_basic_pdf(
     paid_processing_fee = _invoice_processing_fee_paid(inv)
     if paid_processing_fee > 0 and not is_estimate:
         items.append(("Processing Fee", paid_processing_fee))
+    paid_tip = _invoice_tip_paid(inv)
+    if paid_tip > 0 and not is_estimate:
+        items.append(("Tip", paid_tip))
     if tax_amt:
         items.append((_tax_label(inv), tax_amt))
 
@@ -3125,6 +3143,7 @@ def _render_simple_pdf(
     total = float(total_with_fees or 0.0)
     paid = _invoice_paid_total_with_processing(inv)
     paid_processing_fee = _invoice_processing_fee_paid(inv)
+    paid_tip = _invoice_tip_paid(inv)
     amount_due = float(due_with_fees or 0.0)
 
     sum_right = PAGE_W - M
@@ -3156,6 +3175,10 @@ def _render_simple_pdf(
         if paid_processing_fee > 0:
             right_text(sum_left + 1.35 * inch, paid_y, "Processing Fee", "Helvetica", 12, text_dark)
             right_text(sum_right, paid_y, _money(paid_processing_fee), "Helvetica", 12, text_dark)
+            paid_y -= 20
+        if paid_tip > 0:
+            right_text(sum_left + 1.35 * inch, paid_y, "Tip", "Helvetica", 12, text_dark)
+            right_text(sum_right, paid_y, _money(paid_tip), "Helvetica", 12, text_dark)
             paid_y -= 20
         right_text(sum_left + 1.35 * inch, paid_y, "Paid", "Helvetica", 12, text_dark)
         right_text(sum_right, paid_y, _money(paid), "Helvetica", 12, text_dark)
@@ -3489,6 +3512,7 @@ def _render_blueprint_pdf(
     total = float(total_with_fees or 0.0)
     paid = _invoice_paid_total_with_processing(inv)
     paid_processing_fee = _invoice_processing_fee_paid(inv)
+    paid_tip = _invoice_tip_paid(inv)
     amount_due = float(due_with_fees or 0.0)
 
     if row_y < 2.2 * inch:
@@ -3518,6 +3542,9 @@ def _render_blueprint_pdf(
         paid_y = total_y - 18
         if paid_processing_fee > 0:
             right_text(sx + sum_w - 10, paid_y, f"Processing Fee   {_money(paid_processing_fee)}", "Helvetica", 11, ink)
+            paid_y -= 18
+        if paid_tip > 0:
+            right_text(sx + sum_w - 10, paid_y, f"Tip   {_money(paid_tip)}", "Helvetica", 11, ink)
             paid_y -= 18
         right_text(sx + sum_w - 10, paid_y, f"Paid   {_money(paid)}", "Helvetica", 11, ink)
         pdf.setStrokeColor(accent)
@@ -3711,9 +3738,13 @@ def _render_luxe_pdf(
         next_meta_y -= 14
     paid_amount = _invoice_paid_total_with_processing(inv)
     paid_processing_fee = _invoice_processing_fee_paid(inv)
+    paid_tip = _invoice_tip_paid(inv)
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
             pdf.drawString(right_x + 12, next_meta_y, f"Processing Fee: {_money(paid_processing_fee)}")
+            next_meta_y -= 14
+        if paid_tip > 0:
+            pdf.drawString(right_x + 12, next_meta_y, f"Tip: {_money(paid_tip)}")
             next_meta_y -= 14
         pdf.drawString(right_x + 12, next_meta_y, f"Paid: {_money(paid_amount)}")
 
@@ -4757,9 +4788,12 @@ def generate_and_store_pdf(
         summary_rows += 1
     paid_amount = _invoice_paid_total_with_processing(inv)
     paid_processing_fee = _invoice_processing_fee_paid(inv)
+    paid_tip = _invoice_tip_paid(inv)
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
             summary_rows += 1  # Stripe Fee
+        if paid_tip > 0:
+            summary_rows += 1  # Tip
         summary_rows += 1  # Paid
     sum_h = max(1.8 * inch, (0.58 * inch + (summary_rows * 0.23 * inch)))
     pdf.roundRect(sum_x, notes_y_top - sum_h, sum_w, sum_h, 8, stroke=1, fill=0)
@@ -4793,6 +4827,8 @@ def generate_and_store_pdf(
     if not is_estimate and paid_amount:
         if paid_processing_fee > 0:
             label_right_value(sum_x + 10, right_edge, y, "Processing Fee:", _money(paid_processing_fee)); y -= 16
+        if paid_tip > 0:
+            label_right_value(sum_x + 10, right_edge, y, "Tip:", _money(paid_tip)); y -= 16
         label_right_value(sum_x + 10, right_edge, y, "Paid:", _money(paid_amount)); y -= 18
 
     # Amount Due / Profit below the box
