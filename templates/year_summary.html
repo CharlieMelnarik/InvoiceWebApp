@@ -119,6 +119,10 @@
           <div class="fw-semibold">{{ money(total_late_fee_income) }}</div>
         </div>
         <div class="col-6 col-md-3">
+          {{ metric_label("Tip Income (Paid Invoices)", "Total tips paid by clients on invoices in the selected range.") }}
+          <div class="fw-semibold">{{ money(total_tip_income) }}</div>
+        </div>
+        <div class="col-6 col-md-3">
           {{ metric_label("Stripe Credit Card Processing Fee (Client-Paid)", "Sum of customer-paid processing fees on online card payments. This is shown for reference only.") }}
           <div class="fw-semibold">{{ money(total_stripe_processing_fees) }}</div>
           <div class="small-muted mt-1">

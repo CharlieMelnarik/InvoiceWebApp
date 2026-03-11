@@ -11895,6 +11895,7 @@ def create_app():
 
         total_paid_invoices_amount = 0.0
         total_late_fee_income = 0.0
+        total_tip_income = 0.0
         total_stripe_processing_fees = 0.0
         total_outstanding_unpaid = 0.0
         labor_unpaid = 0.0
@@ -12019,6 +12020,7 @@ def create_app():
                 if fully_paid:
                     total_paid_invoices_amount += recognized_income
                     total_late_fee_income += late_fee_income
+                    total_tip_income += tip_income
                     total_tax_collected += tax_amount
                 else:
                     outstanding = max(0.0, invoice_total - paid)
@@ -12102,6 +12104,7 @@ def create_app():
             "total_tax_collected": total_tax_collected,
             "total_paid_invoices_amount": total_paid_invoices_amount,
             "total_late_fee_income": total_late_fee_income,
+            "total_tip_income": total_tip_income,
             "total_stripe_processing_fees": total_stripe_processing_fees,
             "total_outstanding_unpaid": total_outstanding_unpaid,
             "unpaid_count": len(unpaid),
@@ -14266,7 +14269,11 @@ def create_app():
                             s.commit()
                             payment_message = (
                                 "Card saved for future payments."
-                                + (" Automatic recurring payments are enabled." if enable_autopay else "")
+                                + (
+                                    " Automatic future payments are enabled and the card will be charged for future invoices on their due date."
+                                    if enable_autopay
+                                    else ""
+                                )
                             )
                         else:
                             payment_error = "The saved card could not be verified."

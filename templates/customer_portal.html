@@ -90,11 +90,12 @@
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" value="1" id="enableAutopayPortal" name="enable_autopay" {% if autopay_enabled or not has_saved_card %}checked{% endif %}>
                 <label class="form-check-label" for="enableAutopayPortal">
-                  Enable automatic recurring payments for future invoices
+                  Enable automatic payments for future invoices on invoice due date
                 </label>
               </div>
-              <button class="btn btn-outline-primary" type="submit">
-                {% if has_saved_card %}Update Saved Card{% else %}Save Card{% endif %}
+              <button class="btn btn-outline-primary" type="submit" id="saveCardButton">
+                <span class="spinner-border spinner-border-sm me-2 d-none" id="saveCardSpinner" aria-hidden="true"></span>
+                <span id="saveCardLabel">{% if has_saved_card %}Update Saved Card{% else %}Save Card{% endif %}</span>
               </button>
             </form>
           </div>
@@ -122,7 +123,8 @@
                   data-base-total="{{ "%.2f"|format(pay_total) }}"
                 >
               </div>
-              <button class="btn btn-success" type="submit">
+              <button class="btn btn-success" type="submit" id="payNowButton">
+                <span class="spinner-border spinner-border-sm me-2 d-none" id="payNowSpinner" aria-hidden="true"></span>
                 <span id="payNowLabel">Pay Now (${{ "%.2f"|format(pay_total) }})</span>
               </button>
             </form>
@@ -181,15 +183,38 @@
   (function () {
     const tipInput = document.getElementById("tipAmountInput");
     const payLabel = document.getElementById("payNowLabel");
-    if (!tipInput || !payLabel) return;
-    const baseTotal = parseFloat(tipInput.dataset.baseTotal || "0");
-    function updatePayLabel() {
-      const tip = Math.max(0, parseFloat(tipInput.value || "0") || 0);
-      const total = (baseTotal + tip).toFixed(2);
-      payLabel.textContent = `Pay Now ($${total})`;
+    const payButton = document.getElementById("payNowButton");
+    const paySpinner = document.getElementById("payNowSpinner");
+    const saveCardForm = document.querySelector('form[action="{{ save_card_url }}"]');
+    const saveCardButton = document.getElementById("saveCardButton");
+    const saveCardSpinner = document.getElementById("saveCardSpinner");
+    const saveCardLabel = document.getElementById("saveCardLabel");
+    if (tipInput && payLabel) {
+      const baseTotal = parseFloat(tipInput.dataset.baseTotal || "0");
+      function updatePayLabel() {
+        const tip = Math.max(0, parseFloat(tipInput.value || "0") || 0);
+        const total = (baseTotal + tip).toFixed(2);
+        payLabel.textContent = `Pay Now ($${total})`;
+      }
+      tipInput.addEventListener("input", updatePayLabel);
+      updatePayLabel();
     }
-    tipInput.addEventListener("input", updatePayLabel);
-    updatePayLabel();
+    if (payButton) {
+      const payForm = payButton.closest("form");
+      if (payForm) {
+        payForm.addEventListener("submit", function () {
+          payButton.disabled = true;
+          if (paySpinner) paySpinner.classList.remove("d-none");
+        });
+      }
+    }
+    if (saveCardForm && saveCardButton) {
+      saveCardForm.addEventListener("submit", function () {
+        saveCardButton.disabled = true;
+        if (saveCardSpinner) saveCardSpinner.classList.remove("d-none");
+        if (saveCardLabel) saveCardLabel.textContent = "Saving Card...";
+      });
+    }
   })();
 </script>
 {% endblock %}

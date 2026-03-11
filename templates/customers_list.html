@@ -35,6 +35,7 @@
             <th style="min-width: 260px;">Client</th>
             <th style="min-width: 220px;">Email</th>
             <th style="min-width: 160px;">Phone</th>
+            <th style="min-width: 150px;">Card on File</th>
             <th>Address</th>
             <th style="width: 160px;"></th>
           </tr>
@@ -50,6 +51,16 @@
                 </td>
                 <td class="mono">{{ c.email or "" }}</td>
                 <td class="mono">{{ format_phone(c.phone) }}</td>
+                <td>
+                  {% if c.stripe_default_payment_method_id %}
+                    <span class="badge text-bg-success">Yes</span>
+                    {% if c.stripe_payment_method_brand and c.stripe_payment_method_last4 %}
+                      <div class="small-muted mt-1">{{ c.stripe_payment_method_brand|title }} ending in {{ c.stripe_payment_method_last4 }}</div>
+                    {% endif %}
+                  {% else %}
+                    <span class="badge text-bg-secondary">No</span>
+                  {% endif %}
+                </td>
                 <td>
                   {% if c.address_line1 %}
                     {{ c.address_line1 }}
@@ -76,7 +87,7 @@
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="5" class="p-4">
+              <td colspan="6" class="p-4">
                 <div class="text-center">
                   <div class="fw-semibold mb-1">No clients yet.</div>
                   <div class="small-muted mb-3">Create your first client to start invoicing.</div>
