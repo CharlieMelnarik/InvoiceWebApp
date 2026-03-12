@@ -899,6 +899,57 @@ def _extract_mileage_from_invoice_vehicle_text(vehicle_text: str) -> str:
     return ""
 
 
+def _receipt_vehicle_fields_from_invoice(inv: Invoice, customer: Customer | None) -> dict:
+    vehicle_text = (getattr(inv, "vehicle", None) or "").strip()
+    parts = [(part or "").strip() for part in vehicle_text.split("·") if (part or "").strip()]
+    year = ""
+    make = ""
+    model = ""
+    vin = ""
+    mileage = ""
+    plate = ""
+
+    if parts:
+        base = parts[0]
+        base_match = re.match(r"^\s*(\d{4})\s+(.+?)\s+(.+?)\s*$", base)
+        if base_match:
+            year = (base_match.group(1) or "").strip()[:8]
+            make = (base_match.group(2) or "").strip()[:40]
+            model = (base_match.group(3) or "").strip()[:50]
+        else:
+            model = base[:50]
+
+    for part in parts[1:]:
+        lowered = part.lower()
+        if lowered.startswith("vin "):
+            vin = part[4:].strip()[:40]
+        elif lowered.startswith("mileage "):
+            mileage = part[8:].strip()[:24]
+        elif lowered.startswith("plate "):
+            plate = part[6:].strip()[:24]
+
+    if customer and not any([year, make, model, vin, mileage, plate]):
+        first_vehicle = (getattr(customer, "vehicles", None) or [None])[0]
+        payload = _customer_vehicle_payload(first_vehicle)
+        return {
+            "vehicle_year": payload["vehicle_year"][:8],
+            "vehicle_make": payload["vehicle_make"][:40],
+            "vehicle_model": payload["vehicle_model"][:50],
+            "vehicle_vin": payload["vehicle_vin"][:40],
+            "vehicle_mileage": payload["vehicle_mileage"][:24],
+            "vehicle_plate": payload["vehicle_plate"][:24],
+        }
+
+    return {
+        "vehicle_year": year[:8],
+        "vehicle_make": make[:40],
+        "vehicle_model": model[:50],
+        "vehicle_vin": vin[:40],
+        "vehicle_mileage": mileage[:24],
+        "vehicle_plate": plate[:24],
+    }
+
+
 def _customer_vehicle_payload(vehicle: CustomerVehicle | None) -> dict:
     return {
         "vehicle_year": (getattr(vehicle, "vehicle_year", None) or "").strip(),
@@ -1265,6 +1316,7 @@ def _create_invoice_receipt(
     thank_you_note: str = "",
     pdf_template: str | None = None,
 ) -> Receipt:
+    vehicle_fields = _receipt_vehicle_fields_from_invoice(inv, customer)
     receipt_number = _next_sequential_document_number(
         session,
         Receipt,
@@ -1290,12 +1342,12 @@ def _create_invoice_receipt(
         paid_in_full=round(float(remaining_balance or 0.0), 2) <= 0.0,
         customer_email=((getattr(inv, "customer_email", None) or getattr(customer, "email", None) or "").strip() or None),
         customer_phone=((getattr(inv, "customer_phone", None) or getattr(customer, "phone", None) or "").strip() or None),
-        vehicle_year="",
-        vehicle_make="",
-        vehicle_model=(getattr(inv, "vehicle", None) or "").strip(),
-        vehicle_vin="",
-        vehicle_mileage="",
-        vehicle_plate="",
+        vehicle_year=vehicle_fields["vehicle_year"] or "",
+        vehicle_make=vehicle_fields["vehicle_make"] or "",
+        vehicle_model=vehicle_fields["vehicle_model"] or "",
+        vehicle_vin=vehicle_fields["vehicle_vin"] or "",
+        vehicle_mileage=vehicle_fields["vehicle_mileage"] or "",
+        vehicle_plate=vehicle_fields["vehicle_plate"] or "",
         memo=(memo or "").strip(),
         service_summary=(service_summary or _receipt_service_summary(inv, owner)).strip(),
         labor_parts_summary=(labor_parts_summary or "").strip(),
