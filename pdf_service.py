@@ -585,6 +585,7 @@ def generate_free_estimate_pdf(data: dict) -> bytes:
 
 def generate_free_repair_order_pdf(data: dict) -> bytes:
     payload = dict(data or {})
+    show_branding = bool(payload.get("show_branding", True))
     template_key = (payload.get("template_key") or "classic_shop").strip().lower()
     cfg = FREE_INVOICE_TEMPLATES.get(template_key, FREE_INVOICE_TEMPLATES["classic_shop"])
     shop = payload.get("shop", {}) or {}
@@ -605,7 +606,7 @@ def generate_free_repair_order_pdf(data: dict) -> bytes:
         "Free invoicing and repair order software for service businesses",
         "Need to save repair orders, estimates, invoices, customers, and payment history? Try InvoiceRunner",
         "invoicerunner.com",
-    ]
+    ] if show_branding else []
 
     def draw_logo(x: float, top_y: float, *, box_w=0.88 * inch, box_h=0.88 * inch) -> float:
         if not logo_bytes:
@@ -663,6 +664,8 @@ def generate_free_repair_order_pdf(data: dict) -> bytes:
         return lines
 
     def draw_footer(base_y: float):
+        if not show_branding:
+            return
         pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
         pdf.line(margin, base_y, margin + content_w, base_y)
         pdf.setFillColor(colors.HexColor("#425f8d"))
@@ -810,16 +813,17 @@ def generate_free_repair_order_pdf(data: dict) -> bytes:
         draw_multiline_block("Inspection notes", intake.get("inspection_notes") or notes or "", left_text_x, y, left_w, 102)
         draw_multiline_block("Internal shop details", internal_text, right_x, y, right_w, 102)
         footer_y = y - 118
-        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
-        pdf.line(left_text_x, footer_y, page_w - margin, footer_y)
-        pdf.setFillColor(colors.HexColor("#425f8d"))
-        pdf.setFont("Helvetica-Bold", 9.5)
-        pdf.drawString(left_text_x, footer_y - 14, "Created with InvoiceRunner")
-        pdf.setFont("Helvetica", 8.5)
-        fy = footer_y - 28
-        for line in footer_lines:
-            pdf.drawString(left_text_x, fy, line)
-            fy -= 11
+        if show_branding:
+            pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+            pdf.line(left_text_x, footer_y, page_w - margin, footer_y)
+            pdf.setFillColor(colors.HexColor("#425f8d"))
+            pdf.setFont("Helvetica-Bold", 9.5)
+            pdf.drawString(left_text_x, footer_y - 14, "Created with InvoiceRunner")
+            pdf.setFont("Helvetica", 8.5)
+            fy = footer_y - 28
+            for line in footer_lines:
+                pdf.drawString(left_text_x, fy, line)
+                fy -= 11
 
     else:
         header_h = 1.28 * inch
@@ -870,6 +874,7 @@ def generate_free_repair_order_pdf(data: dict) -> bytes:
 
 def generate_free_receipt_pdf(data: dict) -> bytes:
     payload = dict(data or {})
+    show_branding = bool(payload.get("show_branding", True))
     template_key = (payload.get("template_key") or "classic_shop").strip().lower()
     cfg = FREE_INVOICE_TEMPLATES.get(template_key, FREE_INVOICE_TEMPLATES["classic_shop"])
     shop = payload.get("shop", {}) or {}
@@ -889,7 +894,7 @@ def generate_free_receipt_pdf(data: dict) -> bytes:
         "Free invoicing and receipt software for service businesses",
         "Need to save repair orders, estimates, invoices, receipts, customers, and payment history? Try InvoiceRunner",
         "invoicerunner.com",
-    ]
+    ] if show_branding else []
 
     def draw_logo(x: float, top_y: float, *, box_w=0.88 * inch, box_h=0.88 * inch) -> float:
         if not logo_bytes:
@@ -945,6 +950,8 @@ def generate_free_receipt_pdf(data: dict) -> bytes:
         return chrome + _wrapped_height(text, width, font=font, size=size, leading=leading, min_lines=min_lines)
 
     def draw_footer(base_y: float):
+        if not show_branding:
+            return
         pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
         pdf.line(margin, base_y, margin + content_w, base_y)
         pdf.setFillColor(colors.HexColor("#425f8d"))
@@ -998,11 +1005,11 @@ def generate_free_receipt_pdf(data: dict) -> bytes:
     client_text = "\n".join(client_lines) or "Not provided."
     payment_width_for_calc = (content_w - 18) / 2 - 24
     vehicle_width_for_calc = content_w - 24
-    client_block_h = _block_height(client_text, payment_width_for_calc, size=10, leading=13, min_lines=4, chrome=48)
-    payment_block_h = _block_height(payment_text, payment_width_for_calc, size=10, leading=13, min_lines=5, chrome=48)
-    top_block_h = max(108.0, client_block_h, payment_block_h)
-    vehicle_block_h = max(82.0, _block_height(vehicle_summary, vehicle_width_for_calc, size=10.5, leading=12, min_lines=2, chrome=44))
-    summary_block_h = max(128.0, _block_height(summary_text, content_w - 24, size=10, leading=13, min_lines=5, chrome=48))
+    client_block_h = _block_height(client_text, payment_width_for_calc, size=10, leading=13, min_lines=4, chrome=54)
+    payment_block_h = _block_height(payment_text, payment_width_for_calc, size=10, leading=13, min_lines=5, chrome=54)
+    top_block_h = max(132.0, client_block_h, payment_block_h)
+    vehicle_block_h = max(96.0, _block_height(vehicle_summary, vehicle_width_for_calc, size=10.5, leading=12, min_lines=2, chrome=50))
+    summary_block_h = max(148.0, _block_height(summary_text, content_w - 24, size=10, leading=13, min_lines=5, chrome=54))
 
     if template_key == "modern_clean":
         pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
@@ -1075,7 +1082,7 @@ def generate_free_receipt_pdf(data: dict) -> bytes:
 
         service_w = page_w - margin - left_text_x
         pdf.setFillColor(cfg["accent_soft"])
-        vehicle_strip_h = max(68.0, _block_height(vehicle_summary, service_w - 28, size=10.5, leading=12, min_lines=2, chrome=24))
+        vehicle_strip_h = max(86.0, _block_height(vehicle_summary, service_w - 28, size=10.5, leading=12, min_lines=2, chrome=34))
         pdf.roundRect(left_text_x, y - vehicle_strip_h, service_w, vehicle_strip_h, 14, fill=1, stroke=0)
         section_label("Vehicle / Reference", left_text_x + 14, y - 18)
         _free_invoice_wrap(
@@ -1094,25 +1101,26 @@ def generate_free_receipt_pdf(data: dict) -> bytes:
         left_w = service_w * 0.48
         right_x = left_text_x + left_w + 16
         right_w = service_w - left_w - 16
-        detailed_client_h = _block_height(client_text, left_w - 24, size=10, leading=13, min_lines=4, chrome=48)
-        detailed_payment_h = _block_height(payment_text, right_w - 24, size=10, leading=13, min_lines=5, chrome=48)
-        detailed_top_h = max(112.0, detailed_client_h, detailed_payment_h)
-        detailed_summary_h = max(132.0, _block_height(summary_text, service_w - 24, size=10, leading=13, min_lines=5, chrome=48))
+        detailed_client_h = _block_height(client_text, left_w - 24, size=10, leading=13, min_lines=4, chrome=54)
+        detailed_payment_h = _block_height(payment_text, right_w - 24, size=10, leading=13, min_lines=5, chrome=54)
+        detailed_top_h = max(134.0, detailed_client_h, detailed_payment_h)
+        detailed_summary_h = max(148.0, _block_height(summary_text, service_w - 24, size=10, leading=13, min_lines=5, chrome=54))
         draw_multiline_block("Client", client_text, left_text_x, y, left_w, detailed_top_h)
         draw_multiline_block("Payment details", payment_text, right_x, y, right_w, detailed_top_h, fill=cfg["header_fill"], stroke=0, text_color=colors.white)
         y -= detailed_top_h + 14
         draw_multiline_block("Service / payment summary", summary_text, left_text_x, y, service_w, detailed_summary_h)
         footer_y = y - (detailed_summary_h + 16)
-        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
-        pdf.line(left_text_x, footer_y, page_w - margin, footer_y)
-        pdf.setFillColor(colors.HexColor("#425f8d"))
-        pdf.setFont("Helvetica-Bold", 9.5)
-        pdf.drawString(left_text_x, footer_y - 14, "Created with InvoiceRunner")
-        pdf.setFont("Helvetica", 8.5)
-        fy = footer_y - 28
-        for line in footer_lines:
-            pdf.drawString(left_text_x, fy, line)
-            fy -= 11
+        if show_branding:
+            pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+            pdf.line(left_text_x, footer_y, page_w - margin, footer_y)
+            pdf.setFillColor(colors.HexColor("#425f8d"))
+            pdf.setFont("Helvetica-Bold", 9.5)
+            pdf.drawString(left_text_x, footer_y - 14, "Created with InvoiceRunner")
+            pdf.setFont("Helvetica", 8.5)
+            fy = footer_y - 28
+            for line in footer_lines:
+                pdf.drawString(left_text_x, fy, line)
+                fy -= 11
 
     else:
         header_h = 1.28 * inch

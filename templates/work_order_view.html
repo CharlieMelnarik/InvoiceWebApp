@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% set title = "Work Order " ~ (work_order.work_order_number or work_order.id) %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Work Order <span class="mono">{{ work_order.work_order_number }}</span></h1>
+    <div class="subtitle">
+      Client:
+      <a class="text-decoration-none fw-semibold" href="{{ url_for('customer_view', customer_id=c.id) }}">{{ c.name }}</a>
+      {% if work_order.received_date %} · Received: <span class="mono">{{ work_order.received_date }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Back to Client</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('work_order_edit', work_order_id=work_order.id) }}">Edit</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('work_order_pdf_download', work_order_id=work_order.id) }}">Download PDF</a>
+    <form method="post" action="{{ url_for('work_order_delete', work_order_id=work_order.id) }}" onsubmit="return confirm('Delete this work order?');">
+      <button class="btn btn-outline-danger" type="submit">Delete</button>
+    </form>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-semibold">Client / Vehicle</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <div class="small-muted">Client</div>
+          <div class="fw-semibold">{{ c.name }}</div>
+          {% if c.email or work_order.customer_email %}<div>{{ work_order.customer_email or c.email }}</div>{% endif %}
+          {% if c.phone or work_order.customer_phone %}<div>{{ format_phone(work_order.customer_phone or c.phone) }}</div>{% endif %}
+          {% if c.address_line1 or c.address %}
+            <div class="mt-2">{{ c.address_line1 or c.address }}</div>
+            {% if c.address_line2 %}<div>{{ c.address_line2 }}</div>{% endif %}
+            {% if c.city or c.state or c.postal_code %}<div>{{ [c.city, c.state, c.postal_code]|select|join(' ') }}</div>{% endif %}
+          {% endif %}
+        </div>
+        <div>
+          <div class="small-muted">Vehicle / Intake</div>
+          <div class="fw-semibold">{{ [work_order.vehicle_year, work_order.vehicle_make, work_order.vehicle_model]|select|join(' ') or "—" }}</div>
+          <div class="mt-1">
+            {% if work_order.vehicle_vin %}<div>VIN: <span class="mono">{{ work_order.vehicle_vin }}</span></div>{% endif %}
+            {% if work_order.vehicle_mileage %}<div>Mileage: {{ work_order.vehicle_mileage }}</div>{% endif %}
+            {% if work_order.vehicle_plate %}<div>Plate: {{ work_order.vehicle_plate }}</div>{% endif %}
+            {% if work_order.vehicle_color %}<div>Color: {{ work_order.vehicle_color }}</div>{% endif %}
+            {% if work_order.promised_completion_date %}<div>Promised Completion: {{ work_order.promised_completion_date }}</div>{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-semibold">Authorization / Internal Details</div>
+      <div class="card-body">
+        <div class="mb-2"><span class="small-muted">Authorized By:</span> {{ work_order.authorization_name or "—" }}</div>
+        <div class="mb-2"><span class="small-muted">Authorization Date:</span> {{ work_order.authorization_date or "—" }}</div>
+        <div class="mb-2"><span class="small-muted">Technician:</span> {{ work_order.technician_name or "—" }}</div>
+        <div class="mb-2"><span class="small-muted">Service Advisor:</span> {{ work_order.service_advisor or "—" }}</div>
+        <div class="mb-2"><span class="small-muted">Dropped Off By:</span> {{ work_order.dropped_off_by or "—" }}</div>
+        <div class="mb-2"><span class="small-muted">Keys Received:</span> {{ work_order.keys_received or "—" }}</div>
+        <div class="mb-0">
+          <span class="small-muted">Diagnosis Acknowledged:</span>
+          {% if work_order.diagnosis_acknowledged %}
+            <span class="text-success fw-semibold">Yes</span>
+          {% else %}
+            <span class="text-muted">No</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-header fw-semibold">Repair Order Details</div>
+      <div class="card-body">
+        <h2 class="h6 fw-bold">Customer Complaint / Concern</h2>
+        <p class="mb-3">{{ work_order.complaint or "—" }}</p>
+        <h2 class="h6 fw-bold">Requested Service</h2>
+        <p class="mb-3">{{ work_order.requested_service or "—" }}</p>
+        {% if work_order.technician_notes %}
+          <h2 class="h6 fw-bold">Technician / Advisor Notes</h2>
+          <p class="mb-3">{{ work_order.technician_notes }}</p>
+        {% endif %}
+        {% if work_order.inspection_notes %}
+          <h2 class="h6 fw-bold">Inspection Notes</h2>
+          <p class="mb-3">{{ work_order.inspection_notes }}</p>
+        {% endif %}
+        {% if work_order.notes %}
+          <h2 class="h6 fw-bold">Additional Notes</h2>
+          <p class="mb-0">{{ work_order.notes }}</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

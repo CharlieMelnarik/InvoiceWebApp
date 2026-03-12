@@ -72,6 +72,60 @@
           value="{% if mode=='edit' %}{{ c.postal_code or '' }}{% else %}{{ (form.postal_code if form else '') }}{% endif %}"
           placeholder="ZIP">
       </div>
+
+      {% if auto_repair_enabled %}
+      <div class="col-12 mt-2">
+        <hr class="my-2">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <h2 class="h5 fw-bold mb-1">Saved Vehicles</h2>
+            <div class="small-muted">Save vehicles to reuse on work orders, invoices, and estimates. Year, make, and model are required for each saved vehicle.</div>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary" type="button" id="addVehicleRowBtn">Add Vehicle</button>
+        </div>
+      </div>
+      <div class="col-12">
+        <div id="savedVehicleRows" class="d-flex flex-column gap-3">
+          {% for row in vehicle_rows %}
+          <div class="border rounded-3 p-3 saved-vehicle-row">
+            <div class="row g-3">
+              <div class="col-6 col-md-2">
+                <label class="form-label">Year</label>
+                <input class="form-control" name="saved_vehicle_year" value="{{ row.vehicle_year or '' }}" placeholder="2018">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label">Make</label>
+                <input class="form-control" name="saved_vehicle_make" value="{{ row.vehicle_make or '' }}" placeholder="Subaru">
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label">Model</label>
+                <input class="form-control" name="saved_vehicle_model" value="{{ row.vehicle_model or '' }}" placeholder="Outback">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label">VIN</label>
+                <input class="form-control" name="saved_vehicle_vin" value="{{ row.vehicle_vin or '' }}" placeholder="Optional">
+              </div>
+              <div class="col-6 col-md-4">
+                <label class="form-label">Mileage</label>
+                <input class="form-control" name="saved_vehicle_mileage" value="{{ row.vehicle_mileage or '' }}" placeholder="Optional">
+              </div>
+              <div class="col-6 col-md-4">
+                <label class="form-label">Plate</label>
+                <input class="form-control" name="saved_vehicle_plate" value="{{ row.vehicle_plate or '' }}" placeholder="Optional">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label">Color</label>
+                <input class="form-control" name="saved_vehicle_color" value="{{ row.vehicle_color or '' }}" placeholder="Optional">
+              </div>
+              <div class="col-12 text-end">
+                <button class="btn btn-sm btn-outline-danger remove-vehicle-row" type="button">Remove Vehicle</button>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
     </div>
 
     <div class="d-flex gap-2 align-items-center">
@@ -126,6 +180,80 @@
       phoneInput.value = formatPhone(phoneInput.value);
     });
   }
+
+  {% if auto_repair_enabled %}
+  (function () {
+    const container = document.getElementById("savedVehicleRows");
+    const addBtn = document.getElementById("addVehicleRowBtn");
+    if (!container || !addBtn) return;
+
+    function buildRow() {
+      const wrapper = document.createElement("div");
+      wrapper.className = "border rounded-3 p-3 saved-vehicle-row";
+      wrapper.innerHTML = `
+        <div class="row g-3">
+          <div class="col-6 col-md-2">
+            <label class="form-label">Year</label>
+            <input class="form-control" name="saved_vehicle_year" placeholder="2018">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label">Make</label>
+            <input class="form-control" name="saved_vehicle_make" placeholder="Subaru">
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label">Model</label>
+            <input class="form-control" name="saved_vehicle_model" placeholder="Outback">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">VIN</label>
+            <input class="form-control" name="saved_vehicle_vin" placeholder="Optional">
+          </div>
+          <div class="col-6 col-md-4">
+            <label class="form-label">Mileage</label>
+            <input class="form-control" name="saved_vehicle_mileage" placeholder="Optional">
+          </div>
+          <div class="col-6 col-md-4">
+            <label class="form-label">Plate</label>
+            <input class="form-control" name="saved_vehicle_plate" placeholder="Optional">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">Color</label>
+            <input class="form-control" name="saved_vehicle_color" placeholder="Optional">
+          </div>
+          <div class="col-12 text-end">
+            <button class="btn btn-sm btn-outline-danger remove-vehicle-row" type="button">Remove Vehicle</button>
+          </div>
+        </div>
+      `;
+      return wrapper;
+    }
+
+    function syncRemoveButtons() {
+      const rows = container.querySelectorAll(".saved-vehicle-row");
+      rows.forEach((row) => {
+        const btn = row.querySelector(".remove-vehicle-row");
+        if (!btn) return;
+        btn.disabled = rows.length === 1;
+      });
+    }
+
+    addBtn.addEventListener("click", () => {
+      container.appendChild(buildRow());
+      syncRemoveButtons();
+    });
+
+    container.addEventListener("click", (event) => {
+      const btn = event.target.closest(".remove-vehicle-row");
+      if (!btn) return;
+      const rows = container.querySelectorAll(".saved-vehicle-row");
+      if (rows.length <= 1) return;
+      btn.closest(".saved-vehicle-row")?.remove();
+      syncRemoveButtons();
+    });
+
+    syncRemoveButtons();
+  })();
+  {% endif %}
 </script>
 
 {% endblock %}

@@ -360,6 +360,18 @@
             Download PDF
           </a>
 
+          {% if auto_repair_enabled %}
+            {% if latest_receipt %}
+              <a class="btn btn-outline-secondary" href="{{ url_for('receipt_view', receipt_id=latest_receipt.id) }}">
+                View Receipt
+              </a>
+            {% else %}
+              <a class="btn btn-outline-secondary" href="{{ url_for('receipt_new_from_invoice', invoice_id=inv.id) }}">
+                Create Receipt
+              </a>
+            {% endif %}
+          {% endif %}
+
           <form method="post" action="{{ url_for('invoice_send', invoice_id=inv.id) }}">
             <button class="btn btn-outline-success" type="submit">Email PDF</button>
           </form>
@@ -461,6 +473,30 @@
           </div>
         {% endif %}
       </div>
+
+      {% if auto_repair_enabled and latest_receipt %}
+        <div class="doc-subsection">
+          <h3 class="doc-subtitle">Latest Receipt</h3>
+          <div class="doc-summary-grid">
+            <div class="doc-stat">
+              <div class="label">Receipt #</div>
+              <div class="value mono">{{ latest_receipt.receipt_number }}</div>
+            </div>
+            <div class="doc-stat">
+              <div class="label">Payment Date</div>
+              <div class="value">{{ latest_receipt.payment_date or "—" }}</div>
+            </div>
+            <div class="doc-stat">
+              <div class="label">Amount Paid</div>
+              <div class="value mono">${{ "%.2f"|format(latest_receipt.amount_paid or 0) }}</div>
+            </div>
+            <div class="doc-stat">
+              <div class="label">Remaining Balance</div>
+              <div class="value mono">${{ "%.2f"|format(latest_receipt.remaining_balance or 0) }}</div>
+            </div>
+          </div>
+        </div>
+      {% endif %}
 
       <div class="doc-subsection">
         <div class="row g-3">

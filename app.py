@@ -48,7 +48,7 @@ from models import (
     ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
     InvoiceDesignTemplate, EmailTemplate, CustomProfessionPreset, Contract, IncomeEntry,
     MarketingCampaign, MarketingCampaignRecipient, EmailSuppression,
-    SiteActivity,
+    SiteActivity, WorkOrder, Receipt, CustomerVehicle,
 )
 from pdf_service import (
     generate_and_store_pdf,
@@ -805,6 +805,599 @@ def _client_saved_card_label(customer: Customer | None) -> str:
     return f"{brand} ending in {last4}{exp_suffix}"
 
 
+def _auto_repair_enabled_for_user(user: User | None) -> bool:
+    key = ((getattr(user, "invoice_template", None) or "").strip().lower())
+    return key == "auto_repair"
+
+
+def _auto_repair_enabled_for_invoice(inv: Invoice | None, owner: User | None) -> bool:
+    key = ((getattr(inv, "invoice_template", None) or "").strip().lower())
+    if not key:
+        key = ((getattr(owner, "invoice_template", None) or "").strip().lower())
+    return key == "auto_repair"
+
+
+def _document_number(prefix: str) -> str:
+    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    return f"{prefix}-{stamp}-{uuid.uuid4().hex[:4].upper()}"
+
+
+def _next_sequential_document_number(session, model, column_attr, *, user_id: int, prefix: str, width: int = 4, now: datetime | None = None) -> str:
+    current_dt = now or datetime.utcnow()
+    year = current_dt.strftime("%Y")
+    prefix_with_year = f"{prefix}-{year}-"
+    pattern = re.compile(rf"^{re.escape(prefix)}-{re.escape(year)}-(\d+)$")
+    existing_values = (
+        session.query(column_attr)
+        .filter(model.user_id == user_id)
+        .filter(column_attr.like(f"{prefix_with_year}%"))
+        .all()
+    )
+    highest = 0
+    for (raw_value,) in existing_values:
+        value = (raw_value or "").strip()
+        match = pattern.match(value)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return f"{prefix}-{year}-{highest + 1:0{width}d}"
+
+
+def _customer_vehicle_display(vehicle: CustomerVehicle | None) -> str:
+    if not vehicle:
+        return ""
+    bits = []
+    year = (getattr(vehicle, "vehicle_year", None) or "").strip()
+    make = (getattr(vehicle, "vehicle_make", None) or "").strip()
+    model = (getattr(vehicle, "vehicle_model", None) or "").strip()
+    base = " ".join(part for part in [year, make, model] if part).strip()
+    if base:
+        bits.append(base)
+    vin = (getattr(vehicle, "vehicle_vin", None) or "").strip()
+    mileage = (getattr(vehicle, "vehicle_mileage", None) or "").strip()
+    plate = (getattr(vehicle, "vehicle_plate", None) or "").strip()
+    color = (getattr(vehicle, "vehicle_color", None) or "").strip()
+    if vin:
+        bits.append(f"VIN {vin}")
+    if mileage:
+        bits.append(f"Mileage {mileage}")
+    if plate:
+        bits.append(f"Plate {plate}")
+    if color:
+        bits.append(color)
+    return " · ".join(bits)
+
+
+def _invoice_vehicle_text_from_fields(
+    year: str = "",
+    make: str = "",
+    model: str = "",
+    vin: str = "",
+    mileage: str = "",
+    plate: str = "",
+    color: str = "",
+) -> str:
+    bits = []
+    base = " ".join(part for part in [(year or "").strip(), (make or "").strip(), (model or "").strip()] if part).strip()
+    if base:
+        bits.append(base)
+    if (vin or "").strip():
+        bits.append(f"VIN {(vin or '').strip()}")
+    if (mileage or "").strip():
+        bits.append(f"Mileage {(mileage or '').strip()}")
+    if (plate or "").strip():
+        bits.append(f"Plate {(plate or '').strip()}")
+    if (color or "").strip():
+        bits.append(f"Color {(color or '').strip()}")
+    return " · ".join(bits)
+
+
+def _extract_mileage_from_invoice_vehicle_text(vehicle_text: str) -> str:
+    for part in (vehicle_text or "").split("·"):
+        cleaned = (part or "").strip()
+        if cleaned.lower().startswith("mileage "):
+            return cleaned[8:].strip()
+    return ""
+
+
+def _customer_vehicle_payload(vehicle: CustomerVehicle | None) -> dict:
+    return {
+        "vehicle_year": (getattr(vehicle, "vehicle_year", None) or "").strip(),
+        "vehicle_make": (getattr(vehicle, "vehicle_make", None) or "").strip(),
+        "vehicle_model": (getattr(vehicle, "vehicle_model", None) or "").strip(),
+        "vehicle_vin": (getattr(vehicle, "vehicle_vin", None) or "").strip(),
+        "vehicle_mileage": (getattr(vehicle, "vehicle_mileage", None) or "").strip(),
+        "vehicle_plate": (getattr(vehicle, "vehicle_plate", None) or "").strip(),
+        "vehicle_color": (getattr(vehicle, "vehicle_color", None) or "").strip(),
+    }
+
+
+def _customer_vehicle_rows_for_customer(customer: Customer | None) -> list[dict]:
+    rows = [_customer_vehicle_payload(vehicle) for vehicle in (getattr(customer, "vehicles", None) or [])]
+    return rows or [{
+        "vehicle_year": "",
+        "vehicle_make": "",
+        "vehicle_model": "",
+        "vehicle_vin": "",
+        "vehicle_mileage": "",
+        "vehicle_plate": "",
+        "vehicle_color": "",
+    }]
+
+
+def _customer_vehicle_from_request(prefix: str = "saved_vehicle_") -> dict:
+    return {
+        "vehicle_year": (request.form.get(f"{prefix}year") or "").strip(),
+        "vehicle_make": (request.form.get(f"{prefix}make") or "").strip(),
+        "vehicle_model": (request.form.get(f"{prefix}model") or "").strip(),
+        "vehicle_vin": (request.form.get(f"{prefix}vin") or "").strip(),
+        "vehicle_mileage": (request.form.get(f"{prefix}mileage") or "").strip(),
+        "vehicle_plate": (request.form.get(f"{prefix}plate") or "").strip(),
+        "vehicle_color": (request.form.get(f"{prefix}color") or "").strip(),
+    }
+
+
+def _customer_vehicle_rows_from_request() -> list[dict]:
+    years = request.form.getlist("saved_vehicle_year")
+    makes = request.form.getlist("saved_vehicle_make")
+    models = request.form.getlist("saved_vehicle_model")
+    vins = request.form.getlist("saved_vehicle_vin")
+    mileages = request.form.getlist("saved_vehicle_mileage")
+    plates = request.form.getlist("saved_vehicle_plate")
+    colors = request.form.getlist("saved_vehicle_color")
+    count = max(len(years), len(makes), len(models), len(vins), len(mileages), len(plates), len(colors))
+    rows = []
+    for idx in range(count):
+        row = {
+            "vehicle_year": (years[idx] if idx < len(years) else "").strip(),
+            "vehicle_make": (makes[idx] if idx < len(makes) else "").strip(),
+            "vehicle_model": (models[idx] if idx < len(models) else "").strip(),
+            "vehicle_vin": (vins[idx] if idx < len(vins) else "").strip(),
+            "vehicle_mileage": (mileages[idx] if idx < len(mileages) else "").strip(),
+            "vehicle_plate": (plates[idx] if idx < len(plates) else "").strip(),
+            "vehicle_color": (colors[idx] if idx < len(colors) else "").strip(),
+        }
+        if any(row.values()):
+            rows.append(row)
+    return rows
+
+
+def _vehicle_rows_valid(rows: list[dict]) -> tuple[list[dict], list[str]]:
+    clean_rows = []
+    errors = []
+    for idx, row in enumerate(rows, start=1):
+        if not (row.get("vehicle_year") and row.get("vehicle_make") and row.get("vehicle_model")):
+            errors.append(f"Saved vehicle #{idx} requires year, make, and model.")
+            continue
+        clean_rows.append(row)
+    return clean_rows, errors
+
+
+def _replace_customer_vehicles(session, customer: Customer, rows: list[dict], *, user_id: int) -> None:
+    existing = list(getattr(customer, "vehicles", []) or [])
+    for row in existing:
+        session.delete(row)
+    session.flush()
+    for row in rows:
+        session.add(
+            CustomerVehicle(
+                user_id=user_id,
+                customer_id=customer.id,
+                vehicle_year=row["vehicle_year"],
+                vehicle_make=row["vehicle_make"],
+                vehicle_model=row["vehicle_model"],
+                vehicle_vin=row.get("vehicle_vin") or None,
+                vehicle_mileage=row.get("vehicle_mileage") or None,
+                vehicle_plate=row.get("vehicle_plate") or None,
+                vehicle_color=row.get("vehicle_color") or None,
+            )
+        )
+
+
+def _customers_for_js_payload(customers: list[Customer]) -> list[dict]:
+    rows = []
+    for customer in customers or []:
+        rows.append({
+            "id": customer.id,
+            "name": (customer.name or "").strip(),
+            "email": (customer.email or "").strip(),
+            "phone": (customer.phone or "").strip(),
+            "vehicles": [
+                {
+                    "id": vehicle.id,
+                    "label": _customer_vehicle_display(vehicle),
+                    "vehicle_text": _invoice_vehicle_text_from_fields(
+                        vehicle.vehicle_year or "",
+                        vehicle.vehicle_make or "",
+                        vehicle.vehicle_model or "",
+                        vehicle.vehicle_vin or "",
+                        vehicle.vehicle_mileage or "",
+                        vehicle.vehicle_plate or "",
+                        vehicle.vehicle_color or "",
+                    ),
+                }
+                for vehicle in (getattr(customer, "vehicles", None) or [])
+            ],
+        })
+    return rows
+
+
+def _upsert_customer_vehicle_from_work_order(session, customer: Customer, form_data: dict, *, user_id: int) -> CustomerVehicle | None:
+    year = (form_data.get("vehicle_year") or "").strip()
+    make = (form_data.get("vehicle_make") or "").strip()
+    model = (form_data.get("vehicle_model") or "").strip()
+    if not (year and make and model):
+        return None
+    vin = (form_data.get("vehicle_vin") or "").strip()
+    plate = (form_data.get("vehicle_plate") or "").strip()
+    vehicle = None
+    for existing in getattr(customer, "vehicles", []) or []:
+        if vin and (existing.vehicle_vin or "").strip() and (existing.vehicle_vin or "").strip().lower() == vin.lower():
+            vehicle = existing
+            break
+        if plate and (existing.vehicle_plate or "").strip() and (existing.vehicle_plate or "").strip().lower() == plate.lower():
+            vehicle = existing
+            break
+        if (
+            (existing.vehicle_year or "").strip().lower() == year.lower()
+            and (existing.vehicle_make or "").strip().lower() == make.lower()
+            and (existing.vehicle_model or "").strip().lower() == model.lower()
+        ):
+            vehicle = existing
+            break
+    if not vehicle:
+        vehicle = CustomerVehicle(user_id=user_id, customer_id=customer.id, vehicle_year=year, vehicle_make=make, vehicle_model=model)
+        session.add(vehicle)
+    vehicle.vehicle_year = year
+    vehicle.vehicle_make = make
+    vehicle.vehicle_model = model
+    vehicle.vehicle_vin = vin or None
+    vehicle.vehicle_mileage = (form_data.get("vehicle_mileage") or "").strip() or None
+    vehicle.vehicle_plate = plate or None
+    vehicle.vehicle_color = (form_data.get("vehicle_color") or "").strip() or None
+    session.flush()
+    return vehicle
+
+
+def _update_selected_customer_vehicle_mileage_from_work_order(session, customer: Customer, form_data: dict, *, user_id: int) -> CustomerVehicle | None:
+    selected_vehicle_id_raw = (form_data.get("selected_vehicle_id") or "").strip()
+    if not selected_vehicle_id_raw.isdigit():
+        return None
+    vehicle = (
+        session.query(CustomerVehicle)
+        .filter(
+            CustomerVehicle.id == int(selected_vehicle_id_raw),
+            CustomerVehicle.user_id == user_id,
+            CustomerVehicle.customer_id == customer.id,
+        )
+        .first()
+    )
+    if not vehicle:
+        return None
+    new_mileage = (form_data.get("vehicle_mileage") or "").strip() or None
+    if (vehicle.vehicle_mileage or None) != new_mileage:
+        vehicle.vehicle_mileage = new_mileage
+        session.flush()
+    return vehicle
+
+
+def _update_selected_customer_vehicle_mileage_from_invoice_text(session, customer: Customer, selected_vehicle_id_raw: str, vehicle_text: str, *, user_id: int) -> CustomerVehicle | None:
+    if not (selected_vehicle_id_raw or "").isdigit():
+        return None
+    vehicle = (
+        session.query(CustomerVehicle)
+        .filter(
+            CustomerVehicle.id == int(selected_vehicle_id_raw),
+            CustomerVehicle.user_id == user_id,
+            CustomerVehicle.customer_id == customer.id,
+        )
+        .first()
+    )
+    if not vehicle:
+        return None
+    new_mileage = _extract_mileage_from_invoice_vehicle_text(vehicle_text) or None
+    if (vehicle.vehicle_mileage or None) != new_mileage:
+        vehicle.vehicle_mileage = new_mileage
+        session.flush()
+    return vehicle
+
+
+def _customer_display_address(customer: Customer | None) -> str:
+    if not customer:
+        return ""
+    formatted = _format_user_address_legacy(
+        getattr(customer, "address_line1", None),
+        getattr(customer, "address_line2", None),
+        getattr(customer, "city", None),
+        getattr(customer, "state", None),
+        getattr(customer, "postal_code", None),
+    )
+    if formatted:
+        return formatted
+    return (getattr(customer, "address", None) or "").strip()
+
+
+def _owner_shop_payload(owner: User | None) -> dict:
+    return {
+        "name": ((getattr(owner, "business_name", None) or getattr(owner, "username", None) or "InvoiceRunner").strip()),
+        "address": _owner_mailing_address(owner),
+        "phone": _format_phone_display(getattr(owner, "phone", None) or ""),
+        "email": (getattr(owner, "email", None) or "").strip(),
+    }
+
+
+def _client_payload(customer: Customer | None, *, fallback_name: str = "") -> dict:
+    return {
+        "name": ((getattr(customer, "name", None) or fallback_name or "Client").strip()),
+        "address": _customer_display_address(customer),
+        "phone": _format_phone_display(getattr(customer, "phone", None) or ""),
+        "email": (getattr(customer, "email", None) or "").strip(),
+    }
+
+
+def _invoice_vehicle_payload(inv: Invoice | None) -> dict:
+    vehicle_text = (getattr(inv, "vehicle", None) or "").strip()
+    return {
+        "year": "",
+        "make": "",
+        "model": vehicle_text,
+        "vin": "",
+        "mileage": "",
+        "plate": "",
+    }
+
+
+def _receipt_service_summary(inv: Invoice | None, owner: User | None) -> str:
+    if not inv:
+        return ""
+    lines: list[str] = []
+    if getattr(inv, "labor_items", None):
+        labor_items = [((item.labor_desc or "").strip()) for item in (inv.labor_items or []) if (item.labor_desc or "").strip()]
+        if labor_items:
+            lines.append("Labor: " + "; ".join(labor_items[:4]))
+    if getattr(inv, "parts", None):
+        part_items = [((item.part_name or "").strip()) for item in (inv.parts or []) if (item.part_name or "").strip()]
+        if part_items:
+            lines.append("Parts: " + ", ".join(part_items[:6]))
+    if not lines and (getattr(inv, "vehicle", None) or "").strip():
+        lines.append((getattr(inv, "vehicle", None) or "").strip())
+    if not lines and (getattr(inv, "name", None) or "").strip():
+        lines.append((getattr(inv, "name", None) or "").strip())
+    return "\n".join(lines)
+
+
+def _build_work_order_payload(work_order: WorkOrder, owner: User | None, customer: Customer | None) -> dict:
+    return {
+        "document_kind": "repair_order",
+        "show_branding": False,
+        "template_key": _pdf_template_for_user(owner, getattr(work_order, "pdf_template", None) or (getattr(owner, "pdf_template", None) if owner else None)),
+        "shop": _owner_shop_payload(owner),
+        "client": {
+            "name": (work_order.customer.name if work_order.customer else (customer.name if customer else "")),
+            "address": _customer_display_address(work_order.customer or customer),
+            "phone": _format_phone_display(work_order.customer_phone or getattr(customer, "phone", None) or ""),
+            "email": (work_order.customer_email or getattr(customer, "email", None) or "").strip(),
+        },
+        "vehicle": {
+            "repair_order_number": (work_order.work_order_number or "").strip(),
+            "received_date": (work_order.received_date or "").strip(),
+            "promised_completion_date": (work_order.promised_completion_date or "").strip(),
+            "year": (work_order.vehicle_year or "").strip(),
+            "make": (work_order.vehicle_make or "").strip(),
+            "model": (work_order.vehicle_model or "").strip(),
+            "vin": (work_order.vehicle_vin or "").strip(),
+            "mileage": (work_order.vehicle_mileage or "").strip(),
+            "plate": (work_order.vehicle_plate or "").strip(),
+            "color": (work_order.vehicle_color or "").strip(),
+        },
+        "intake": {
+            "complaint": (work_order.complaint or "").strip(),
+            "requested_service": (work_order.requested_service or "").strip(),
+            "technician_notes": (work_order.technician_notes or "").strip(),
+            "inspection_notes": (work_order.inspection_notes or "").strip(),
+            "technician_name": (work_order.technician_name or "").strip(),
+            "service_advisor": (work_order.service_advisor or "").strip(),
+            "dropped_off_by": (work_order.dropped_off_by or "").strip(),
+            "keys_received": (work_order.keys_received or "").strip(),
+            "authorization_name": (work_order.authorization_name or "").strip(),
+            "authorization_date": (work_order.authorization_date or "").strip(),
+            "diagnosis_acknowledged": bool(work_order.diagnosis_acknowledged),
+        },
+        "notes": (work_order.notes or "").strip(),
+        "logo_bytes": getattr(owner, "logo_blob", None) if owner else None,
+    }
+
+
+def _build_receipt_payload(receipt: Receipt, owner: User | None, customer: Customer | None) -> dict:
+    return {
+        "document_kind": "receipt",
+        "show_branding": False,
+        "template_key": _pdf_template_for_user(owner, getattr(receipt, "pdf_template", None) or (getattr(owner, "pdf_template", None) if owner else None)),
+        "shop": _owner_shop_payload(owner),
+        "client": {
+            "name": (receipt.customer.name if receipt.customer else (customer.name if customer else "")),
+            "address": _customer_display_address(receipt.customer or customer),
+            "phone": _format_phone_display(receipt.customer_phone or getattr(customer, "phone", None) or ""),
+            "email": (receipt.customer_email or getattr(customer, "email", None) or "").strip(),
+        },
+        "vehicle": {
+            "receipt_number": (receipt.receipt_number or "").strip(),
+            "receipt_date": (receipt.receipt_date or "").strip(),
+            "payment_date": (receipt.payment_date or "").strip(),
+            "year": (receipt.vehicle_year or "").strip(),
+            "make": (receipt.vehicle_make or "").strip(),
+            "model": (receipt.vehicle_model or "").strip(),
+            "vin": (receipt.vehicle_vin or "").strip(),
+            "mileage": (receipt.vehicle_mileage or "").strip(),
+            "plate": (receipt.vehicle_plate or "").strip(),
+        },
+        "payment": {
+            "invoice_reference": (receipt.invoice_reference or "").strip(),
+            "payment_method": (receipt.payment_method or "").strip(),
+            "amount_paid": round(float(receipt.amount_paid or 0.0), 2),
+            "tax_included": round(float(receipt.tax_included or 0.0), 2),
+            "remaining_balance": round(float(receipt.remaining_balance or 0.0), 2),
+            "paid_in_full": bool(receipt.paid_in_full),
+            "memo": (receipt.memo or "").strip(),
+            "service_summary": (receipt.service_summary or "").strip(),
+            "labor_parts_summary": (receipt.labor_parts_summary or "").strip(),
+            "warranty_note": (receipt.warranty_note or "").strip(),
+            "thank_you_note": (receipt.thank_you_note or "").strip(),
+        },
+        "logo_bytes": getattr(owner, "logo_blob", None) if owner else None,
+    }
+
+
+def _create_invoice_receipt(
+    session,
+    *,
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    payment_method: str,
+    amount_paid: float,
+    payment_date: str,
+    tax_included: float = 0.0,
+    remaining_balance: float = 0.0,
+    memo: str = "",
+    service_summary: str = "",
+    labor_parts_summary: str = "",
+    warranty_note: str = "",
+    thank_you_note: str = "",
+    pdf_template: str | None = None,
+) -> Receipt:
+    receipt_number = _next_sequential_document_number(
+        session,
+        Receipt,
+        Receipt.receipt_number,
+        user_id=int(inv.user_id or 0),
+        prefix="RCPT",
+        now=_user_local_now(owner) if owner else None,
+    )
+    receipt = Receipt(
+        user_id=int(inv.user_id or 0),
+        customer_id=int(inv.customer_id or 0),
+        invoice_id=int(inv.id),
+        created_by_user_id=_current_actor_user_id_int() if has_request_context() and current_user.is_authenticated else None,
+        pdf_template=_pdf_template_for_user(owner, pdf_template or (getattr(owner, "pdf_template", None) if owner else None)),
+        receipt_number=receipt_number,
+        receipt_date=payment_date,
+        payment_date=payment_date,
+        invoice_reference=((getattr(inv, "display_number", None) or getattr(inv, "invoice_number", None) or "").strip()),
+        payment_method=(payment_method or "Cash").strip() or "Cash",
+        amount_paid=round(float(amount_paid or 0.0), 2),
+        tax_included=round(float(tax_included or 0.0), 2),
+        remaining_balance=round(float(remaining_balance or 0.0), 2),
+        paid_in_full=round(float(remaining_balance or 0.0), 2) <= 0.0,
+        customer_email=((getattr(inv, "customer_email", None) or getattr(customer, "email", None) or "").strip() or None),
+        customer_phone=((getattr(inv, "customer_phone", None) or getattr(customer, "phone", None) or "").strip() or None),
+        vehicle_year="",
+        vehicle_make="",
+        vehicle_model=(getattr(inv, "vehicle", None) or "").strip(),
+        vehicle_vin="",
+        vehicle_mileage="",
+        vehicle_plate="",
+        memo=(memo or "").strip(),
+        service_summary=(service_summary or _receipt_service_summary(inv, owner)).strip(),
+        labor_parts_summary=(labor_parts_summary or "").strip(),
+        warranty_note=(warranty_note or "").strip(),
+        thank_you_note=(thank_you_note or "Thank you for your business.").strip(),
+    )
+    session.add(receipt)
+    session.flush()
+    return receipt
+
+
+def _latest_receipt_for_invoice(session, invoice_id: int) -> Receipt | None:
+    return (
+        session.query(Receipt)
+        .filter(Receipt.invoice_id == invoice_id)
+        .order_by(Receipt.created_at.desc(), Receipt.id.desc())
+        .first()
+    )
+
+
+def _generate_work_order_pdf_bytes(work_order: WorkOrder, owner: User | None, customer: Customer | None) -> bytes:
+    return generate_free_repair_order_pdf(_build_work_order_payload(work_order, owner, customer))
+
+
+def _generate_receipt_pdf_bytes(receipt: Receipt, owner: User | None, customer: Customer | None) -> bytes:
+    return generate_free_receipt_pdf(_build_receipt_payload(receipt, owner, customer))
+
+
+def _invoice_receipt_defaults(session, inv: Invoice, owner: User | None, customer: Customer | None) -> dict:
+    today_str = _user_local_now(owner).strftime("%Y-%m-%d") if owner else date.today().strftime("%Y-%m-%d")
+    due_amount = round(float(_invoice_due_with_late_fee(inv, owner) or 0.0), 2)
+    receipt_number = _next_sequential_document_number(
+        session,
+        Receipt,
+        Receipt.receipt_number,
+        user_id=int(inv.user_id or 0),
+        prefix="RCPT",
+        now=_user_local_now(owner) if owner else None,
+    )
+    return {
+        "pdf_template": _pdf_template_for_user(owner, getattr(owner, "pdf_template", None) if owner else None),
+        "receipt_number": receipt_number,
+        "receipt_date": today_str,
+        "payment_date": today_str,
+        "payment_method": "Cash",
+        "amount_paid": f"{due_amount:,.2f}",
+        "tax_included": f"{float(inv.tax_amount() or 0.0):,.2f}",
+        "remaining_balance": "0.00",
+        "invoice_reference": ((getattr(inv, "display_number", None) or getattr(inv, "invoice_number", None) or "").strip()),
+        "memo": "",
+        "service_summary": _receipt_service_summary(inv, owner),
+        "labor_parts_summary": "",
+        "warranty_note": "",
+        "thank_you_note": "Thank you for your business.",
+    }
+
+
+def _work_order_defaults(session, customer: Customer | None, owner: User | None) -> dict:
+    today_str = _user_local_now(owner).strftime("%Y-%m-%d") if owner else date.today().strftime("%Y-%m-%d")
+    first_vehicle = (getattr(customer, "vehicles", None) or [None])[0]
+    vehicle_defaults = _customer_vehicle_payload(first_vehicle)
+    work_order_number = ""
+    if owner and getattr(owner, "id", None):
+        work_order_number = _next_sequential_document_number(
+            session,
+            WorkOrder,
+            WorkOrder.work_order_number,
+            user_id=int(owner.id),
+            prefix="RO",
+            now=_user_local_now(owner),
+        )
+    return {
+        "pdf_template": _pdf_template_for_user(owner, getattr(owner, "pdf_template", None) if owner else None),
+        "work_order_number": work_order_number or _document_number("RO"),
+        "received_date": today_str,
+        "promised_completion_date": "",
+        "customer_email": (getattr(customer, "email", None) or "").strip(),
+        "customer_phone": _format_phone_display(getattr(customer, "phone", None) or ""),
+        "vehicle_year": vehicle_defaults["vehicle_year"],
+        "vehicle_make": vehicle_defaults["vehicle_make"],
+        "vehicle_model": vehicle_defaults["vehicle_model"],
+        "vehicle_vin": vehicle_defaults["vehicle_vin"],
+        "vehicle_mileage": vehicle_defaults["vehicle_mileage"],
+        "vehicle_plate": vehicle_defaults["vehicle_plate"],
+        "vehicle_color": vehicle_defaults["vehicle_color"],
+        "selected_vehicle_id": str(getattr(first_vehicle, "id", "") or ""),
+        "save_vehicle_to_client": False,
+        "complaint": "",
+        "requested_service": "",
+        "technician_notes": "",
+        "inspection_notes": "",
+        "technician_name": "",
+        "service_advisor": "",
+        "dropped_off_by": (getattr(customer, "name", None) or "").strip(),
+        "keys_received": "",
+        "authorization_name": (getattr(customer, "name", None) or "").strip(),
+        "authorization_date": today_str,
+        "diagnosis_acknowledged": True,
+        "notes": "Customer authorizes diagnostic inspection and understands additional repairs may be recommended after diagnosis.",
+    }
+
+
 def _ensure_connect_customer_for_client(session, owner: User | None, customer: Customer | None) -> str:
     if not owner or not customer or not stripe.api_key:
         return ""
@@ -1100,6 +1693,30 @@ def _customer_owned_or_404(session, customer_id: int) -> Customer:
     if not c:
         abort(404)
     return c
+
+
+def _work_order_owned_or_404(session, work_order_id: int) -> WorkOrder:
+    row = (
+        session.query(WorkOrder)
+        .options(selectinload(WorkOrder.customer))
+        .filter(WorkOrder.id == work_order_id, WorkOrder.user_id == _current_user_id_int())
+        .first()
+    )
+    if not row:
+        abort(404)
+    return row
+
+
+def _receipt_owned_or_404(session, receipt_id: int) -> Receipt:
+    row = (
+        session.query(Receipt)
+        .options(selectinload(Receipt.customer), selectinload(Receipt.invoice))
+        .filter(Receipt.id == receipt_id, Receipt.user_id == _current_user_id_int())
+        .first()
+    )
+    if not row:
+        abort(404)
+    return row
 
 
 def _normalize_email(email: str) -> str:
@@ -2532,6 +3149,8 @@ def _send_invoice_pdf_email(
     subject: str,
     body_text: str,
     pdf_path: str | None = None,
+    pdf_bytes: bytes | None = None,
+    pdf_filename: str | None = None,
     action_url: str | None = None,
     action_label: str | None = None,
     html_body: str | None = None,
@@ -2611,18 +3230,65 @@ def _send_invoice_pdf_email(
         )
         msg.add_alternative(html_body, subtype="html")
 
-    pdf_path_clean = (pdf_path or "").strip()
-    if pdf_path_clean and os.path.exists(pdf_path_clean):
-        with open(pdf_path_clean, "rb") as f:
-            data = f.read()
+    if pdf_bytes:
+        filename = (pdf_filename or "document.pdf").strip() or "document.pdf"
+        msg.add_attachment(pdf_bytes, maintype="application", subtype="pdf", filename=filename)
+    else:
+        pdf_path_clean = (pdf_path or "").strip()
+        if pdf_path_clean and os.path.exists(pdf_path_clean):
+            with open(pdf_path_clean, "rb") as f:
+                data = f.read()
 
-        filename = os.path.basename(pdf_path_clean) or "invoice.pdf"
-        msg.add_attachment(data, maintype="application", subtype="pdf", filename=filename)
+            filename = os.path.basename(pdf_path_clean) or "invoice.pdf"
+            msg.add_attachment(data, maintype="application", subtype="pdf", filename=filename)
 
     with smtplib.SMTP(host, port) as smtp:
         smtp.starttls()
         smtp.login(user, password)
         smtp.send_message(msg)
+
+
+def _send_receipt_email(
+    *,
+    session,
+    receipt: Receipt,
+    owner: User | None,
+    customer: Customer | None,
+    subject_suffix: str = "",
+) -> None:
+    to_email = _normalize_email((getattr(receipt, "customer_email", None) or getattr(customer, "email", None) or ""))
+    if not _looks_like_email(to_email):
+        return
+
+    business_name = (((getattr(owner, "business_name", None) if owner else None) or (getattr(owner, "username", None) if owner else None) or "InvoiceRunner")).strip()
+    doc_number = (getattr(receipt, "receipt_number", None) or "").strip()
+    invoice_reference = (getattr(receipt, "invoice_reference", None) or "").strip()
+    body_lines = [
+        f"Hello {(getattr(customer, 'name', None) or 'there').strip()},",
+        "",
+        f"Payment received for {invoice_reference or 'your recent service'}. Thank you.",
+        f"Receipt number: {doc_number}",
+        f"Payment method: {(getattr(receipt, 'payment_method', None) or 'Payment received').strip()}",
+        f"Amount paid: ${float(getattr(receipt, 'amount_paid', 0.0) or 0.0):,.2f}",
+    ]
+    if float(getattr(receipt, "remaining_balance", 0.0) or 0.0) > 0.0:
+        body_lines.append(f"Remaining balance: ${float(getattr(receipt, 'remaining_balance', 0.0) or 0.0):,.2f}")
+    else:
+        body_lines.append("Paid in full.")
+    body_lines.extend(["", "Your receipt is attached.", "", f"Thank you,", business_name])
+    subject = f"Payment receipt {doc_number}"
+    if subject_suffix:
+        subject = f"{subject} {subject_suffix}".strip()
+    pdf_bytes = _generate_receipt_pdf_bytes(receipt, owner, customer)
+    _send_invoice_pdf_email(
+        to_email=to_email,
+        subject=subject,
+        body_text="\n".join(body_lines).strip(),
+        pdf_bytes=pdf_bytes,
+        pdf_filename=f"{doc_number or 'receipt'}.pdf",
+    )
+    receipt.sent_at = datetime.utcnow()
+    session.add(receipt)
 
 
 def _send_employee_invite_email(to_email: str, invite_url: str, owner_name: str) -> None:
@@ -4823,6 +5489,44 @@ def _migrate_site_activity(engine):
         pass
 
 
+def _migrate_work_orders(engine):
+    if not _table_exists(engine, "work_orders"):
+        try:
+            Base.metadata.create_all(bind=engine, tables=[WorkOrder.__table__])
+        except Exception:
+            pass
+    if not _column_exists(engine, "work_orders", "pdf_template"):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE work_orders ADD COLUMN pdf_template VARCHAR(50)"))
+                conn.execute(text("UPDATE work_orders SET pdf_template = 'classic' WHERE pdf_template IS NULL OR TRIM(pdf_template) = ''"))
+        except Exception:
+            pass
+
+
+def _migrate_receipts(engine):
+    if not _table_exists(engine, "receipts"):
+        try:
+            Base.metadata.create_all(bind=engine, tables=[Receipt.__table__])
+        except Exception:
+            pass
+    if not _column_exists(engine, "receipts", "pdf_template"):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE receipts ADD COLUMN pdf_template VARCHAR(50)"))
+                conn.execute(text("UPDATE receipts SET pdf_template = 'classic' WHERE pdf_template IS NULL OR TRIM(pdf_template) = ''"))
+        except Exception:
+            pass
+
+
+def _migrate_customer_vehicles(engine):
+    if not _table_exists(engine, "customer_vehicles"):
+        try:
+            Base.metadata.create_all(bind=engine, tables=[CustomerVehicle.__table__])
+        except Exception:
+            pass
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -4889,6 +5593,9 @@ def create_app():
     _migrate_user_employee_fields(engine)
     _migrate_user_security_fields(engine)
     _migrate_site_activity(engine)
+    _migrate_work_orders(engine)
+    _migrate_receipts(engine)
+    _migrate_customer_vehicles(engine)
     _migrate_user_referral_fields(engine)
     _migrate_customers(engine)
     _migrate_customers_unique_name_ci(engine)
@@ -11278,6 +11985,19 @@ def create_app():
     @login_required
     @subscription_required
     def customer_new():
+        uid = _current_user_id_int()
+        with db_session() as s:
+            owner = s.get(User, uid)
+        auto_repair_enabled = _auto_repair_enabled_for_user(owner)
+        vehicle_rows = [{
+            "vehicle_year": "",
+            "vehicle_make": "",
+            "vehicle_model": "",
+            "vehicle_vin": "",
+            "vehicle_mileage": "",
+            "vehicle_plate": "",
+            "vehicle_color": "",
+        }]
         if request.method == "POST":
             name = (request.form.get("name") or "").strip()
             email = _normalize_email(request.form.get("email") or "").strip() or None
@@ -11295,18 +12015,25 @@ def create_app():
             default_minutes_raw = (request.form.get("default_service_minutes") or "").strip()
             service_title = (request.form.get("service_title") or "").strip() or None
             service_notes = (request.form.get("service_notes") or "").strip() or None
+            vehicle_rows = _customer_vehicle_rows_from_request() if auto_repair_enabled else []
 
             service_interval_days = int(interval_days_raw) if interval_days_raw.isdigit() else None
             default_service_minutes = int(default_minutes_raw) if default_minutes_raw.isdigit() else 60
 
             if not name:
                 flash("Client name is required.", "error")
-                return render_template("customer_form.html", mode="new", form=request.form)
+                return render_template("customer_form.html", mode="new", form=request.form, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows or _customer_vehicle_rows_for_customer(None))
+
+            clean_vehicle_rows, vehicle_errors = _vehicle_rows_valid(vehicle_rows) if auto_repair_enabled else ([], [])
+            if vehicle_errors:
+                for err in vehicle_errors:
+                    flash(err, "error")
+                return render_template("customer_form.html", mode="new", form=request.form, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows or _customer_vehicle_rows_for_customer(None))
 
             with db_session() as s:
                 existing = (
                     s.query(Customer)
-                    .filter(Customer.user_id == _current_user_id_int())
+                    .filter(Customer.user_id == uid)
                     .filter(text("lower(name) = :n")).params(n=name.lower())
                     .first()
                 )
@@ -11315,7 +12042,7 @@ def create_app():
                     return redirect(url_for("customer_view", customer_id=existing.id))
 
                 c = Customer(
-                    user_id=_current_user_id_int(),
+                    user_id=uid,
                     name=name,
                     email=(email if (email and _looks_like_email(email)) else (email or None)),
                     phone=phone,
@@ -11333,12 +12060,15 @@ def create_app():
                     service_notes=service_notes,
                 )
                 s.add(c)
+                s.flush()
+                if auto_repair_enabled and clean_vehicle_rows:
+                    _replace_customer_vehicles(s, c, clean_vehicle_rows, user_id=uid)
                 try:
                     s.commit()
                 except IntegrityError:
                     s.rollback()
                     flash("That client name is already in use.", "error")
-                    return render_template("customer_form.html", mode="new", form=request.form)
+                    return render_template("customer_form.html", mode="new", form=request.form, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows or _customer_vehicle_rows_for_customer(None))
 
                 # If recurrence is enabled, generate initial future events
                 try:
@@ -11351,14 +12081,18 @@ def create_app():
 
                 return redirect(url_for("customer_view", customer_id=c.id))
 
-        return render_template("customer_form.html", mode="new")
+        return render_template("customer_form.html", mode="new", owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows)
 
     @app.route("/customers/<int:customer_id>/edit", methods=["GET", "POST"])
     @login_required
     @subscription_required
     def customer_edit(customer_id: int):
+        uid = _current_user_id_int()
         with db_session() as s:
+            owner = s.get(User, uid)
             c = _customer_owned_or_404(s, customer_id)
+            auto_repair_enabled = _auto_repair_enabled_for_user(owner)
+            vehicle_rows = _customer_vehicle_rows_for_customer(c)
 
             # capture old recurring rule so we can detect changes
             old_rule = (
@@ -11379,10 +12113,17 @@ def create_app():
                 state = (request.form.get("state") or "").strip() or None
                 postal_code = (request.form.get("postal_code") or "").strip() or None
                 address = _format_customer_address(address_line1, address_line2, city, state, postal_code)
+                vehicle_rows = _customer_vehicle_rows_from_request() if auto_repair_enabled else []
 
                 if not name:
                     flash("Client name is required.", "error")
-                    return render_template("customer_form.html", mode="edit", c=c)
+                    return render_template("customer_form.html", mode="edit", c=c, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows)
+
+                clean_vehicle_rows, vehicle_errors = _vehicle_rows_valid(vehicle_rows) if auto_repair_enabled else ([], [])
+                if vehicle_errors:
+                    for err in vehicle_errors:
+                        flash(err, "error")
+                    return render_template("customer_form.html", mode="edit", c=c, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows)
 
                 dup = (
                     s.query(Customer)
@@ -11401,7 +12142,7 @@ def create_app():
                         s.rollback()
                         print("[CUSTOMER MERGE] ERROR:", repr(e), flush=True)
                         flash("Could not merge clients (server error).", "error")
-                        return render_template("customer_form.html", mode="edit", c=c)
+                        return render_template("customer_form.html", mode="edit", c=c, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows)
 
                 c.name = name
                 c.email = (email if (email and _looks_like_email(email)) else (email or None))
@@ -11421,6 +12162,8 @@ def create_app():
                 c.default_service_minutes = int(default_minutes_raw) if default_minutes_raw.isdigit() else 60
                 c.service_title = (request.form.get("service_title") or "").strip() or None
                 c.service_notes = (request.form.get("service_notes") or "").strip() or None
+                if auto_repair_enabled:
+                    _replace_customer_vehicles(s, c, clean_vehicle_rows, user_id=uid)
 
                 new_rule = (
                     c.next_service_dt,
@@ -11440,19 +12183,19 @@ def create_app():
                         s.rollback()
                         print("[SCHEDULE] recurring reset error:", repr(e), flush=True)
                         flash("Could not update recurring schedule (server error).", "error")
-                        return render_template("customer_form.html", mode="edit", c=c)
+                        return render_template("customer_form.html", mode="edit", c=c, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows)
 
                 try:
                     s.commit()
                 except IntegrityError:
                     s.rollback()
                     flash("That client name is already in use. Try a different name, or merge clients.", "error")
-                    return render_template("customer_form.html", mode="edit", c=c)
+                    return render_template("customer_form.html", mode="edit", c=c, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows)
 
                 flash("Client updated.", "success")
                 return redirect(url_for("customer_view", customer_id=c.id))
 
-        return render_template("customer_form.html", mode="edit", c=c)
+        return render_template("customer_form.html", mode="edit", c=c, owner=owner, auto_repair_enabled=auto_repair_enabled, vehicle_rows=vehicle_rows)
 
     @app.post("/customers/<int:customer_id>/delete")
     @login_required
@@ -11592,6 +12335,7 @@ def create_app():
 
         with db_session() as s:
             c = _customer_owned_or_404(s, customer_id)
+            owner = s.get(User, uid)
             now = datetime.utcnow()
             next_event = (
                 s.query(ScheduleEvent)
@@ -11636,6 +12380,19 @@ def create_app():
                 .order_by(Contract.created_at.desc())
                 .all()
             )
+            work_orders_list = (
+                s.query(WorkOrder)
+                .filter(WorkOrder.user_id == uid, WorkOrder.customer_id == c.id)
+                .order_by(WorkOrder.created_at.desc())
+                .all()
+            )
+            receipts_list = (
+                s.query(Receipt)
+                .filter(Receipt.user_id == uid, Receipt.customer_id == c.id)
+                .order_by(Receipt.created_at.desc())
+                .all()
+            )
+            customer_vehicles = list(getattr(c, "vehicles", []) or [])
             contract_portal_links = {
                 int(ct.id): _public_url(url_for("shared_contract_portal", token=make_contract_portal_token(uid, ct.id)))
                 for ct in contracts_list
@@ -11665,6 +12422,7 @@ def create_app():
                     total_unpaid += max(total - paid, 0.0)
                 except Exception:
                     pass
+            auto_repair_enabled = _auto_repair_enabled_for_user(owner)
 
         return render_template(
             "customer_view.html",
@@ -11682,6 +12440,10 @@ def create_app():
             saved_card_label=_client_saved_card_label(c),
             autopay_enabled=bool(getattr(c, "autopay_enabled", False)),
             autopay_last_error=(getattr(c, "autopay_last_error", None) or "").strip(),
+            work_orders=work_orders_list,
+            receipts=receipts_list,
+            customer_vehicles=customer_vehicles,
+            auto_repair_enabled=auto_repair_enabled,
         )
 
     @app.post("/customers/<int:customer_id>/payment-profile/clear")
@@ -11712,6 +12474,470 @@ def create_app():
             s.commit()
         flash("Saved card and automatic recurring payment settings cleared for this client.", "success")
         return redirect(url_for("customer_view", customer_id=customer_id))
+
+    @app.route("/customers/<int:customer_id>/work-orders/new", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def work_order_new(customer_id: int):
+        uid = _current_user_id_int()
+        actor_id = _current_actor_user_id_int()
+        with db_session() as s:
+            owner = s.get(User, uid)
+            customer = _customer_owned_or_404(s, customer_id)
+            customer_vehicles = list(getattr(customer, "vehicles", []) or [])
+            if not _auto_repair_enabled_for_user(owner):
+                flash("Work orders are currently available only for Auto Repair accounts.", "error")
+                return redirect(url_for("customer_view", customer_id=customer_id))
+
+            form_data = _work_order_defaults(s, customer, owner)
+            if request.method == "POST":
+                for key in form_data.keys():
+                    if key == "diagnosis_acknowledged":
+                        form_data[key] = request.form.get(key) == "1"
+                    elif key == "save_vehicle_to_client":
+                        form_data[key] = request.form.get(key) == "1"
+                    else:
+                        form_data[key] = (request.form.get(key) or "").strip()
+                errors = []
+                if not form_data["work_order_number"]:
+                    errors.append("Work order number is required.")
+                if not form_data["received_date"]:
+                    errors.append("Date received is required.")
+                if not form_data["complaint"]:
+                    errors.append("Customer complaint / concern is required.")
+                if not form_data["requested_service"]:
+                    errors.append("Requested service is required.")
+                if form_data.get("save_vehicle_to_client"):
+                    for label, key in (("Year", "vehicle_year"), ("Make", "vehicle_make"), ("Model", "vehicle_model")):
+                        if not (form_data.get(key) or "").strip():
+                            errors.append(f"{label} is required to save a vehicle to this client.")
+                if errors:
+                    for err in errors:
+                        flash(err, "error")
+                else:
+                    row = WorkOrder(
+                        user_id=uid,
+                        customer_id=customer.id,
+                        created_by_user_id=actor_id,
+                        pdf_template=_pdf_template_for_user(owner, form_data.get("pdf_template")),
+                        work_order_number=form_data["work_order_number"],
+                        received_date=form_data["received_date"],
+                        promised_completion_date=form_data["promised_completion_date"] or None,
+                        customer_email=form_data["customer_email"] or None,
+                        customer_phone=form_data["customer_phone"] or None,
+                        vehicle_year=form_data["vehicle_year"] or None,
+                        vehicle_make=form_data["vehicle_make"] or None,
+                        vehicle_model=form_data["vehicle_model"] or None,
+                        vehicle_vin=form_data["vehicle_vin"] or None,
+                        vehicle_mileage=form_data["vehicle_mileage"] or None,
+                        vehicle_plate=form_data["vehicle_plate"] or None,
+                        vehicle_color=form_data["vehicle_color"] or None,
+                        complaint=form_data["complaint"],
+                        requested_service=form_data["requested_service"],
+                        technician_notes=form_data["technician_notes"],
+                        inspection_notes=form_data["inspection_notes"],
+                        technician_name=form_data["technician_name"] or None,
+                        service_advisor=form_data["service_advisor"] or None,
+                        dropped_off_by=form_data["dropped_off_by"] or None,
+                        keys_received=form_data["keys_received"] or None,
+                        authorization_name=form_data["authorization_name"] or None,
+                        authorization_date=form_data["authorization_date"] or None,
+                        diagnosis_acknowledged=bool(form_data["diagnosis_acknowledged"]),
+                        notes=form_data["notes"],
+                    )
+                    s.add(row)
+                    _update_selected_customer_vehicle_mileage_from_work_order(s, customer, form_data, user_id=uid)
+                    if form_data.get("save_vehicle_to_client"):
+                        _upsert_customer_vehicle_from_work_order(s, customer, form_data, user_id=uid)
+                    s.commit()
+                    flash("Work order saved.", "success")
+                    return redirect(url_for("work_order_view", work_order_id=row.id))
+
+        return render_template(
+            "work_order_form.html",
+            mode="new",
+            c=customer,
+            owner=owner,
+            work_order=None,
+            form_data=form_data,
+            customer_vehicles=customer_vehicles,
+            customer_vehicles_data=[_customer_vehicle_payload(vehicle) for vehicle in customer_vehicles],
+            pdf_templates=FREE_INVOICE_TEMPLATES,
+        )
+
+    @app.get("/work-orders/<int:work_order_id>")
+    @login_required
+    @subscription_required
+    def work_order_view(work_order_id: int):
+        with db_session() as s:
+            row = _work_order_owned_or_404(s, work_order_id)
+            customer = row.customer or _customer_owned_or_404(s, row.customer_id)
+            owner = s.get(User, row.user_id)
+        return render_template("work_order_view.html", work_order=row, c=customer, owner=owner)
+
+    @app.route("/work-orders/<int:work_order_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def work_order_edit(work_order_id: int):
+        with db_session() as s:
+            row = _work_order_owned_or_404(s, work_order_id)
+            owner = s.get(User, row.user_id)
+            customer = row.customer or _customer_owned_or_404(s, row.customer_id)
+            customer_vehicles = list(getattr(customer, "vehicles", []) or [])
+            if not _auto_repair_enabled_for_user(owner):
+                flash("Work orders are currently available only for Auto Repair accounts.", "error")
+                return redirect(url_for("customer_view", customer_id=customer.id))
+            selected_vehicle = None
+            for vehicle in customer_vehicles:
+                if (
+                    (vehicle.vehicle_year or "").strip() == (row.vehicle_year or "").strip()
+                    and (vehicle.vehicle_make or "").strip() == (row.vehicle_make or "").strip()
+                    and (vehicle.vehicle_model or "").strip() == (row.vehicle_model or "").strip()
+                    and ((vehicle.vehicle_vin or "").strip() == (row.vehicle_vin or "").strip() or not (row.vehicle_vin or "").strip())
+                ):
+                    selected_vehicle = vehicle
+                    break
+            form_data = {
+                "pdf_template": row.pdf_template or _pdf_template_for_user(owner, getattr(owner, "pdf_template", None) if owner else None),
+                "work_order_number": row.work_order_number or "",
+                "received_date": row.received_date or "",
+                "promised_completion_date": row.promised_completion_date or "",
+                "customer_email": row.customer_email or "",
+                "customer_phone": row.customer_phone or "",
+                "vehicle_year": row.vehicle_year or "",
+                "vehicle_make": row.vehicle_make or "",
+                "vehicle_model": row.vehicle_model or "",
+                "vehicle_vin": row.vehicle_vin or "",
+                "vehicle_mileage": row.vehicle_mileage or "",
+                "vehicle_plate": row.vehicle_plate or "",
+                "vehicle_color": row.vehicle_color or "",
+                "selected_vehicle_id": str(getattr(selected_vehicle, "id", "") or ""),
+                "save_vehicle_to_client": False,
+                "complaint": row.complaint or "",
+                "requested_service": row.requested_service or "",
+                "technician_notes": row.technician_notes or "",
+                "inspection_notes": row.inspection_notes or "",
+                "technician_name": row.technician_name or "",
+                "service_advisor": row.service_advisor or "",
+                "dropped_off_by": row.dropped_off_by or "",
+                "keys_received": row.keys_received or "",
+                "authorization_name": row.authorization_name or "",
+                "authorization_date": row.authorization_date or "",
+                "diagnosis_acknowledged": bool(row.diagnosis_acknowledged),
+                "notes": row.notes or "",
+            }
+            if request.method == "POST":
+                for key in form_data.keys():
+                    if key == "diagnosis_acknowledged":
+                        form_data[key] = request.form.get(key) == "1"
+                    elif key == "save_vehicle_to_client":
+                        form_data[key] = request.form.get(key) == "1"
+                    else:
+                        form_data[key] = (request.form.get(key) or "").strip()
+                errors = []
+                if not form_data["work_order_number"]:
+                    errors.append("Work order number is required.")
+                if not form_data["received_date"]:
+                    errors.append("Date received is required.")
+                if not form_data["complaint"]:
+                    errors.append("Customer complaint / concern is required.")
+                if not form_data["requested_service"]:
+                    errors.append("Requested service is required.")
+                if form_data.get("save_vehicle_to_client"):
+                    for label, key in (("Year", "vehicle_year"), ("Make", "vehicle_make"), ("Model", "vehicle_model")):
+                        if not (form_data.get(key) or "").strip():
+                            errors.append(f"{label} is required to save a vehicle to this client.")
+                if errors:
+                    for err in errors:
+                        flash(err, "error")
+                else:
+                    for key, value in form_data.items():
+                        if key == "pdf_template":
+                            setattr(row, key, _pdf_template_for_user(owner, value))
+                        elif key in {"diagnosis_acknowledged", "save_vehicle_to_client"}:
+                            setattr(row, key, bool(value))
+                        elif key == "selected_vehicle_id":
+                            continue
+                        else:
+                            setattr(row, key, value or None if key not in {"complaint", "requested_service", "technician_notes", "inspection_notes", "notes", "work_order_number", "received_date"} else value)
+                    _update_selected_customer_vehicle_mileage_from_work_order(s, customer, form_data, user_id=row.user_id)
+                    if form_data.get("save_vehicle_to_client"):
+                        _upsert_customer_vehicle_from_work_order(s, customer, form_data, user_id=row.user_id)
+                    s.add(row)
+                    s.commit()
+                    flash("Work order updated.", "success")
+                    return redirect(url_for("work_order_view", work_order_id=row.id))
+
+        return render_template(
+            "work_order_form.html",
+            mode="edit",
+            c=customer,
+            owner=owner,
+            work_order=row,
+            form_data=form_data,
+            customer_vehicles=customer_vehicles,
+            customer_vehicles_data=[_customer_vehicle_payload(vehicle) for vehicle in customer_vehicles],
+            pdf_templates=FREE_INVOICE_TEMPLATES,
+        )
+
+    @app.post("/work-orders/<int:work_order_id>/delete")
+    @login_required
+    @subscription_required
+    def work_order_delete(work_order_id: int):
+        with db_session() as s:
+            row = _work_order_owned_or_404(s, work_order_id)
+            customer_id = row.customer_id
+            s.delete(row)
+            s.commit()
+        flash("Work order deleted.", "success")
+        return redirect(url_for("customer_view", customer_id=customer_id))
+
+    @app.get("/work-orders/<int:work_order_id>/pdf")
+    @login_required
+    @subscription_required
+    def work_order_pdf_download(work_order_id: int):
+        with db_session() as s:
+            row = _work_order_owned_or_404(s, work_order_id)
+            owner = s.get(User, row.user_id)
+            customer = row.customer or _customer_owned_or_404(s, row.customer_id)
+            pdf_bytes = _generate_work_order_pdf_bytes(row, owner, customer)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            as_attachment=True,
+            download_name=f"{(row.work_order_number or 'work-order').strip() or 'work-order'}.pdf",
+            mimetype="application/pdf",
+        )
+
+    @app.route("/invoices/<int:invoice_id>/receipt/new", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def receipt_new_from_invoice(invoice_id: int):
+        with db_session() as s:
+            inv = _invoice_owned_or_404(s, invoice_id)
+            owner = s.get(User, inv.user_id)
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            if not customer:
+                flash("A client is required before a receipt can be created.", "error")
+                return redirect(url_for("invoice_view", invoice_id=inv.id))
+            if not _auto_repair_enabled_for_invoice(inv, owner):
+                flash("Receipts are currently available only for Auto Repair invoices.", "error")
+                return redirect(url_for("invoice_view", invoice_id=inv.id))
+
+            finalize_payment = (request.args.get("finalize") or request.form.get("finalize") or "").strip() == "1"
+            form_data = _invoice_receipt_defaults(s, inv, owner, customer)
+            if request.method == "POST":
+                for key in form_data.keys():
+                    form_data[key] = (request.form.get(key) or "").strip()
+                amount_paid = _to_float(form_data.get("amount_paid"), 0.0)
+                tax_included = _to_float(form_data.get("tax_included"), 0.0)
+                remaining_balance = _to_float(form_data.get("remaining_balance"), 0.0)
+                errors = []
+                if not form_data["receipt_number"]:
+                    errors.append("Receipt number is required.")
+                if not form_data["receipt_date"]:
+                    errors.append("Receipt date is required.")
+                if not form_data["payment_date"]:
+                    errors.append("Payment date is required.")
+                if amount_paid <= 0.0:
+                    errors.append("Amount paid must be greater than zero.")
+                if finalize_payment and remaining_balance > 0.01:
+                    errors.append("Remaining balance must be zero before using Mark Paid.")
+                if errors:
+                    for err in errors:
+                        flash(err, "error")
+                else:
+                    receipt = _create_invoice_receipt(
+                        s,
+                        inv=inv,
+                        owner=owner,
+                        customer=customer,
+                        payment_method=form_data["payment_method"] or "Cash",
+                        amount_paid=amount_paid,
+                        payment_date=form_data["payment_date"],
+                        tax_included=tax_included,
+                        remaining_balance=remaining_balance,
+                        memo=form_data["memo"],
+                        service_summary=form_data["service_summary"],
+                        labor_parts_summary=form_data["labor_parts_summary"],
+                        warranty_note=form_data["warranty_note"],
+                        thank_you_note=form_data["thank_you_note"],
+                        pdf_template=form_data["pdf_template"],
+                    )
+                    receipt.receipt_number = form_data["receipt_number"]
+                    receipt.receipt_date = form_data["receipt_date"]
+                    receipt.invoice_reference = form_data["invoice_reference"] or receipt.invoice_reference
+                    if finalize_payment:
+                        due_now = max(0.0, float(_invoice_due_with_late_fee(inv, owner) or 0.0))
+                        _record_invoice_payment(
+                            s,
+                            inv,
+                            paid_base_amount=max(due_now, amount_paid),
+                            paid_fee_amount=0.0,
+                            paid_tip_amount=0.0,
+                        )
+                    s.flush()
+                    try:
+                        _send_receipt_email(session=s, receipt=receipt, owner=owner, customer=customer)
+                    except Exception as exc:
+                        print(f"[RECEIPT] email failed receipt={receipt.id}: {exc!r}", flush=True)
+                    s.commit()
+                    flash("Receipt saved and emailed.", "success")
+                    return redirect(url_for("receipt_view", receipt_id=receipt.id))
+
+        return render_template(
+            "receipt_form.html",
+            mode="new",
+            c=customer,
+            owner=owner,
+            inv=inv,
+            receipt=None,
+            form_data=form_data,
+            pdf_templates=FREE_INVOICE_TEMPLATES,
+            finalize_payment=finalize_payment,
+        )
+
+    @app.get("/receipts/<int:receipt_id>")
+    @login_required
+    @subscription_required
+    def receipt_view(receipt_id: int):
+        with db_session() as s:
+            row = _receipt_owned_or_404(s, receipt_id)
+            customer = row.customer or (s.get(Customer, row.customer_id) if row.customer_id else None)
+            owner = s.get(User, row.user_id)
+            invoice = row.invoice or (s.get(Invoice, row.invoice_id) if row.invoice_id else None)
+        return render_template("receipt_view.html", receipt=row, c=customer, owner=owner, inv=invoice)
+
+    @app.route("/receipts/<int:receipt_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @subscription_required
+    def receipt_edit(receipt_id: int):
+        with db_session() as s:
+            row = _receipt_owned_or_404(s, receipt_id)
+            owner = s.get(User, row.user_id)
+            customer = row.customer or (s.get(Customer, row.customer_id) if row.customer_id else None)
+            invoice = row.invoice or (s.get(Invoice, row.invoice_id) if row.invoice_id else None)
+            form_data = {
+                "pdf_template": row.pdf_template or _pdf_template_for_user(owner, getattr(owner, "pdf_template", None) if owner else None),
+                "receipt_number": row.receipt_number or "",
+                "receipt_date": row.receipt_date or "",
+                "payment_date": row.payment_date or "",
+                "payment_method": row.payment_method or "",
+                "amount_paid": f"{float(row.amount_paid or 0.0):,.2f}",
+                "tax_included": f"{float(row.tax_included or 0.0):,.2f}",
+                "remaining_balance": f"{float(row.remaining_balance or 0.0):,.2f}",
+                "invoice_reference": row.invoice_reference or "",
+                "memo": row.memo or "",
+                "service_summary": row.service_summary or "",
+                "labor_parts_summary": row.labor_parts_summary or "",
+                "warranty_note": row.warranty_note or "",
+                "thank_you_note": row.thank_you_note or "",
+            }
+            if request.method == "POST":
+                for key in form_data.keys():
+                    form_data[key] = (request.form.get(key) or "").strip()
+                amount_paid = _to_float(form_data.get("amount_paid"), 0.0)
+                tax_included = _to_float(form_data.get("tax_included"), 0.0)
+                remaining_balance = _to_float(form_data.get("remaining_balance"), 0.0)
+                errors = []
+                if not form_data["receipt_number"]:
+                    errors.append("Receipt number is required.")
+                if not form_data["receipt_date"]:
+                    errors.append("Receipt date is required.")
+                if not form_data["payment_date"]:
+                    errors.append("Payment date is required.")
+                if amount_paid <= 0.0:
+                    errors.append("Amount paid must be greater than zero.")
+                if errors:
+                    for err in errors:
+                        flash(err, "error")
+                else:
+                    row.pdf_template = _pdf_template_for_user(owner, form_data["pdf_template"])
+                    row.receipt_number = form_data["receipt_number"]
+                    row.receipt_date = form_data["receipt_date"]
+                    row.payment_date = form_data["payment_date"]
+                    row.payment_method = form_data["payment_method"] or "Cash"
+                    row.amount_paid = amount_paid
+                    row.tax_included = tax_included
+                    row.remaining_balance = remaining_balance
+                    row.paid_in_full = remaining_balance <= 0.01
+                    row.invoice_reference = form_data["invoice_reference"] or None
+                    row.memo = form_data["memo"]
+                    row.service_summary = form_data["service_summary"]
+                    row.labor_parts_summary = form_data["labor_parts_summary"]
+                    row.warranty_note = form_data["warranty_note"]
+                    row.thank_you_note = form_data["thank_you_note"]
+                    s.add(row)
+                    s.commit()
+                    flash("Receipt updated.", "success")
+                    return redirect(url_for("receipt_view", receipt_id=row.id))
+
+        return render_template(
+            "receipt_form.html",
+            mode="edit",
+            c=customer,
+            owner=owner,
+            inv=invoice,
+            receipt=row,
+            form_data=form_data,
+            pdf_templates=FREE_INVOICE_TEMPLATES,
+            finalize_payment=False,
+        )
+
+    @app.post("/receipts/<int:receipt_id>/delete")
+    @login_required
+    @subscription_required
+    def receipt_delete(receipt_id: int):
+        with db_session() as s:
+            row = _receipt_owned_or_404(s, receipt_id)
+            customer_id = row.customer_id
+            s.delete(row)
+            s.commit()
+        flash("Receipt deleted.", "success")
+        return redirect(url_for("customer_view", customer_id=customer_id))
+
+    @app.get("/receipts/<int:receipt_id>/pdf")
+    @login_required
+    @subscription_required
+    def receipt_pdf_download(receipt_id: int):
+        with db_session() as s:
+            row = _receipt_owned_or_404(s, receipt_id)
+            owner = s.get(User, row.user_id)
+            customer = row.customer or (s.get(Customer, row.customer_id) if row.customer_id else None)
+            pdf_bytes = _generate_receipt_pdf_bytes(row, owner, customer)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            as_attachment=True,
+            download_name=f"{(row.receipt_number or 'receipt').strip() or 'receipt'}.pdf",
+            mimetype="application/pdf",
+        )
+
+    @app.get("/shared/v/<token>/receipt")
+    def shared_customer_receipt_download(token: str):
+        max_age = int(
+            current_app.config.get("CUSTOMER_PORTAL_MAX_AGE_SECONDS")
+            or os.getenv("CUSTOMER_PORTAL_MAX_AGE_SECONDS")
+            or "7776000"
+        )
+        decoded = read_customer_portal_token(token, max_age_seconds=max_age)
+        if not decoded:
+            abort(404)
+        user_id, invoice_id = decoded
+        with db_session() as s:
+            inv = s.query(Invoice).filter(Invoice.id == invoice_id, Invoice.user_id == user_id).first()
+            if not inv:
+                abort(404)
+            receipt = _latest_receipt_for_invoice(s, inv.id)
+            if not receipt:
+                abort(404)
+            owner = s.get(User, inv.user_id)
+            customer = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            pdf_bytes = _generate_receipt_pdf_bytes(receipt, owner, customer)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            as_attachment=True,
+            download_name=f"{(receipt.receipt_number or 'receipt').strip() or 'receipt'}.pdf",
+            mimetype="application/pdf",
+        )
 
     @app.route("/customers/<int:customer_id>/contracts/new", methods=["GET", "POST"])
     @login_required
@@ -12024,12 +13250,7 @@ def create_app():
                 .all()
             )
 
-            customers_for_js = [{
-                "id": c.id,
-                "name": (c.name or "").strip(),
-                "email": (c.email or "").strip(),
-                "phone": (c.phone or "").strip(),
-            } for c in customers]
+            customers_for_js = _customers_for_js_payload(customers)
 
             pre_customer = None
             if pre_customer_id.isdigit():
@@ -12041,6 +13262,7 @@ def create_app():
         if request.method == "POST":
             customer_id_raw = (request.form.get("customer_id") or "").strip()
             vehicle = (request.form.get("vehicle") or "").strip()
+            selected_vehicle_id_raw = (request.form.get("selected_customer_vehicle_id") or "").strip()
 
             if not customer_id_raw.isdigit():
                 flash("Please select a client from the list.", "error")
@@ -12080,6 +13302,33 @@ def create_app():
 
             with db_session() as s:
                 c = _customer_owned_or_404(s, customer_id)
+                if not vehicle and selected_vehicle_id_raw.isdigit():
+                    selected_vehicle = (
+                        s.query(CustomerVehicle)
+                        .filter(
+                            CustomerVehicle.id == int(selected_vehicle_id_raw),
+                            CustomerVehicle.user_id == uid,
+                            CustomerVehicle.customer_id == c.id,
+                        )
+                        .first()
+                    )
+                    if selected_vehicle:
+                        vehicle = _invoice_vehicle_text_from_fields(
+                            selected_vehicle.vehicle_year or "",
+                            selected_vehicle.vehicle_make or "",
+                            selected_vehicle.vehicle_model or "",
+                            selected_vehicle.vehicle_vin or "",
+                            selected_vehicle.vehicle_mileage or "",
+                            selected_vehicle.vehicle_plate or "",
+                            selected_vehicle.vehicle_color or "",
+                        )
+                _update_selected_customer_vehicle_mileage_from_invoice_text(
+                    s,
+                    c,
+                    selected_vehicle_id_raw,
+                    vehicle,
+                    user_id=uid,
+                )
                 local_now = _user_local_now(s.get(User, uid))
 
                 year = int(local_now.strftime("%Y"))
@@ -12201,12 +13450,7 @@ def create_app():
                 .all()
             )
 
-            customers_for_js = [{
-                "id": c.id,
-                "name": (c.name or "").strip(),
-                "email": (c.email or "").strip(),
-                "phone": (c.phone or "").strip(),
-            } for c in customers]
+            customers_for_js = _customers_for_js_payload(customers)
 
             pre_customer = None
             if pre_customer_id.isdigit():
@@ -12218,6 +13462,7 @@ def create_app():
         if request.method == "POST":
             customer_id_raw = (request.form.get("customer_id") or "").strip()
             vehicle = (request.form.get("vehicle") or "").strip()
+            selected_vehicle_id_raw = (request.form.get("selected_customer_vehicle_id") or "").strip()
 
             if not customer_id_raw.isdigit():
                 flash("Please select a client from the list.", "error")
@@ -12257,6 +13502,33 @@ def create_app():
 
             with db_session() as s:
                 c = _customer_owned_or_404(s, customer_id)
+                if not vehicle and selected_vehicle_id_raw.isdigit():
+                    selected_vehicle = (
+                        s.query(CustomerVehicle)
+                        .filter(
+                            CustomerVehicle.id == int(selected_vehicle_id_raw),
+                            CustomerVehicle.user_id == uid,
+                            CustomerVehicle.customer_id == c.id,
+                        )
+                        .first()
+                    )
+                    if selected_vehicle:
+                        vehicle = _invoice_vehicle_text_from_fields(
+                            selected_vehicle.vehicle_year or "",
+                            selected_vehicle.vehicle_make or "",
+                            selected_vehicle.vehicle_model or "",
+                            selected_vehicle.vehicle_vin or "",
+                            selected_vehicle.vehicle_mileage or "",
+                            selected_vehicle.vehicle_plate or "",
+                            selected_vehicle.vehicle_color or "",
+                        )
+                _update_selected_customer_vehicle_mileage_from_invoice_text(
+                    s,
+                    c,
+                    selected_vehicle_id_raw,
+                    vehicle,
+                    user_id=uid,
+                )
                 local_now = _user_local_now(s.get(User, uid))
 
                 year = int(local_now.strftime("%Y"))
@@ -12398,12 +13670,7 @@ def create_app():
                 .all()
             )
 
-            customers_for_js = [{
-                "id": c.id,
-                "name": (c.name or "").strip(),
-                "email": (c.email or "").strip(),
-                "phone": (c.phone or "").strip(),
-            } for c in customers]
+            customers_for_js = _customers_for_js_payload(customers)
 
             tmpl_key = _template_key_fallback(inv.invoice_template)
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
@@ -12442,6 +13709,34 @@ def create_app():
                 )
 
                 inv.vehicle = (request.form.get("vehicle") or "").strip()
+                selected_vehicle_id_raw = (request.form.get("selected_customer_vehicle_id") or "").strip()
+                if not inv.vehicle and selected_vehicle_id_raw.isdigit():
+                    selected_vehicle = (
+                        s.query(CustomerVehicle)
+                        .filter(
+                            CustomerVehicle.id == int(selected_vehicle_id_raw),
+                            CustomerVehicle.user_id == uid,
+                            CustomerVehicle.customer_id == c.id,
+                        )
+                        .first()
+                    )
+                    if selected_vehicle:
+                        inv.vehicle = _invoice_vehicle_text_from_fields(
+                            selected_vehicle.vehicle_year or "",
+                            selected_vehicle.vehicle_make or "",
+                            selected_vehicle.vehicle_model or "",
+                            selected_vehicle.vehicle_vin or "",
+                            selected_vehicle.vehicle_mileage or "",
+                            selected_vehicle.vehicle_plate or "",
+                            selected_vehicle.vehicle_color or "",
+                        )
+                _update_selected_customer_vehicle_mileage_from_invoice_text(
+                    s,
+                    c,
+                    selected_vehicle_id_raw,
+                    inv.vehicle,
+                    user_id=uid,
+                )
                 inv.hours = _to_float(request.form.get("hours"))
                 inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
@@ -12668,6 +13963,8 @@ def create_app():
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
             tmpl = _template_config_for(inv.invoice_template, owner)
             c = s.get(Customer, inv.customer_id) if getattr(inv, "customer_id", None) else None
+            latest_receipt = _latest_receipt_for_invoice(s, inv.id)
+            auto_repair_enabled = _auto_repair_enabled_for_invoice(inv, owner)
             portal_token = make_customer_portal_token(inv.user_id, inv.id)
             customer_portal_url = _public_url(url_for("shared_customer_portal", token=portal_token))
             owner_fee_auto_enabled = bool(getattr(owner, "payment_fee_auto_enabled", False)) if owner else False
@@ -12695,6 +13992,8 @@ def create_app():
             due_date_display=due_dt.strftime("%B %d, %Y"),
             late_fee_amount=late_fee_amount,
             due_with_late_fee=due_with_late_fee,
+            latest_receipt=latest_receipt,
+            auto_repair_enabled=auto_repair_enabled,
         )
 
     # -----------------------------
@@ -12779,12 +14078,7 @@ def create_app():
                 .all()
             )
 
-            customers_for_js = [{
-                "id": c.id,
-                "name": (c.name or "").strip(),
-                "email": (c.email or "").strip(),
-                "phone": (c.phone or "").strip(),
-            } for c in customers]
+            customers_for_js = _customers_for_js_payload(customers)
 
             tmpl_key = _template_key_fallback(inv.invoice_template)
             owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
@@ -12823,6 +14117,34 @@ def create_app():
                 )
 
                 inv.vehicle = (request.form.get("vehicle") or "").strip()
+                selected_vehicle_id_raw = (request.form.get("selected_customer_vehicle_id") or "").strip()
+                if not inv.vehicle and selected_vehicle_id_raw.isdigit():
+                    selected_vehicle = (
+                        s.query(CustomerVehicle)
+                        .filter(
+                            CustomerVehicle.user_id == uid,
+                            CustomerVehicle.customer_id == customer_id,
+                            CustomerVehicle.id == int(selected_vehicle_id_raw),
+                        )
+                        .first()
+                    )
+                    if selected_vehicle:
+                        inv.vehicle = _invoice_vehicle_text_from_fields(
+                            year=selected_vehicle.vehicle_year,
+                            make=selected_vehicle.vehicle_make,
+                            model=selected_vehicle.vehicle_model,
+                            vin=selected_vehicle.vehicle_vin,
+                            mileage=selected_vehicle.vehicle_mileage,
+                            plate=selected_vehicle.vehicle_plate,
+                            color=selected_vehicle.vehicle_color,
+                        )
+                _update_selected_customer_vehicle_mileage_from_invoice_text(
+                    s,
+                    c,
+                    selected_vehicle_id_raw,
+                    inv.vehicle,
+                    user_id=uid,
+                )
                 inv.hours = _to_float(request.form.get("hours"))
                 inv.price_per_hour = _to_float(request.form.get("price_per_hour"))
                 inv.shop_supplies = _to_float(request.form.get("shop_supplies"))
@@ -14570,6 +15892,9 @@ def create_app():
             if not _can_edit_document(inv):
                 flash("Employees can only update invoices they created.", "error")
                 return redirect(url_for("invoice_view", invoice_id=inv.id))
+            owner = s.get(User, inv.user_id) if getattr(inv, "user_id", None) else None
+            if _auto_repair_enabled_for_invoice(inv, owner):
+                return redirect(url_for("receipt_new_from_invoice", invoice_id=inv.id, finalize=1))
             inv.paid = inv.invoice_total()
             s.commit()
 

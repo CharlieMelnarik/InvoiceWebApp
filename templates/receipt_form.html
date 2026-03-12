@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% set page_title = "New Receipt" if mode == "new" else "Edit Receipt" %}
+{% set title = page_title %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">{{ page_title }}</h1>
+    <div class="subtitle">
+      Client:
+      <a class="text-decoration-none fw-semibold" href="{{ url_for('customer_view', customer_id=c.id) }}">{{ c.name }}</a>
+      {% if inv %}
+        · Invoice: <a class="text-decoration-none fw-semibold mono" href="{{ url_for('invoice_view', invoice_id=inv.id) }}">{{ inv.display_number or inv.invoice_number }}</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Back to Client</a>
+    {% if receipt %}
+      <a class="btn btn-outline-primary" href="{{ url_for('receipt_view', receipt_id=receipt.id) }}">View Receipt</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if finalize_payment %}
+  <div class="alert alert-info">
+    You are finalizing this invoice as paid. Review the receipt details below, then save the receipt to complete the payment workflow.
+  </div>
+{% endif %}
+
+<form method="post" class="card shadow-sm">
+  <input type="hidden" name="finalize" value="{{ '1' if finalize_payment else '0' }}">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Receipt Number</label>
+        <input class="form-control" name="receipt_number" value="{{ form_data.receipt_number }}" required>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Receipt Date</label>
+        <input class="form-control" name="receipt_date" value="{{ form_data.receipt_date }}" required>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Payment Date</label>
+        <input class="form-control" name="payment_date" value="{{ form_data.payment_date }}" required>
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label">Payment Method</label>
+        <select class="form-select" name="payment_method">
+          {% for method in ["Cash", "Credit Card", "Debit Card", "Check", "ACH / Bank Transfer", "Other"] %}
+            <option value="{{ method }}" {% if form_data.payment_method == method %}selected{% endif %}>{{ method }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Amount Paid</label>
+        <input class="form-control" name="amount_paid" inputmode="decimal" value="{{ form_data.amount_paid }}" required>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Tax Included</label>
+        <input class="form-control" name="tax_included" inputmode="decimal" value="{{ form_data.tax_included }}">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Remaining Balance</label>
+        <input class="form-control" name="remaining_balance" inputmode="decimal" value="{{ form_data.remaining_balance }}">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Invoice Reference</label>
+        <input class="form-control" name="invoice_reference" value="{{ form_data.invoice_reference }}">
+      </div>
+
+      <div class="col-12">
+        <h2 class="h5 fw-bold mt-2 mb-0">Service / Receipt Notes</h2>
+      </div>
+      <div class="col-12">
+        <label class="form-label">Memo</label>
+        <textarea class="form-control" name="memo" rows="3">{{ form_data.memo }}</textarea>
+      </div>
+      <div class="col-12">
+        <label class="form-label">Service Summary</label>
+        <textarea class="form-control" name="service_summary" rows="4">{{ form_data.service_summary }}</textarea>
+      </div>
+      <div class="col-12">
+        <label class="form-label">Labor / Parts Summary</label>
+        <textarea class="form-control" name="labor_parts_summary" rows="3">{{ form_data.labor_parts_summary }}</textarea>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Warranty Note</label>
+        <textarea class="form-control" name="warranty_note" rows="3">{{ form_data.warranty_note }}</textarea>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Thank You Note</label>
+        <textarea class="form-control" name="thank_you_note" rows="3">{{ form_data.thank_you_note }}</textarea>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">PDF Layout</label>
+        <select class="form-select" name="pdf_template">
+          {% for key, cfg in pdf_templates.items() %}
+            <option value="{{ key }}" {% if form_data.pdf_template == key %}selected{% endif %}>{{ cfg.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-footer d-flex flex-wrap gap-2">
+    <button class="btn btn-primary" type="submit">{{ "Save Receipt" if mode == "edit" else ("Save Receipt and Mark Paid" if finalize_payment else "Create Receipt") }}</button>
+    {% if receipt %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('receipt_pdf_download', receipt_id=receipt.id) }}">Download PDF</a>
+    {% endif %}
+    {% if inv %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('invoice_view', invoice_id=inv.id) }}">Back to Invoice</a>
+    {% else %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Cancel</a>
+    {% endif %}
+    <div class="w-100 small-muted">
+      {% if c.email %}
+        Saving this receipt will email it to the client email on file: <span class="fw-semibold">{{ c.email }}</span>.
+      {% else %}
+        Saving this receipt will email it to the client email on file. This client does not currently have an email saved.
+      {% endif %}
+    </div>
+  </div>
+</form>
+{% endblock %}

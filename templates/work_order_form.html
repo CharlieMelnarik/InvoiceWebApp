@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% set page_title = "New Work Order" if mode == "new" else "Edit Work Order" %}
+{% set title = page_title %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">{{ page_title }}</h1>
+    <div class="subtitle">
+      Client:
+      <a class="text-decoration-none fw-semibold" href="{{ url_for('customer_view', customer_id=c.id) }}">{{ c.name }}</a>
+    </div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Back to Client</a>
+    {% if work_order %}
+      <a class="btn btn-outline-primary" href="{{ url_for('work_order_view', work_order_id=work_order.id) }}">View Work Order</a>
+    {% endif %}
+  </div>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Work Order Number</label>
+        <input class="form-control" name="work_order_number" value="{{ form_data.work_order_number }}" required>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Date Received</label>
+        <input class="form-control" type="date" name="received_date" value="{{ form_data.received_date }}" required>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Promised Completion Date</label>
+        <input class="form-control" type="date" name="promised_completion_date" value="{{ form_data.promised_completion_date }}">
+      </div>
+
+      <div class="col-12">
+        <h2 class="h5 fw-bold mt-2 mb-0">Client Contact</h2>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Client Email</label>
+        <input class="form-control" type="email" name="customer_email" value="{{ form_data.customer_email }}">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Client Phone</label>
+        <input class="form-control" name="customer_phone" value="{{ form_data.customer_phone }}">
+      </div>
+
+      <div class="col-12">
+        <h2 class="h5 fw-bold mt-2 mb-0">Vehicle / Intake</h2>
+        <div class="small-muted mt-1">If you use a saved vehicle and update its mileage here, the saved vehicle mileage will be updated everywhere for this client.</div>
+      </div>
+      {% if customer_vehicles %}
+      <div class="col-12">
+        <label class="form-label">Saved Vehicle</label>
+        <select class="form-select" id="savedVehicleSelect" name="selected_vehicle_id">
+          <option value="">Choose a saved vehicle for this client…</option>
+          {% for vehicle in customer_vehicles %}
+            <option value="{{ vehicle.id }}" {% if form_data.selected_vehicle_id == (vehicle.id|string) %}selected{% endif %}>{{ vehicle_label(vehicle) if vehicle_label is defined else [vehicle.vehicle_year, vehicle.vehicle_make, vehicle.vehicle_model]|select|join(' ') }}</option>
+          {% endfor %}
+        </select>
+        <div class="small-muted mt-1">Selecting a saved vehicle fills the vehicle fields below automatically.</div>
+      </div>
+      {% endif %}
+      <div class="col-6 col-md-2">
+        <label class="form-label">Year</label>
+        <input class="form-control" id="vehicle_year" name="vehicle_year" value="{{ form_data.vehicle_year }}">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">Make</label>
+        <input class="form-control" id="vehicle_make" name="vehicle_make" value="{{ form_data.vehicle_make }}">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">Model</label>
+        <input class="form-control" id="vehicle_model" name="vehicle_model" value="{{ form_data.vehicle_model }}">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">VIN</label>
+        <input class="form-control" id="vehicle_vin" name="vehicle_vin" value="{{ form_data.vehicle_vin }}">
+      </div>
+      <div class="col-6 col-md-4">
+        <label class="form-label">Mileage</label>
+        <input class="form-control" id="vehicle_mileage" name="vehicle_mileage" value="{{ form_data.vehicle_mileage }}">
+      </div>
+      <div class="col-6 col-md-4">
+        <label class="form-label">Plate</label>
+        <input class="form-control" id="vehicle_plate" name="vehicle_plate" value="{{ form_data.vehicle_plate }}">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Color</label>
+        <input class="form-control" id="vehicle_color" name="vehicle_color" value="{{ form_data.vehicle_color }}">
+      </div>
+      <div class="col-12">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="1" id="save_vehicle_to_client" name="save_vehicle_to_client" {% if form_data.save_vehicle_to_client %}checked{% endif %}>
+          <label class="form-check-label" for="save_vehicle_to_client">
+            Save this vehicle to this client for future work orders, invoices, and estimates.
+          </label>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <h2 class="h5 fw-bold mt-2 mb-0">Work Requested</h2>
+      </div>
+      <div class="col-12">
+        <label class="form-label fw-semibold">Customer Complaint / Concern</label>
+        <textarea class="form-control" name="complaint" rows="4" required>{{ form_data.complaint }}</textarea>
+      </div>
+      <div class="col-12">
+        <label class="form-label fw-semibold">Requested Service</label>
+        <textarea class="form-control" name="requested_service" rows="4" required>{{ form_data.requested_service }}</textarea>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Technician / Advisor Notes</label>
+        <textarea class="form-control" name="technician_notes" rows="4">{{ form_data.technician_notes }}</textarea>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Inspection Notes</label>
+        <textarea class="form-control" name="inspection_notes" rows="4">{{ form_data.inspection_notes }}</textarea>
+      </div>
+
+      <div class="col-12">
+        <h2 class="h5 fw-bold mt-2 mb-0">Authorization / Internal Details</h2>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Authorized By</label>
+        <input class="form-control" name="authorization_name" value="{{ form_data.authorization_name }}">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Authorization Date</label>
+        <input class="form-control" type="date" name="authorization_date" value="{{ form_data.authorization_date }}">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Technician Name</label>
+        <input class="form-control" name="technician_name" value="{{ form_data.technician_name }}">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Service Advisor</label>
+        <input class="form-control" name="service_advisor" value="{{ form_data.service_advisor }}">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Dropped Off By</label>
+        <input class="form-control" name="dropped_off_by" value="{{ form_data.dropped_off_by }}">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Keys Received</label>
+        <input class="form-control" name="keys_received" value="{{ form_data.keys_received }}">
+      </div>
+      <div class="col-12">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="1" id="diagnosis_acknowledged" name="diagnosis_acknowledged" {% if form_data.diagnosis_acknowledged %}checked{% endif %}>
+          <label class="form-check-label" for="diagnosis_acknowledged">
+            Customer acknowledges that diagnosis may reveal additional repairs beyond the initial concern.
+          </label>
+        </div>
+      </div>
+      <div class="col-12">
+        <label class="form-label">Additional Notes</label>
+        <textarea class="form-control" name="notes" rows="4">{{ form_data.notes }}</textarea>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">PDF Layout</label>
+        <select class="form-select" name="pdf_template">
+          {% for key, cfg in pdf_templates.items() %}
+            <option value="{{ key }}" {% if form_data.pdf_template == key %}selected{% endif %}>{{ cfg.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-footer d-flex flex-wrap gap-2">
+    <button class="btn btn-primary" type="submit">{{ "Save Work Order" if mode == "edit" else "Create Work Order" }}</button>
+    {% if work_order %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('work_order_pdf_download', work_order_id=work_order.id) }}">Download PDF</a>
+    {% endif %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Cancel</a>
+  </div>
+</form>
+<script>
+  (function () {
+    const select = document.getElementById("savedVehicleSelect");
+    if (!select) return;
+    const vehicles = {{ (customer_vehicles_data if customer_vehicles_data is defined else [])|tojson|safe }};
+    const byId = {};
+    vehicles.forEach((vehicle) => { byId[String(vehicle.id)] = vehicle; });
+
+    const fields = {
+      vehicle_year: document.getElementById("vehicle_year"),
+      vehicle_make: document.getElementById("vehicle_make"),
+      vehicle_model: document.getElementById("vehicle_model"),
+      vehicle_vin: document.getElementById("vehicle_vin"),
+      vehicle_mileage: document.getElementById("vehicle_mileage"),
+      vehicle_plate: document.getElementById("vehicle_plate"),
+      vehicle_color: document.getElementById("vehicle_color"),
+    };
+
+    select.addEventListener("change", () => {
+      const vehicle = byId[String(select.value)];
+      if (!vehicle) return;
+      Object.entries(fields).forEach(([key, input]) => {
+        if (input) input.value = vehicle[key] || "";
+      });
+    });
+  })();
+</script>
+{% endblock %}

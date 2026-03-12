@@ -103,15 +103,20 @@
           Need a new client? <a href="{{ url_for('customer_new') }}">Create one</a>.
         </div>
       </div>
-
       <!-- Job / Vehicle -->
       {% if show_job %}
       <div class="col-12 col-md-6">
         <label class="form-label {% if tmpl_key=='auto_repair' %}req{% endif %}">{{ job_label }}</label>
-        <input class="form-control" name="vehicle"
+        <input class="form-control" id="vehicle_input" name="vehicle"
+               {% if tmpl_key == "auto_repair" %}list="saved_vehicle_datalist"{% endif %}
                {% if tmpl_key=='auto_repair' %}required{% endif %}
                placeholder="{{ job_placeholder }}"
                value="{% if mode=='edit' %}{{ inv.vehicle }}{% else %}{{ (form.vehicle if form else '') }}{% endif %}">
+        {% if tmpl_key == "auto_repair" %}
+          <input type="hidden" id="selected_customer_vehicle_id" name="selected_customer_vehicle_id" value="">
+          <datalist id="saved_vehicle_datalist"></datalist>
+          <div class="small-muted mt-1">Saved vehicles for this client will appear as suggestions here and auto-fill when there is only one. If you update the mileage in this field for a saved vehicle, that mileage will be updated everywhere for this client.</div>
+        {% endif %}
       </div>
       {% endif %}
 
@@ -558,17 +563,52 @@
       }
     }
 
+    const vehicleInput = document.getElementById("vehicle_input");
+    const vehicleDatalist = document.getElementById("saved_vehicle_datalist");
+    const selectedVehicleIdInput = document.getElementById("selected_customer_vehicle_id");
+
+    function syncSelectedVehicleId() {
+      if (!selectedVehicleIdInput) return;
+      const currentClient = idToClient[String(idInput.value)];
+      const vehicles = (currentClient && Array.isArray(currentClient.vehicles)) ? currentClient.vehicles : [];
+      const currentVehicleText = ((vehicleInput && vehicleInput.value) || "").trim().toLowerCase();
+      const matchedVehicle = vehicles.find((vehicle) => ((vehicle.vehicle_text || "").trim().toLowerCase() === currentVehicleText));
+      selectedVehicleIdInput.value = matchedVehicle ? String(matchedVehicle.id || "") : "";
+    }
+
+    function syncVehicleOptions() {
+      if (!vehicleDatalist) return;
+      const currentClient = idToClient[String(idInput.value)];
+      const vehicles = (currentClient && Array.isArray(currentClient.vehicles)) ? currentClient.vehicles : [];
+      vehicleDatalist.innerHTML = "";
+      vehicles.forEach((vehicle) => {
+        const option = document.createElement("option");
+        option.value = vehicle.vehicle_text || "";
+        option.label = vehicle.label || vehicle.vehicle_text || "Saved vehicle";
+        vehicleDatalist.appendChild(option);
+      });
+      if (vehicles.length === 1 && vehicleInput && !(vehicleInput.value || "").trim()) {
+        vehicleInput.value = vehicles[0].vehicle_text || "";
+      }
+      syncSelectedVehicleId();
+    }
+
     function syncClientId() {
       const v = (nameInput.value || "").trim().toLowerCase();
       if (!v) {
         idInput.value = "";
+        if (selectedVehicleIdInput) selectedVehicleIdInput.value = "";
+        if (vehicleDatalist) vehicleDatalist.innerHTML = "";
         return;
       }
       if (nameToId[v]) {
         idInput.value = nameToId[v];
         fillContactFromClientId();
+        syncVehicleOptions();
       } else {
         idInput.value = "";
+        if (selectedVehicleIdInput) selectedVehicleIdInput.value = "";
+        if (vehicleDatalist) vehicleDatalist.innerHTML = "";
       }
     }
 
@@ -583,11 +623,17 @@
         phoneInput.value = formatPhone(phoneInput.value);
       });
     }
+    if (vehicleInput) {
+      vehicleInput.addEventListener("input", syncSelectedVehicleId);
+      vehicleInput.addEventListener("change", syncSelectedVehicleId);
+      vehicleInput.addEventListener("blur", syncSelectedVehicleId);
+    }
 
     const form = document.getElementById("invoiceForm");
     if (form) {
       form.addEventListener("submit", function (e) {
         syncClientId();
+        syncSelectedVehicleId();
         if (!idInput.value) {
           e.preventDefault();
           alert("Please select an existing client (choose one from the suggestions).");
@@ -598,6 +644,7 @@
 
     syncClientId();
     fillContactFromClientId();
+    syncVehicleOptions();
   })();
 
   (function () {

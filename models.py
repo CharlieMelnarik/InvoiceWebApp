@@ -192,6 +192,11 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="Customer.name.asc()",
     )
+    customer_vehicles: Mapped[list["CustomerVehicle"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="CustomerVehicle.created_at.desc()",
+    )
 
     invoices: Mapped[list["Invoice"]] = relationship(
         back_populates="user",
@@ -202,6 +207,18 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         order_by="Contract.created_at.desc()",
+    )
+    work_orders: Mapped[list["WorkOrder"]] = relationship(
+        back_populates="user",
+        foreign_keys="WorkOrder.user_id",
+        cascade="all, delete-orphan",
+        order_by="WorkOrder.created_at.desc()",
+    )
+    receipts: Mapped[list["Receipt"]] = relationship(
+        back_populates="user",
+        foreign_keys="Receipt.user_id",
+        cascade="all, delete-orphan",
+        order_by="Receipt.created_at.desc()",
     )
 
     business_expenses: Mapped[list["BusinessExpense"]] = relationship(
@@ -409,12 +426,55 @@ class Customer(Base):
         back_populates="customer",
         order_by="Contract.created_at.desc()",
     )
+    work_orders: Mapped[list["WorkOrder"]] = relationship(
+        back_populates="customer",
+        order_by="WorkOrder.created_at.desc()",
+    )
+    receipts: Mapped[list["Receipt"]] = relationship(
+        back_populates="customer",
+        order_by="Receipt.created_at.desc()",
+    )
+    vehicles: Mapped[list["CustomerVehicle"]] = relationship(
+        back_populates="customer",
+        cascade="all, delete-orphan",
+        order_by="CustomerVehicle.created_at.desc()",
+    )
 
     # NOTE: no delete-orphan here because ScheduleEvent.customer_id is SET NULL.
     schedule_events: Mapped[list["ScheduleEvent"]] = relationship(
         back_populates="customer",
         order_by="ScheduleEvent.start_dt.asc()",
     )
+
+
+class CustomerVehicle(Base):
+    __tablename__ = "customer_vehicles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    vehicle_year: Mapped[str] = mapped_column(String(8), nullable=False)
+    vehicle_make: Mapped[str] = mapped_column(String(40), nullable=False)
+    vehicle_model: Mapped[str] = mapped_column(String(50), nullable=False)
+    vehicle_vin: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    vehicle_mileage: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    vehicle_plate: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    vehicle_color: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="customer_vehicles")
+    customer: Mapped["Customer"] = relationship(back_populates="vehicles")
 
 
 # -----------------------------
@@ -686,6 +746,129 @@ class Contract(Base):
 
     user: Mapped["User"] = relationship(back_populates="contracts")
     customer: Mapped["Customer"] = relationship(back_populates="contracts")
+
+
+class WorkOrder(Base):
+    __tablename__ = "work_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    pdf_template: Mapped[str] = mapped_column(String(50), nullable=False, default="classic")
+
+    work_order_number: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    received_date: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    promised_completion_date: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+
+    customer_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    customer_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    vehicle_year: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    vehicle_make: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    vehicle_model: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    vehicle_vin: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    vehicle_mileage: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    vehicle_plate: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    vehicle_color: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+
+    complaint: Mapped[str] = mapped_column(String(5000), nullable=False, default="")
+    requested_service: Mapped[str] = mapped_column(String(5000), nullable=False, default="")
+    technician_notes: Mapped[str] = mapped_column(String(5000), nullable=False, default="")
+    inspection_notes: Mapped[str] = mapped_column(String(5000), nullable=False, default="")
+
+    technician_name: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    service_advisor: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    dropped_off_by: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    keys_received: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+
+    authorization_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    authorization_date: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    diagnosis_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    notes: Mapped[str] = mapped_column(String(5000), nullable=False, default="")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="work_orders", foreign_keys=[user_id])
+    customer: Mapped["Customer"] = relationship(back_populates="work_orders")
+
+
+class Receipt(Base):
+    __tablename__ = "receipts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    invoice_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    pdf_template: Mapped[str] = mapped_column(String(50), nullable=False, default="classic")
+
+    receipt_number: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    receipt_date: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    payment_date: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    invoice_reference: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    payment_method: Mapped[str] = mapped_column(String(40), nullable=False, default="Cash")
+    amount_paid: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    tax_included: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    remaining_balance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    paid_in_full: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    customer_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    customer_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    vehicle_year: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    vehicle_make: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    vehicle_model: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    vehicle_vin: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    vehicle_mileage: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    vehicle_plate: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+
+    memo: Mapped[str] = mapped_column(String(1200), nullable=False, default="")
+    service_summary: Mapped[str] = mapped_column(String(3000), nullable=False, default="")
+    labor_parts_summary: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    warranty_note: Mapped[str] = mapped_column(String(1200), nullable=False, default="")
+    thank_you_note: Mapped[str] = mapped_column(String(800), nullable=False, default="")
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="receipts", foreign_keys=[user_id])
+    customer: Mapped["Customer"] = relationship(back_populates="receipts")
+    invoice: Mapped[Optional["Invoice"]] = relationship(foreign_keys=[invoice_id])
 
 
 class EmailTemplate(Base):

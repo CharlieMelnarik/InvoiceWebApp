@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% set title = "Receipt " ~ (receipt.receipt_number or receipt.id) %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Receipt <span class="mono">{{ receipt.receipt_number }}</span></h1>
+    <div class="subtitle">
+      Client:
+      <a class="text-decoration-none fw-semibold" href="{{ url_for('customer_view', customer_id=c.id) }}">{{ c.name }}</a>
+      {% if inv %}
+        · Invoice: <a class="text-decoration-none fw-semibold mono" href="{{ url_for('invoice_view', invoice_id=inv.id) }}">{{ inv.display_number or inv.invoice_number }}</a>
+      {% endif %}
+      {% if receipt.sent_at %} · Emailed: <span class="mono">{{ receipt.sent_at.strftime("%Y-%m-%d %I:%M %p") }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="action-group">
+    <a class="btn btn-outline-secondary" href="{{ url_for('customer_view', customer_id=c.id) }}">Back to Client</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('receipt_edit', receipt_id=receipt.id) }}">Edit</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('receipt_pdf_download', receipt_id=receipt.id) }}">Download PDF</a>
+    <form method="post" action="{{ url_for('receipt_delete', receipt_id=receipt.id) }}" onsubmit="return confirm('Delete this receipt?');">
+      <button class="btn btn-outline-danger" type="submit">Delete</button>
+    </form>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-semibold">Payment Details</div>
+      <div class="card-body">
+        <div class="mb-2"><span class="small-muted">Receipt Date:</span> {{ receipt.receipt_date or "—" }}</div>
+        <div class="mb-2"><span class="small-muted">Payment Date:</span> {{ receipt.payment_date or "—" }}</div>
+        <div class="mb-2"><span class="small-muted">Payment Method:</span> {{ receipt.payment_method or "—" }}</div>
+        <div class="mb-2"><span class="small-muted">Amount Paid:</span> <span class="mono fw-semibold">${{ "%.2f"|format(receipt.amount_paid or 0) }}</span></div>
+        <div class="mb-2"><span class="small-muted">Tax Included:</span> <span class="mono">${{ "%.2f"|format(receipt.tax_included or 0) }}</span></div>
+        <div class="mb-2"><span class="small-muted">Remaining Balance:</span> <span class="mono">${{ "%.2f"|format(receipt.remaining_balance or 0) }}</span></div>
+        <div class="mb-0">
+          {% if receipt.paid_in_full %}
+            <span class="badge text-bg-success">Paid in Full</span>
+          {% else %}
+            <span class="badge text-bg-warning">Balance Remaining</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-semibold">Client / Vehicle</div>
+      <div class="card-body">
+        <div class="fw-semibold">{{ c.name }}</div>
+        {% if receipt.customer_email or c.email %}<div>{{ receipt.customer_email or c.email }}</div>{% endif %}
+        {% if receipt.customer_phone or c.phone %}<div>{{ format_phone(receipt.customer_phone or c.phone) }}</div>{% endif %}
+        {% if c.address_line1 or c.address %}
+          <div class="mt-2">{{ c.address_line1 or c.address }}</div>
+          {% if c.address_line2 %}<div>{{ c.address_line2 }}</div>{% endif %}
+          {% if c.city or c.state or c.postal_code %}<div>{{ [c.city, c.state, c.postal_code]|select|join(' ') }}</div>{% endif %}
+        {% endif %}
+        <div class="mt-3 small-muted">Vehicle</div>
+        <div class="fw-semibold">{{ [receipt.vehicle_year, receipt.vehicle_make, receipt.vehicle_model]|select|join(' ') or "—" }}</div>
+        {% if receipt.vehicle_vin %}<div>VIN: <span class="mono">{{ receipt.vehicle_vin }}</span></div>{% endif %}
+        {% if receipt.vehicle_mileage %}<div>Mileage: {{ receipt.vehicle_mileage }}</div>{% endif %}
+        {% if receipt.vehicle_plate %}<div>Plate: {{ receipt.vehicle_plate }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-header fw-semibold">Receipt Summary</div>
+      <div class="card-body">
+        {% if receipt.invoice_reference %}
+          <div class="mb-3"><span class="small-muted">Invoice Reference:</span> <span class="mono">{{ receipt.invoice_reference }}</span></div>
+        {% endif %}
+        {% if receipt.memo %}
+          <h2 class="h6 fw-bold">Memo</h2>
+          <p>{{ receipt.memo }}</p>
+        {% endif %}
+        {% if receipt.service_summary %}
+          <h2 class="h6 fw-bold">Service Summary</h2>
+          <p>{{ receipt.service_summary }}</p>
+        {% endif %}
+        {% if receipt.labor_parts_summary %}
+          <h2 class="h6 fw-bold">Labor / Parts Summary</h2>
+          <p>{{ receipt.labor_parts_summary }}</p>
+        {% endif %}
+        {% if receipt.warranty_note %}
+          <h2 class="h6 fw-bold">Warranty Note</h2>
+          <p>{{ receipt.warranty_note }}</p>
+        {% endif %}
+        {% if receipt.thank_you_note %}
+          <h2 class="h6 fw-bold">Thank You Note</h2>
+          <p class="mb-0">{{ receipt.thank_you_note }}</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
