@@ -530,6 +530,28 @@
     line-height: 1.52;
     font-size: .94rem;
   }
+  .free-toc {
+    border: 1px solid #d2deef;
+    border-radius: 15px;
+    padding: 1rem;
+    background: #fbfdff;
+    margin-bottom: 1rem;
+  }
+  .free-toc ul {
+    list-style: none;
+    padding-left: 0;
+    margin: .45rem 0 0;
+    display: grid;
+    gap: .35rem;
+  }
+  .free-toc a {
+    color: #1a4688;
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .free-toc a:hover {
+    text-decoration: underline;
+  }
   .compare-grid,
   .faq-grid {
     display: grid;
@@ -606,32 +628,32 @@
   <section class="free-card free-hero">
     <div>
       <div class="free-eyebrow"><i class="bi bi-tools"></i> Free tool for repair shops</div>
-      <h1>Free Mechanic Invoice Template Generator</h1>
-      <p>This free mechanic invoice template generator helps auto repair shops, mobile mechanics, and service businesses create professional repair invoices in minutes. Enter vehicle details, parts, labor, and service notes, preview the invoice live, and download a clean PDF instantly with no signup required.</p>
+      <h1>Free Auto Repair Estimate Template Generator</h1>
+      <p>This free auto repair estimate template generator helps repair shops, mobile mechanics, and service businesses create professional estimates in minutes. Enter vehicle details, parts, labor, and service notes, preview the estimate live, and download a clean PDF instantly with no signup required.</p>
       <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-primary" href="#generator">Start Free Invoice</a>
-        <a class="btn btn-outline-primary" href="#faq">See FAQ</a>
+        <a class="btn btn-primary" href="#generator">Start Free Estimate</a>
+        <a class="btn btn-outline-primary" href="#estimate-faq">See FAQ</a>
       </div>
       <div class="free-trust">
         <div>No signup required</div>
         <div>Download PDF instantly</div>
         <div>Built for repair shops</div>
       </div>
-      <p class="free-crosslink">Need to create the repair estimate before billing the job? Use our <a href="{{ url_for('free_estimate') }}">free auto repair estimate generator</a>.</p>
+      <p class="free-crosslink">Need to send the final bill after the work is approved? Use our <a href="{{ url_for('free_invoice') }}">free mechanic invoice generator</a>.</p>
       <div class="free-hero-audience">
         <h2 class="free-subsection-title">Who this tool is for</h2>
         <div class="free-audience-grid hero-audience-grid">
           <article class="free-audience-card">
             <strong>Small auto repair shops</strong>
-            <span>Create polished invoices for labor, parts, tax, and shop supplies without wasting time in a spreadsheet.</span>
+            <span>Create polished repair estimates for labor, parts, tax, and shop supplies without wasting time in a spreadsheet.</span>
           </article>
           <article class="free-audience-card">
             <strong>Mobile mechanics</strong>
-            <span>Build a repair invoice on-site with vehicle details, service notes, and a clean downloadable PDF.</span>
+            <span>Build a repair estimate on-site with vehicle details, service notes, and a clean downloadable PDF.</span>
           </article>
           <article class="free-audience-card">
             <strong>Independent technicians</strong>
-            <span>Useful when you need a one-off invoice that still looks professional and complete.</span>
+            <span>Useful when you need a one-off estimate that still looks professional and complete.</span>
           </article>
           <article class="free-audience-card">
             <strong>General repair businesses</strong>
@@ -642,15 +664,15 @@
     </div>
     <div class="free-side-panel">
       <figure class="free-mini-panel free-hero-visual mb-0">
-        <img src="{{ url_for('static', filename='images/SampleFreeAutoRepairInvoice.png') }}" alt="Example mechanic invoice template generated with InvoiceRunner">
-        <figcaption>Example mechanic invoice template generated with InvoiceRunner.</figcaption>
+        <img src="{{ url_for('static', filename='images/SampleFreeAutoRepairEstimate.png') }}" alt="Example auto repair estimate template generated with InvoiceRunner">
+        <figcaption>Example auto repair estimate template generated with InvoiceRunner.</figcaption>
       </figure>
       <div class="free-mini-panel">
         <h3>Why this page can outrank a plain template</h3>
         <ul>
-          <li>Vehicle-specific fields that generic invoice templates miss</li>
+          <li>Vehicle-specific fields that generic estimate templates miss</li>
           <li>Mechanic-friendly line items for labor, parts, diagnostics, and supplies</li>
-          <li>Instant PDF download with no account friction</li>
+          <li>Instant PDF estimate download with no account friction</li>
         </ul>
       </div>
       <div class="free-mini-panel">
@@ -659,7 +681,7 @@
           <li>Small auto repair shops</li>
           <li>Mobile mechanics</li>
           <li>General repair businesses</li>
-          <li>One-off invoices that still need to look professional</li>
+          <li>One-off estimates that still need to look professional</li>
         </ul>
       </div>
     </div>
@@ -667,17 +689,17 @@
 
   <section class="free-benefits">
     <div class="benefit"><strong>Free to use</strong><span>No paywall or trial gate just to generate a PDF.</span></div>
-    <div class="benefit"><strong>No account needed</strong><span>Enter the invoice details and download immediately.</span></div>
-    <div class="benefit"><strong>Professional layouts</strong><span>Choose from three distinct mechanic-friendly invoice styles.</span></div>
+    <div class="benefit"><strong>No account needed</strong><span>Enter the estimate details and download immediately.</span></div>
+    <div class="benefit"><strong>Professional layouts</strong><span>Choose from three distinct mechanic-friendly estimate styles.</span></div>
     <div class="benefit"><strong>Powered by InvoiceRunner</strong><span>Built by a full invoicing platform for service businesses.</span></div>
   </section>
 
   <section class="free-tool-grid mt-3" id="generator">
     <div class="free-form-card">
-      <h2>Build your repair invoice</h2>
-      <p class="free-lead">Enter your shop, client, vehicle, and labor or parts details. Nothing is saved to an account or database. The data stays in your browser until you download the PDF.</p>
+      <h2>Build your repair estimate</h2>
+      <p class="free-lead">Enter your shop, customer, vehicle, and projected labor or parts details. Nothing is saved to an account or database. The data stays in your browser until you download the PDF.</p>
 
-      <form id="freeInvoiceForm" novalidate>
+      <form id="freeEstimateForm" novalidate>
         <div class="tool-section">
           <h3>Choose a layout</h3>
           <div class="template-choice-grid">
@@ -728,40 +750,40 @@
         </div>
 
         <div class="tool-section">
-          <h3>Client information</h3>
+          <h3>Customer information</h3>
           <div class="field-grid">
             <div>
-              <label class="form-label">Client name</label>
+              <label class="form-label">Customer name</label>
               <input class="form-control" name="client_name" placeholder="Jordan Smith">
               <div class="free-error" data-error-for="client_name"></div>
             </div>
             <div>
-              <label class="form-label">Client phone (optional)</label>
+              <label class="form-label">Customer phone (optional)</label>
               <input class="form-control" name="client_phone" placeholder="(406) 555-0174">
             </div>
             <div>
-              <label class="form-label">Client address</label>
+              <label class="form-label">Customer address</label>
               <textarea class="form-control" name="client_address" rows="3" placeholder="88 Cottonwood Dr&#10;Belgrade, MT 59714"></textarea>
             </div>
             <div>
-              <label class="form-label">Client email (optional)</label>
+              <label class="form-label">Customer email (optional)</label>
               <input class="form-control" name="client_email" placeholder="client@example.com">
             </div>
           </div>
         </div>
 
         <div class="tool-section">
-          <h3>Vehicle and invoice details</h3>
+          <h3>Vehicle and estimate details</h3>
           <div class="field-grid-3">
             <div>
-              <label class="form-label">Invoice number</label>
-              <input class="form-control" name="invoice_number" placeholder="MECH-1001">
-              <div class="free-error" data-error-for="invoice_number"></div>
+              <label class="form-label">Estimate number</label>
+              <input class="form-control" name="estimate_number" placeholder="EST-2041">
+              <div class="free-error" data-error-for="estimate_number"></div>
             </div>
             <div>
-              <label class="form-label">Invoice date</label>
-              <input class="form-control" type="date" name="invoice_date">
-              <div class="free-error" data-error-for="invoice_date"></div>
+              <label class="form-label">Estimate date</label>
+              <input class="form-control" type="date" name="estimate_date">
+              <div class="free-error" data-error-for="estimate_date"></div>
             </div>
             <div>
               <label class="form-label">Tax rate (%)</label>
@@ -796,7 +818,7 @@
 
         <div class="tool-section">
           <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
-            <h3 class="mb-0">Labor, parts, and service line items</h3>
+            <h3 class="mb-0">Labor, parts, and estimate line items</h3>
             <button class="btn btn-outline-primary btn-sm" type="button" id="addLineItemBtn"><i class="bi bi-plus-lg"></i> Add line item</button>
           </div>
           <div class="line-items-head">
@@ -812,65 +834,79 @@
 
         <div class="tool-section">
           <h3>Notes</h3>
-          <textarea class="form-control" name="notes" rows="4" placeholder="Thank you message, payment terms, warranty language, or service notes."></textarea>
+          <textarea class="form-control" name="notes" rows="4" placeholder="Estimate validity, projected work notes, possible additional repairs, or customer authorization language."></textarea>
         </div>
 
         <div class="free-inline-actions">
           <button class="btn btn-primary" type="submit" id="downloadBtn"><i class="bi bi-file-earmark-pdf"></i>&nbsp;Download PDF</button>
           <button class="btn btn-outline-primary" type="button" id="sampleBtn">Load sample data</button>
           <button class="btn btn-outline-secondary" type="button" id="clearBtn">Clear form</button>
-          <span class="free-note prominent">Need to save invoices, send reminders, and keep customer and vehicle history organized? <a href="{{ url_for('register') }}">Create a free InvoiceRunner account</a>.</span>
+          <span class="free-note prominent">Need to save estimates, convert approved work into invoices, and track customers and vehicles? <a href="{{ url_for('register') }}">Create a free InvoiceRunner account</a>.</span>
         </div>
       </form>
     </div>
 
     <div class="free-preview-card">
-      <h2>Live invoice preview</h2>
-      <p class="free-lead">The preview updates as you work so you can verify the layout, line items, vehicle details, and totals before downloading the PDF.</p>
+      <h2>Live estimate preview</h2>
+      <p class="free-lead">The preview updates as you work so you can verify the layout, projected work, vehicle details, and estimated total before downloading the PDF.</p>
       <div class="preview-frame">
-        <iframe class="preview-surface" id="previewFrame" title="PDF invoice preview"></iframe>
+        <iframe class="preview-surface" id="previewFrame" title="PDF estimate preview"></iframe>
       </div>
     </div>
   </section>
 
   <section class="free-section">
-    <h2>What is a mechanic invoice?</h2>
-    <p>A mechanic invoice is the final bill for work completed on a vehicle. It records who performed the work, who authorized it, what vehicle was serviced, what labor and parts were used, and the total amount due. A good auto repair invoice protects the shop, helps the client understand the bill, and keeps your records clean.</p>
+    <div class="free-toc" aria-labelledby="estimate-toc-title">
+      <h2 class="free-subsection-title mb-0" id="estimate-toc-title">On this page</h2>
+      <ul>
+        <li><a href="#what-is-estimate">What is an auto repair estimate?</a></li>
+        <li><a href="#estimate-includes">What should an auto repair estimate include?</a></li>
+        <li><a href="#estimate-vs-invoice">Estimate vs invoice: what is the difference?</a></li>
+        <li><a href="#how-to-use-estimate">How to use this free estimate generator</a></li>
+        <li><a href="#estimate-faq">Auto repair estimate template FAQ</a></li>
+      </ul>
+    </div>
 
-    <h3>What should an auto repair invoice include?</h3>
-    <p>A professional repair invoice should include the business name and contact information, the client’s name and address, the vehicle year, make, model, VIN, labor and parts line items, taxes, the final total, and any notes such as payment terms or warranty disclaimers.</p>
+    <h2 id="what-is-estimate">What is an auto repair estimate?</h2>
+    <p>An auto repair estimate is the projected cost of proposed repair work before the final job is completed. It helps the shop explain the expected labor, parts, taxes, and service notes so the customer understands the likely cost before authorizing the work.</p>
 
-    <h3>How to use this free mechanic invoice generator</h3>
+    <h3 id="estimate-includes">What should an auto repair estimate include?</h3>
+    <p>A professional repair estimate should include the business name and contact information, the customer’s name and address, the vehicle year, make, model, VIN, projected labor and parts line items, taxes, the estimated total, and notes or disclaimers about how the final bill may change after inspection.</p>
+
+    <h3 id="how-to-use-estimate">How to use this free estimate generator</h3>
     <ol>
-      <li>Enter your shop information and the client details.</li>
-      <li>Add the vehicle information and invoice number.</li>
-      <li>List your labor, parts, diagnostics, and shop-supply charges.</li>
-      <li>Choose one of the three invoice layouts.</li>
-      <li>Preview the invoice and download the PDF instantly.</li>
+      <li>Enter your shop information and the customer details.</li>
+      <li>Add the vehicle information and estimate number.</li>
+      <li>List your projected labor, parts, diagnostics, and shop-supply charges.</li>
+      <li>Choose one of the three estimate layouts.</li>
+      <li>Preview the estimate and download the PDF instantly.</li>
     </ol>
-    <p>Need to quote the repair before billing the job? Use our <a href="{{ url_for('free_estimate') }}">free auto repair estimate generator</a>.</p>
+
+    <h3 id="estimate-vs-invoice">Estimate vs invoice: what is the difference?</h3>
+    <p>An estimate shows the projected cost of proposed repairs before the work is completed. An invoice is the final bill after the work is done and actual labor, parts, taxes, and any additional approved repairs are known.</p>
+    <p>Need to send the final bill after the work is approved? Use our <a href="{{ url_for('free_invoice') }}">free mechanic invoice generator</a>.</p>
   </section>
 
   <section class="free-section">
-    <h2>Free invoice template vs full invoicing software</h2>
-    <p>A free mechanic invoice template is useful when you need to create a one-off PDF quickly. Once you need saved invoices, repeat client history, automatic payment reminders, customer and vehicle records, or a smoother shop workflow, full invoicing software becomes the better long-term option.</p>
+    <h2>Free estimate template vs full repair shop software</h2>
+    <p>A free auto repair estimate template is useful when you need to create a one-off PDF quote quickly. Once you need saved estimates, repeat customer history, invoice conversion, payment reminders, vehicle records, or a smoother shop workflow, full repair shop software becomes the better long-term option.</p>
     <div class="compare-grid">
       <div class="compare-box">
         <h3>Free PDF generator</h3>
         <ul>
-          <li>Fast, no-login invoice creation</li>
-          <li>Useful for one-off or occasional jobs</li>
+          <li>Fast, no-login estimate creation</li>
+          <li>Useful for one-off or occasional quotes</li>
           <li>Download and send manually</li>
-          <li>No saved records or payment tracking</li>
+          <li>No saved records or workflow tracking</li>
         </ul>
       </div>
       <div class="compare-box">
         <h3>Full InvoiceRunner account</h3>
         <ul>
-          <li>Save invoices and estimates</li>
-          <li>Keep repeat client history and vehicle records</li>
-          <li>Accept online payments and saved cards</li>
-          <li>Send automatic payment reminders</li>
+          <li>Save estimates and invoices</li>
+          <li>Keep repeat customer and vehicle history</li>
+          <li>Accept online payments when estimates turn into invoices</li>
+          <li>Send reminders and follow up more consistently</li>
           <li>Manage schedules and run a cleaner shop workflow</li>
         </ul>
       </div>
@@ -878,16 +914,16 @@
   </section>
 
   <section class="free-section">
-    <h2>Free mechanic invoice template PDF example</h2>
-    <p>This sample shows the kind of professional invoice example and downloadable PDF this tool creates for repair shops. It is designed to generate a clean mechanic invoice with vehicle details, labor, parts, and totals that are easy for clients to review.</p>
-    <figure class="free-example-visual mt-3">
-      <img src="{{ url_for('static', filename='images/SampleFreeAutoRepairInvoice.png') }}" alt="Free mechanic invoice template PDF example generated with InvoiceRunner">
-      <figcaption>Example mechanic invoice PDF generated with InvoiceRunner.</figcaption>
+    <h2>Free auto repair estimate template PDF example</h2>
+    <p>This sample shows the kind of professional estimate example and downloadable PDF estimate this tool creates. It is built for repair shops that need a clear repair estimate with labor, parts, vehicle details, and a projected total.</p>
+    <figure class="free-hero-visual mt-3">
+      <img src="{{ url_for('static', filename='images/SampleFreeAutoRepairEstimate.png') }}" alt="Free auto repair estimate template PDF example generated with InvoiceRunner">
+      <figcaption>Example auto repair estimate PDF generated with InvoiceRunner.</figcaption>
     </figure>
   </section>
 
-  <section class="free-section" id="faq">
-    <h2>Mechanic invoice template FAQ</h2>
+  <section class="free-section" id="estimate-faq">
+    <h2>Auto repair estimate template FAQ</h2>
     <div class="faq-grid">
       {% for item in faq_items %}
       <article class="faq-item">
@@ -901,17 +937,17 @@
   <section class="free-section">
     <div class="final-cta">
       <div>
-        <h2>Need more than a one-off PDF?</h2>
-        <p class="mb-0">InvoiceRunner helps repair shops send invoices, accept payments, save customer and vehicle history, keep estimates and records organized, and run the business side of the shop more efficiently.</p>
+        <h2>Need more than a one-off estimate PDF?</h2>
+        <p class="mb-0">InvoiceRunner helps repair shops save estimates, turn approved work into invoices, accept payments, keep customer and vehicle history organized, and run the business side of the shop more efficiently.</p>
       </div>
       <div class="d-flex flex-wrap gap-2 justify-content-end">
         <a class="btn btn-primary" href="{{ url_for('register') }}">Create free InvoiceRunner account</a>
-        <a class="btn btn-outline-primary" href="#generator">Use the free tool</a>
+        <a class="btn btn-outline-primary" href="#generator">Use the free estimate tool</a>
       </div>
     </div>
     <div class="mt-3">
       <h3 class="free-subsection-title">Related free tools</h3>
-      <p class="mb-1"><a href="{{ url_for('free_estimate') }}">Free auto repair estimate generator</a></p>
+      <p class="mb-1"><a href="{{ url_for('free_invoice') }}">Free mechanic invoice generator</a></p>
       <p class="mb-1"><a href="{{ url_for('repair_order_template') }}">Free repair order template generator</a></p>
       <p class="mb-0"><a href="{{ url_for('auto_repair_receipt_template') }}">Free auto repair receipt template generator</a></p>
     </div>
@@ -945,8 +981,8 @@
 <script>
 (() => {
   const samplePayload = {{ sample_payload|tojson }};
-  const storageKey = 'invoiceRunnerFreeInvoiceDraft';
-  const form = document.getElementById('freeInvoiceForm');
+  const storageKey = 'invoiceRunnerFreeEstimateDraft';
+  const form = document.getElementById('freeEstimateForm');
   const lineItemsList = document.getElementById('lineItemsList');
   const lineItemTemplate = document.getElementById('lineItemTemplate');
   const previewFrame = document.getElementById('previewFrame');
@@ -1015,8 +1051,8 @@
         email: fd.get('client_email') || '',
       },
       vehicle: {
-        invoice_number: fd.get('invoice_number') || '',
-        invoice_date: fd.get('invoice_date') || '',
+        invoice_number: fd.get('estimate_number') || '',
+        invoice_date: fd.get('estimate_date') || '',
         year: fd.get('vehicle_year') || '',
         make: fd.get('vehicle_make') || '',
         model: fd.get('vehicle_model') || '',
@@ -1052,8 +1088,8 @@
     set('client_address', data.client?.address);
     set('client_phone', data.client?.phone);
     set('client_email', data.client?.email);
-    set('invoice_number', data.vehicle?.invoice_number || data.invoice_number);
-    set('invoice_date', data.vehicle?.invoice_date || data.invoice_date);
+    set('estimate_number', data.vehicle?.estimate_number || data.invoice_number);
+    set('estimate_date', data.vehicle?.estimate_date || data.invoice_date);
     set('vehicle_year', data.vehicle?.year);
     set('vehicle_make', data.vehicle?.make);
     set('vehicle_model', data.vehicle?.model);
@@ -1082,7 +1118,7 @@
 
   async function refreshPreview() {
     persistDraft();
-    const response = await fetch('{{ url_for("free_invoice_preview") }}', {
+    const response = await fetch('{{ url_for("free_estimate_preview") }}', {
       method: 'POST',
       body: new FormData(form),
     });
@@ -1145,7 +1181,7 @@
     downloadBtn.disabled = true;
     downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Generating PDF';
     try {
-      const response = await fetch('{{ url_for("free_invoice_pdf") }}', {
+      const response = await fetch('{{ url_for("free_estimate_pdf") }}', {
         method: 'POST',
         body: new FormData(form),
       });
@@ -1155,7 +1191,7 @@
         return;
       }
       const blob = await response.blob();
-      const invoiceNumber = form.querySelector('[name="invoice_number"]').value || 'mechanic-invoice';
+      const invoiceNumber = form.querySelector('[name="estimate_number"]').value || 'repair-estimate';
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

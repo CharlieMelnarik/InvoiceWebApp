@@ -201,9 +201,26 @@ def _free_invoice_group_items(line_items: list[dict]) -> list[tuple[str, list[di
     return groups or [("Repair Line Items", line_items)]
 
 
-def generate_free_invoice_pdf(data: dict) -> bytes:
+def _generate_free_repair_pdf(data: dict) -> bytes:
     template_key = (data.get("template_key") or "classic_shop").strip().lower()
     cfg = FREE_INVOICE_TEMPLATES.get(template_key, FREE_INVOICE_TEMPLATES["classic_shop"])
+    document_kind = (data.get("document_kind") or "invoice").strip().lower()
+    is_estimate = document_kind == "estimate"
+    doc_label = "ESTIMATE" if is_estimate else "INVOICE"
+    doc_number_label = "Estimate #:" if is_estimate else "Invoice #:"
+    vehicle_service_label = "Vehicle / Proposed Service" if is_estimate else "Vehicle / Service"
+    notes_label = "Estimate notes" if is_estimate else "Notes"
+    total_panel_label = "ESTIMATED TOTAL" if is_estimate else "TOTAL DUE"
+    default_notes = (
+        "Estimate valid for 7 days. Final charges may vary based on actual inspection, parts availability, and completed repair work."
+        if is_estimate
+        else "Thank you for the opportunity to service your vehicle."
+    )
+    footer_lines = [
+        "Free invoicing and estimate software for repair shops",
+        "Need to save estimates, invoices, customers, and payment history? Try InvoiceRunner",
+        "invoicerunner.com",
+    ]
 
     buf = io.BytesIO()
     pdf = canvas.Canvas(buf, pagesize=LETTER)
@@ -252,11 +269,6 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
         pdf.setFont("Helvetica-Bold", 9.5)
         pdf.drawString(margin, base_y - 14, "Created with InvoiceRunner")
         pdf.setFont("Helvetica", 8.5)
-        footer_lines = [
-            "Free invoicing software for repair shops",
-            "Need to save invoices, email clients, and get paid online? Try InvoiceRunner",
-            "invoicerunner.com",
-        ]
         fy = base_y - 28
         for line in footer_lines:
             pdf.drawString(margin, fy, line)
@@ -340,17 +352,21 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
             info_y -= 13
         pdf.setFillColor(cfg["accent"])
         pdf.setFont("Helvetica-Bold", 30)
-        pdf.drawRightString(page_w - margin, y - 6, "INVOICE")
+        pdf.drawRightString(page_w - margin, y - 6, doc_label)
         pdf.setFillColor(colors.HexColor("#0b1429"))
         pdf.setFont("Helvetica", 11)
-        pdf.drawRightString(page_w - margin, y - 32, f"Invoice #: {invoice_number}")
+        pdf.drawRightString(page_w - margin, y - 32, f"{doc_number_label} {invoice_number}")
         pdf.drawRightString(page_w - margin, y - 48, f"Date: {today_label}")
+        if is_estimate:
+            pdf.setFillColor(colors.HexColor("#5f6f86"))
+            pdf.setFont("Helvetica-Oblique", 9)
+            pdf.drawRightString(page_w - margin, y - 63, "Estimate only. Final charges may vary after inspection.")
         y -= 94
 
         col_gap = 22
         col_w = (content_w - col_gap) / 2
         section_label("Client", margin, y)
-        section_label("Vehicle / Service", margin + col_w + col_gap, y)
+        section_label(vehicle_service_label, margin + col_w + col_gap, y)
         pdf.setFillColor(colors.HexColor("#223b66"))
         pdf.setFont("Helvetica", 10.5)
         line_y = y - 18
@@ -371,9 +387,9 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
         pdf.setStrokeColor(colors.HexColor("#d5dfef"))
         pdf.roundRect(margin, y - 112, notes_w, 112, 10, fill=0, stroke=1)
         pdf.roundRect(page_w - margin - totals_w, y - 112, totals_w, 112, 10, fill=0, stroke=1)
-        section_label("Notes", margin + 12, y - 18)
-        _free_invoice_wrap(pdf, notes or "Thank you for the opportunity to service your vehicle.", margin + 12, y - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
-        section_label("Amount due", page_w - margin - totals_w + 12, y - 18)
+        section_label(notes_label, margin + 12, y - 18)
+        _free_invoice_wrap(pdf, notes or default_notes, margin + 12, y - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
+        section_label("Estimated total" if is_estimate else "Amount due", page_w - margin - totals_w + 12, y - 18)
         row_y = y - 44
         for idx, (label, value) in enumerate([
             ("Subtotal", _free_invoice_money(float(totals.get("subtotal") or 0.0))),
@@ -400,17 +416,21 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
             info_y -= 13
         pdf.setFillColor(cfg["accent"])
         pdf.setFont("Helvetica-Bold", 28)
-        pdf.drawRightString(page_w - margin, y - 6, "INVOICE")
+        pdf.drawRightString(page_w - margin, y - 6, doc_label)
         pdf.setFillColor(colors.HexColor("#0b1429"))
         pdf.setFont("Helvetica-Bold", 11)
-        pdf.drawRightString(page_w - margin, y - 28, f"Invoice #: {invoice_number}")
+        pdf.drawRightString(page_w - margin, y - 28, f"{doc_number_label} {invoice_number}")
         pdf.drawRightString(page_w - margin, y - 44, f"Date: {today_label}")
+        if is_estimate:
+            pdf.setFillColor(colors.HexColor("#5f6f86"))
+            pdf.setFont("Helvetica-Oblique", 9)
+            pdf.drawRightString(page_w - margin, y - 58, "Estimate only. Final charges may vary after inspection.")
         y -= 78
 
         service_w = page_w - margin - left_text_x
         pdf.setFillColor(cfg["accent_soft"])
         pdf.roundRect(left_text_x, y - 58, service_w, 58, 14, fill=1, stroke=0)
-        section_label("Vehicle / Service", left_text_x + 14, y - 18)
+        section_label(vehicle_service_label, left_text_x + 14, y - 18)
         pdf.setFillColor(colors.HexColor("#223b66"))
         pdf.setFont("Helvetica", 10.5)
         vehicle_text = "  •  ".join(vehicle_lines[:4]) if vehicle_lines else "Vehicle details"
@@ -434,15 +454,15 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
         notes_w = service_w * 0.58
         pdf.setStrokeColor(cfg["accent"])
         pdf.roundRect(left_text_x, y - 112, notes_w, 112, 14, fill=0, stroke=1)
-        section_label("Notes", left_text_x + 12, y - 18)
-        _free_invoice_wrap(pdf, notes or "Detailed service notes, warranty language, and customer instructions.", left_text_x + 12, y - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
+        section_label(notes_label, left_text_x + 12, y - 18)
+        _free_invoice_wrap(pdf, notes or default_notes, left_text_x + 12, y - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
         strip_x = left_text_x + notes_w + 16
         strip_w = service_w - notes_w - 16
         pdf.setFillColor(cfg["header_fill"])
         pdf.roundRect(strip_x, y - 112, strip_w, 112, 16, fill=1, stroke=0)
         pdf.setFillColor(colors.white)
         pdf.setFont("Helvetica-Bold", 12)
-        pdf.drawString(strip_x + 14, y - 24, "TOTAL DUE")
+        pdf.drawString(strip_x + 14, y - 24, total_panel_label)
         pdf.setFont("Helvetica", 10.5)
         row_y = y - 48
         for idx, (label, value) in enumerate([
@@ -462,11 +482,6 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
         pdf.setFont("Helvetica-Bold", 9.5)
         pdf.drawString(left_text_x, footer_y - 14, "Created with InvoiceRunner")
         pdf.setFont("Helvetica", 8.5)
-        footer_lines = [
-            "Free invoicing software for repair shops",
-            "Need to save invoices, email clients, and get paid online? Try InvoiceRunner",
-            "invoicerunner.com",
-        ]
         fy = footer_y - 28
         for line in footer_lines:
             pdf.drawString(left_text_x, fy, line)
@@ -486,11 +501,14 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
             pdf.drawString(margin + 18 + logo_offset_x, info_y, line)
             info_y -= 12
         pdf.setFont("Helvetica-Bold", 26)
-        title_w = stringWidth("INVOICE", "Helvetica-Bold", 26)
-        pdf.drawString(page_w - margin - title_w - 18, y - 34, "INVOICE")
+        title_w = stringWidth(doc_label, "Helvetica-Bold", 26)
+        pdf.drawString(page_w - margin - title_w - 18, y - 34, doc_label)
         pdf.setFont("Helvetica-Bold", 11)
-        pdf.drawRightString(page_w - margin - 18, y - 54, f"Invoice #: {invoice_number}")
+        pdf.drawRightString(page_w - margin - 18, y - 54, f"{doc_number_label} {invoice_number}")
         pdf.drawRightString(page_w - margin - 18, y - 69, f"Date: {today_label}")
+        if is_estimate:
+            pdf.setFont("Helvetica-Oblique", 9)
+            pdf.drawRightString(page_w - margin - 18, y - 84, "Estimate only. Final charges may vary after inspection.")
         y -= header_h + 18
 
         col_gap = 14
@@ -503,7 +521,7 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
             pdf.setLineWidth(1.4)
             pdf.roundRect(bx, y - box_h, col_w, box_h, 14, fill=0, stroke=1)
         section_label("Client", left_x + 12, y - 18)
-        section_label("Vehicle / Service", right_x + 12, y - 18)
+        section_label(vehicle_service_label, right_x + 12, y - 18)
         pdf.setFillColor(colors.HexColor("#0b1429"))
         pdf.setFont("Helvetica", 11)
         line_y = y - 40
@@ -529,8 +547,8 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
         pdf.setStrokeColor(cfg["accent"])
         pdf.roundRect(notes_x, notes_y, notes_w, notes_h, 14, fill=0, stroke=1)
         pdf.roundRect(totals_x, totals_y, totals_w, totals_h, 14, fill=0, stroke=1)
-        section_label("Notes", notes_x + 12, notes_y + notes_h - 18)
-        _free_invoice_wrap(pdf, notes or "Thank you for trusting us with your repair work. Please retain this invoice for your records.", notes_x + 12, notes_y + notes_h - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
+        section_label(notes_label, notes_x + 12, notes_y + notes_h - 18)
+        _free_invoice_wrap(pdf, notes or default_notes, notes_x + 12, notes_y + notes_h - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
         section_label("Totals", totals_x + 12, totals_y + totals_h - 18)
         pdf.setFont("Helvetica", 10.5)
         pdf.setFillColor(colors.HexColor("#0b1429"))
@@ -546,6 +564,589 @@ def generate_free_invoice_pdf(data: dict) -> bytes:
             pdf.drawRightString(totals_x + totals_w - 12, row_y, value)
             row_y -= 18
         draw_footer(min(notes_y, totals_y) - 16)
+
+    pdf.showPage()
+    pdf.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def generate_free_invoice_pdf(data: dict) -> bytes:
+    payload = dict(data or {})
+    payload["document_kind"] = "invoice"
+    return _generate_free_repair_pdf(payload)
+
+
+def generate_free_estimate_pdf(data: dict) -> bytes:
+    payload = dict(data or {})
+    payload["document_kind"] = "estimate"
+    return _generate_free_repair_pdf(payload)
+
+
+def generate_free_repair_order_pdf(data: dict) -> bytes:
+    payload = dict(data or {})
+    template_key = (payload.get("template_key") or "classic_shop").strip().lower()
+    cfg = FREE_INVOICE_TEMPLATES.get(template_key, FREE_INVOICE_TEMPLATES["classic_shop"])
+    shop = payload.get("shop", {}) or {}
+    client = payload.get("client", {}) or {}
+    vehicle = payload.get("vehicle", {}) or {}
+    intake = payload.get("intake", {}) or {}
+    notes = (payload.get("notes") or "").strip()
+    logo_bytes = payload.get("logo_bytes")
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=LETTER)
+    page_w, page_h = LETTER
+    margin = 0.65 * inch
+    content_w = page_w - (margin * 2)
+    y = page_h - margin
+
+    footer_lines = [
+        "Free invoicing and repair order software for service businesses",
+        "Need to save repair orders, estimates, invoices, customers, and payment history? Try InvoiceRunner",
+        "invoicerunner.com",
+    ]
+
+    def draw_logo(x: float, top_y: float, *, box_w=0.88 * inch, box_h=0.88 * inch) -> float:
+        if not logo_bytes:
+            return 0.0
+        try:
+            logo_reader = ImageReader(io.BytesIO(logo_bytes))
+            pdf.drawImage(logo_reader, x, top_y - box_h, width=box_w, height=box_h, preserveAspectRatio=True, mask="auto")
+            return box_w + 12
+        except Exception:
+            return 0.0
+
+    def section_label(label: str, sx: float, sy: float, *, accent=None, size=11):
+        pdf.setFillColor(accent or cfg["accent"])
+        pdf.setFont("Helvetica-Bold", size)
+        pdf.drawString(sx, sy, label.upper())
+
+    def wrap_lines(text: str, width: int = 78) -> list[str]:
+        clean = (text or "").strip()
+        if not clean:
+            return []
+        lines: list[str] = []
+        for raw in clean.splitlines():
+            raw = raw.strip()
+            if not raw:
+                lines.append("")
+                continue
+            lines.extend(textwrap.wrap(raw, width=width) or [""])
+        return lines
+
+    def draw_multiline_block(label: str, text: str, x: float, top_y: float, w: float, h: float, *, fill=None, stroke=1, text_color=colors.HexColor("#223b66")):
+        if fill is not None:
+            pdf.setFillColor(fill)
+            pdf.roundRect(x, top_y - h, w, h, 12, fill=1, stroke=0 if not stroke else 1)
+        else:
+            pdf.roundRect(x, top_y - h, w, h, 12, fill=0, stroke=stroke)
+        section_label(label, x + 12, top_y - 18)
+        _free_invoice_wrap(
+            pdf,
+            text or "Not provided.",
+            x + 12,
+            top_y - 38,
+            w - 24,
+            font="Helvetica",
+            size=10,
+            leading=13,
+            color=text_color,
+        )
+
+    def field_lines(block: dict, keys: list[str]) -> list[str]:
+        lines = []
+        for key in keys:
+            value = (block.get(key) or "").strip()
+            if value:
+                lines.extend(_free_invoice_text_lines(value))
+        return lines
+
+    def draw_footer(base_y: float):
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(margin, base_y, margin + content_w, base_y)
+        pdf.setFillColor(colors.HexColor("#425f8d"))
+        pdf.setFont("Helvetica-Bold", 9.5)
+        pdf.drawString(margin, base_y - 14, "Created with InvoiceRunner")
+        pdf.setFont("Helvetica", 8.5)
+        fy = base_y - 28
+        for line in footer_lines:
+            pdf.drawString(margin, fy, line)
+            fy -= 11
+
+    received_date = (vehicle.get("received_date") or payload.get("received_date") or "").strip()
+    repair_order_number = (vehicle.get("repair_order_number") or payload.get("repair_order_number") or "RO-1001").strip()
+
+    vehicle_bits = []
+    vehicle_id = " ".join(p for p in [vehicle.get("year"), vehicle.get("make"), vehicle.get("model")] if (p or "").strip()).strip()
+    if vehicle_id:
+        vehicle_bits.append(vehicle_id)
+    for label, key in [("VIN", "vin"), ("Mileage", "mileage"), ("Plate", "plate"), ("Color", "color")]:
+        value = (vehicle.get(key) or "").strip()
+        if value:
+            vehicle_bits.append(f"{label}: {value}")
+    vehicle_summary = "  •  ".join(vehicle_bits[:5]) if vehicle_bits else "Vehicle details"
+    client_lines = field_lines(client, ["name", "phone", "email", "address"])
+
+    ack_lines = []
+    if (intake.get("authorization_name") or "").strip():
+        ack_lines.append(f"Authorized by: {(intake.get('authorization_name') or '').strip()}")
+    if (intake.get("authorization_date") or "").strip():
+        ack_lines.append(f"Authorization date: {(intake.get('authorization_date') or '').strip()}")
+    if intake.get("diagnosis_acknowledged"):
+        ack_lines.append("Customer acknowledges additional diagnosis may reveal needed repairs beyond the initial concern.")
+    if not ack_lines:
+        ack_lines.append("Customer authorization not yet added.")
+    auth_text = "\n".join(ack_lines)
+
+    internal_lines = []
+    for label, key in [("Technician", "technician_name"), ("Service advisor", "service_advisor"), ("Dropped off by", "dropped_off_by"), ("Keys received", "keys_received"), ("Promised completion", "promised_completion_date")]:
+        value = (intake.get(key) or vehicle.get(key) or "").strip()
+        if value:
+            internal_lines.append(f"{label}: {value}")
+    internal_text = "\n".join(internal_lines) if internal_lines else "Use this space for technician, advisor, or intake handling notes."
+
+    if template_key == "modern_clean":
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(margin, y - 72, page_w - margin, y - 72)
+        logo_offset_x = draw_logo(margin, y - 6)
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 22)
+        pdf.drawString(margin + logo_offset_x, y - 8, (shop.get("name") or "Repair Shop Work Order").strip())
+        pdf.setFont("Helvetica", 10.5)
+        info_y = y - 28
+        for line in field_lines(shop, ["address", "phone", "email"])[:4]:
+            pdf.drawString(margin + logo_offset_x, info_y, line)
+            info_y -= 13
+        pdf.setFillColor(cfg["accent"])
+        pdf.setFont("Helvetica-Bold", 27)
+        pdf.drawRightString(page_w - margin, y - 6, "REPAIR ORDER")
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica", 11)
+        pdf.drawRightString(page_w - margin, y - 32, f"Repair order #: {repair_order_number}")
+        pdf.drawRightString(page_w - margin, y - 48, f"Date received: {received_date}")
+        pdf.setFillColor(colors.HexColor("#5f6f86"))
+        pdf.setFont("Helvetica-Oblique", 9)
+        pdf.drawRightString(page_w - margin, y - 63, "Work authorization and intake document. Final pricing belongs on an estimate or invoice.")
+        y -= 94
+
+        section_label("Vehicle / Intake", margin, y)
+        pdf.setFillColor(colors.HexColor("#223b66"))
+        pdf.setFont("Helvetica", 10.5)
+        pdf.drawString(margin, y - 18, vehicle_summary[:145])
+        y -= 32
+
+        col_gap = 18
+        col_w = (content_w - col_gap) / 2
+        draw_multiline_block("Client", "\n".join(client_lines), margin, y, col_w, 108)
+        draw_multiline_block("Requested service", intake.get("requested_service") or "", margin + col_w + col_gap, y, col_w, 108)
+        y -= 122
+        draw_multiline_block("Customer complaint / concern", intake.get("complaint") or "", margin, y, content_w, 92)
+        y -= 108
+        left_w = content_w * 0.53
+        right_w = content_w - left_w - 16
+        draw_multiline_block("Technician / advisor notes", intake.get("technician_notes") or "", margin, y, left_w, 118)
+        draw_multiline_block("Authorization", auth_text, margin + left_w + 16, y, right_w, 118)
+        y -= 132
+        draw_multiline_block("Inspection notes", intake.get("inspection_notes") or notes or "", margin, y, left_w, 102)
+        draw_multiline_block("Internal shop details", internal_text, margin + left_w + 16, y, right_w, 102)
+        draw_footer(y - 118)
+
+    elif template_key == "detailed_service":
+        logo_offset_x = draw_logo(margin, y - 6, box_w=0.82 * inch, box_h=0.82 * inch)
+        left_text_x = margin + logo_offset_x
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 22)
+        pdf.drawString(left_text_x, y - 6, (shop.get("name") or "Repair Shop Work Order").strip())
+        pdf.setFont("Helvetica", 10.5)
+        info_y = y - 28
+        for line in field_lines(shop, ["address", "phone", "email"])[:4]:
+            pdf.drawString(left_text_x, info_y, line)
+            info_y -= 13
+        pdf.setFillColor(cfg["accent"])
+        pdf.setFont("Helvetica-Bold", 25)
+        pdf.drawRightString(page_w - margin, y - 6, "WORK ORDER")
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(page_w - margin, y - 28, f"Repair order #: {repair_order_number}")
+        pdf.drawRightString(page_w - margin, y - 44, f"Date received: {received_date}")
+        pdf.setFillColor(colors.HexColor("#5f6f86"))
+        pdf.setFont("Helvetica-Oblique", 9)
+        pdf.drawRightString(page_w - margin, y - 58, "Vehicle intake and work authorization document.")
+        y -= 78
+
+        service_w = page_w - margin - left_text_x
+        pdf.setFillColor(cfg["accent_soft"])
+        pdf.roundRect(left_text_x, y - 66, service_w, 66, 14, fill=1, stroke=0)
+        section_label("Vehicle / Intake", left_text_x + 14, y - 18)
+        pdf.setFillColor(colors.HexColor("#223b66"))
+        _free_invoice_wrap(
+            pdf,
+            vehicle_summary,
+            left_text_x + 14,
+            y - 36,
+            service_w - 28,
+            font="Helvetica",
+            size=10.5,
+            leading=12,
+            color=colors.HexColor("#223b66"),
+        )
+        y -= 84
+
+        top_left_w = service_w * 0.48
+        top_right_x = left_text_x + service_w * 0.52
+        top_right_w = service_w * 0.48
+        draw_multiline_block("Client", "\n".join(client_lines), left_text_x, y, top_left_w, 108)
+        draw_multiline_block("Requested service", intake.get("requested_service") or "", top_right_x, y, top_right_w, 108)
+        y -= 122
+        draw_multiline_block("Customer complaint / concern", intake.get("complaint") or "", left_text_x, y, service_w, 92)
+        y -= 108
+        left_w = service_w * 0.53
+        right_x = left_text_x + left_w + 16
+        right_w = service_w - left_w - 16
+        draw_multiline_block("Technician / advisor notes", intake.get("technician_notes") or "", left_text_x, y, left_w, 114)
+        draw_multiline_block("Authorization", auth_text, right_x, y, right_w, 114, fill=cfg["header_fill"], stroke=0, text_color=colors.white)
+        y -= 128
+        draw_multiline_block("Inspection notes", intake.get("inspection_notes") or notes or "", left_text_x, y, left_w, 102)
+        draw_multiline_block("Internal shop details", internal_text, right_x, y, right_w, 102)
+        footer_y = y - 118
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(left_text_x, footer_y, page_w - margin, footer_y)
+        pdf.setFillColor(colors.HexColor("#425f8d"))
+        pdf.setFont("Helvetica-Bold", 9.5)
+        pdf.drawString(left_text_x, footer_y - 14, "Created with InvoiceRunner")
+        pdf.setFont("Helvetica", 8.5)
+        fy = footer_y - 28
+        for line in footer_lines:
+            pdf.drawString(left_text_x, fy, line)
+            fy -= 11
+
+    else:
+        header_h = 1.28 * inch
+        pdf.setFillColor(cfg["header_fill"])
+        pdf.roundRect(margin, y - header_h, content_w, header_h, 16, fill=1, stroke=0)
+        pdf.setFillColor(cfg["header_text"])
+        logo_offset_x = draw_logo(margin + 18, y - 6)
+        pdf.setFont("Helvetica-Bold", 20)
+        pdf.drawString(margin + 18 + logo_offset_x, y - 30, (shop.get("name") or "Repair Shop Work Order").strip())
+        pdf.setFont("Helvetica", 10)
+        info_y = y - 48
+        for line in field_lines(shop, ["address", "phone", "email"])[:3]:
+            pdf.drawString(margin + 18 + logo_offset_x, info_y, line)
+            info_y -= 12
+        pdf.setFont("Helvetica-Bold", 23)
+        title_w = stringWidth("REPAIR ORDER", "Helvetica-Bold", 23)
+        pdf.drawString(page_w - margin - title_w - 18, y - 33, "REPAIR ORDER")
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(page_w - margin - 18, y - 54, f"Repair order #: {repair_order_number}")
+        pdf.drawRightString(page_w - margin - 18, y - 69, f"Date received: {received_date}")
+        pdf.setFont("Helvetica-Oblique", 9)
+        pdf.drawRightString(page_w - margin - 18, y - 84, "Use this document to capture intake, complaint, and authorization details.")
+        y -= header_h + 18
+
+        col_gap = 14
+        col_w = (content_w - col_gap) / 2
+        draw_multiline_block("Client", "\n".join(client_lines), margin, y, col_w, 110)
+        draw_multiline_block("Vehicle / Intake", vehicle_summary, margin + col_w + col_gap, y, col_w, 110)
+        y -= 124
+        draw_multiline_block("Customer complaint / concern", intake.get("complaint") or "", margin, y, content_w, 90)
+        y -= 106
+        draw_multiline_block("Requested service", intake.get("requested_service") or "", margin, y, content_w, 86)
+        y -= 102
+        left_w = content_w * 0.53
+        right_w = content_w - left_w - 16
+        draw_multiline_block("Technician / advisor notes", intake.get("technician_notes") or "", margin, y, left_w, 118)
+        draw_multiline_block("Authorization", auth_text, margin + left_w + 16, y, right_w, 118)
+        y -= 130
+        draw_multiline_block("Inspection notes", intake.get("inspection_notes") or notes or "", margin, y, left_w, 102)
+        draw_multiline_block("Internal shop details", internal_text, margin + left_w + 16, y, right_w, 102)
+        draw_footer(y - 118)
+
+    pdf.showPage()
+    pdf.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def generate_free_receipt_pdf(data: dict) -> bytes:
+    payload = dict(data or {})
+    template_key = (payload.get("template_key") or "classic_shop").strip().lower()
+    cfg = FREE_INVOICE_TEMPLATES.get(template_key, FREE_INVOICE_TEMPLATES["classic_shop"])
+    shop = payload.get("shop", {}) or {}
+    client = payload.get("client", {}) or {}
+    vehicle = payload.get("vehicle", {}) or {}
+    payment = payload.get("payment", {}) or {}
+    logo_bytes = payload.get("logo_bytes")
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=LETTER)
+    page_w, page_h = LETTER
+    margin = 0.65 * inch
+    content_w = page_w - (margin * 2)
+    y = page_h - margin
+
+    footer_lines = [
+        "Free invoicing and receipt software for service businesses",
+        "Need to save repair orders, estimates, invoices, receipts, customers, and payment history? Try InvoiceRunner",
+        "invoicerunner.com",
+    ]
+
+    def draw_logo(x: float, top_y: float, *, box_w=0.88 * inch, box_h=0.88 * inch) -> float:
+        if not logo_bytes:
+            return 0.0
+        try:
+            logo_reader = ImageReader(io.BytesIO(logo_bytes))
+            pdf.drawImage(logo_reader, x, top_y - box_h, width=box_w, height=box_h, preserveAspectRatio=True, mask="auto")
+            return box_w + 12
+        except Exception:
+            return 0.0
+
+    def section_label(label: str, sx: float, sy: float, *, accent=None, size=11):
+        pdf.setFillColor(accent or cfg["accent"])
+        pdf.setFont("Helvetica-Bold", size)
+        pdf.drawString(sx, sy, label.upper())
+
+    def field_lines(block: dict, keys: list[str]) -> list[str]:
+        lines = []
+        for key in keys:
+            value = (block.get(key) or "").strip()
+            if value:
+                lines.extend(_free_invoice_text_lines(value))
+        return lines
+
+    def draw_multiline_block(label: str, text: str, x: float, top_y: float, w: float, h: float, *, fill=None, stroke=1, text_color=colors.HexColor("#223b66")):
+        if fill is not None:
+            pdf.setFillColor(fill)
+            pdf.roundRect(x, top_y - h, w, h, 12, fill=1, stroke=0 if not stroke else 1)
+        else:
+            pdf.roundRect(x, top_y - h, w, h, 12, fill=0, stroke=stroke)
+        section_label(label, x + 12, top_y - 18)
+        _free_invoice_wrap(
+            pdf,
+            text or "Not provided.",
+            x + 12,
+            top_y - 38,
+            w - 24,
+            font="Helvetica",
+            size=10,
+            leading=13,
+            color=text_color,
+        )
+
+    def _wrapped_height(text: str, width: float, *, font="Helvetica", size=10, leading=13, min_lines=1) -> float:
+        lines = 0
+        for raw in _free_invoice_text_lines(text or "") or ["Not provided."]:
+            wrapped = _wrap_text(raw, font, size, width) or [raw]
+            lines += max(1, len(wrapped))
+        lines = max(min_lines, lines)
+        return lines * leading
+
+    def _block_height(text: str, width: float, *, font="Helvetica", size=10, leading=13, min_lines=1, chrome=50.0) -> float:
+        return chrome + _wrapped_height(text, width, font=font, size=size, leading=leading, min_lines=min_lines)
+
+    def draw_footer(base_y: float):
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(margin, base_y, margin + content_w, base_y)
+        pdf.setFillColor(colors.HexColor("#425f8d"))
+        pdf.setFont("Helvetica-Bold", 9.5)
+        pdf.drawString(margin, base_y - 14, "Created with InvoiceRunner")
+        pdf.setFont("Helvetica", 8.5)
+        fy = base_y - 28
+        for line in footer_lines:
+            pdf.drawString(margin, fy, line)
+            fy -= 11
+
+    receipt_number = (vehicle.get("receipt_number") or payload.get("receipt_number") or "RCPT-1001").strip()
+    receipt_date = (vehicle.get("receipt_date") or payload.get("receipt_date") or "").strip()
+    payment_date = (vehicle.get("payment_date") or payload.get("payment_date") or "").strip()
+    amount_paid = float(payment.get("amount_paid") or 0.0)
+    remaining_balance = float(payment.get("remaining_balance") or 0.0)
+    paid_in_full = bool(payment.get("paid_in_full")) or remaining_balance <= 0.0
+    status_text = "PAID IN FULL" if paid_in_full else "PAYMENT RECEIVED"
+
+    vehicle_bits = []
+    vehicle_id = " ".join(p for p in [vehicle.get("year"), vehicle.get("make"), vehicle.get("model")] if (p or "").strip()).strip()
+    if vehicle_id:
+        vehicle_bits.append(vehicle_id)
+    for label, key in [("VIN", "vin"), ("Mileage", "mileage"), ("Plate", "plate")]:
+        value = (vehicle.get(key) or "").strip()
+        if value:
+            vehicle_bits.append(f"{label}: {value}")
+    vehicle_summary = "  •  ".join(vehicle_bits[:4]) if vehicle_bits else "Vehicle details"
+    client_lines = field_lines(client, ["name", "phone", "email", "address"])
+    payment_lines = [
+        f"Payment date: {payment_date or 'Not provided'}",
+        f"Payment method: {(payment.get('payment_method') or 'Not provided').strip()}",
+        f"Amount paid: {_free_invoice_money(amount_paid)}",
+    ]
+    if (payment.get("invoice_reference") or "").strip():
+        payment_lines.append(f"Invoice reference: {(payment.get('invoice_reference') or '').strip()}")
+    payment_lines.append(f"Remaining balance: {_free_invoice_money(remaining_balance)}")
+    if float(payment.get("tax_included") or 0.0) > 0:
+        payment_lines.append(f"Tax included: {_free_invoice_money(float(payment.get('tax_included') or 0.0))}")
+    payment_text = "\n".join(payment_lines)
+    summary_text = "\n\n".join(
+        part for part in [
+            (payment.get("service_summary") or "").strip(),
+            (payment.get("labor_parts_summary") or "").strip(),
+            (payment.get("warranty_note") or "").strip(),
+            (payment.get("thank_you_note") or "").strip(),
+            (payment.get("memo") or "").strip(),
+        ] if part
+    ) or "Payment received for completed repair work."
+
+    client_text = "\n".join(client_lines) or "Not provided."
+    payment_width_for_calc = (content_w - 18) / 2 - 24
+    vehicle_width_for_calc = content_w - 24
+    client_block_h = _block_height(client_text, payment_width_for_calc, size=10, leading=13, min_lines=4, chrome=48)
+    payment_block_h = _block_height(payment_text, payment_width_for_calc, size=10, leading=13, min_lines=5, chrome=48)
+    top_block_h = max(108.0, client_block_h, payment_block_h)
+    vehicle_block_h = max(82.0, _block_height(vehicle_summary, vehicle_width_for_calc, size=10.5, leading=12, min_lines=2, chrome=44))
+    summary_block_h = max(128.0, _block_height(summary_text, content_w - 24, size=10, leading=13, min_lines=5, chrome=48))
+
+    if template_key == "modern_clean":
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(margin, y - 72, page_w - margin, y - 72)
+        logo_offset_x = draw_logo(margin, y - 6)
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 22)
+        pdf.drawString(margin + logo_offset_x, y - 8, (shop.get("name") or "Repair Shop Receipt").strip())
+        pdf.setFont("Helvetica", 10.5)
+        info_y = y - 28
+        for line in field_lines(shop, ["address", "phone", "email"])[:4]:
+            pdf.drawString(margin + logo_offset_x, info_y, line)
+            info_y -= 13
+        pdf.setFillColor(cfg["accent"])
+        pdf.setFont("Helvetica-Bold", 27)
+        pdf.drawRightString(page_w - margin, y - 6, "RECEIPT")
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica", 11)
+        pdf.drawRightString(page_w - margin, y - 32, f"Receipt #: {receipt_number}")
+        pdf.drawRightString(page_w - margin, y - 48, f"Receipt date: {receipt_date}")
+        pdf.setFillColor(colors.HexColor("#15803d"))
+        pdf.setFont("Helvetica-Bold", 13)
+        pdf.drawRightString(page_w - margin, y - 66, status_text)
+        y -= 94
+
+        section_label("Vehicle", margin, y)
+        _free_invoice_wrap(
+            pdf,
+            vehicle_summary,
+            margin,
+            y - 18,
+            content_w,
+            font="Helvetica",
+            size=10.5,
+            leading=12,
+            color=colors.HexColor("#223b66"),
+        )
+        y -= 42
+
+        col_gap = 18
+        col_w = (content_w - col_gap) / 2
+        draw_multiline_block("Client", client_text, margin, y, col_w, top_block_h)
+        draw_multiline_block("Payment details", payment_text, margin + col_w + col_gap, y, col_w, top_block_h)
+        y -= top_block_h + 16
+        draw_multiline_block("Service / payment summary", summary_text, margin, y, content_w, summary_block_h)
+        draw_footer(y - (summary_block_h + 16))
+
+    elif template_key == "detailed_service":
+        logo_offset_x = draw_logo(margin, y - 6, box_w=0.82 * inch, box_h=0.82 * inch)
+        left_text_x = margin + logo_offset_x
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 22)
+        pdf.drawString(left_text_x, y - 6, (shop.get("name") or "Repair Shop Receipt").strip())
+        pdf.setFont("Helvetica", 10.5)
+        info_y = y - 28
+        for line in field_lines(shop, ["address", "phone", "email"])[:4]:
+            pdf.drawString(left_text_x, info_y, line)
+            info_y -= 13
+        pdf.setFillColor(cfg["accent"])
+        pdf.setFont("Helvetica-Bold", 25)
+        pdf.drawRightString(page_w - margin, y - 6, "PAYMENT RECEIPT")
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(page_w - margin, y - 28, f"Receipt #: {receipt_number}")
+        pdf.drawRightString(page_w - margin, y - 44, f"Receipt date: {receipt_date}")
+        pdf.setFillColor(colors.HexColor("#15803d"))
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawRightString(page_w - margin, y - 60, status_text)
+        y -= 82
+
+        service_w = page_w - margin - left_text_x
+        pdf.setFillColor(cfg["accent_soft"])
+        vehicle_strip_h = max(68.0, _block_height(vehicle_summary, service_w - 28, size=10.5, leading=12, min_lines=2, chrome=24))
+        pdf.roundRect(left_text_x, y - vehicle_strip_h, service_w, vehicle_strip_h, 14, fill=1, stroke=0)
+        section_label("Vehicle / Reference", left_text_x + 14, y - 18)
+        _free_invoice_wrap(
+            pdf,
+            vehicle_summary,
+            left_text_x + 14,
+            y - 36,
+            service_w - 28,
+            font="Helvetica",
+            size=10.5,
+            leading=12,
+            color=colors.HexColor("#223b66"),
+        )
+        y -= vehicle_strip_h + 16
+
+        left_w = service_w * 0.48
+        right_x = left_text_x + left_w + 16
+        right_w = service_w - left_w - 16
+        detailed_client_h = _block_height(client_text, left_w - 24, size=10, leading=13, min_lines=4, chrome=48)
+        detailed_payment_h = _block_height(payment_text, right_w - 24, size=10, leading=13, min_lines=5, chrome=48)
+        detailed_top_h = max(112.0, detailed_client_h, detailed_payment_h)
+        detailed_summary_h = max(132.0, _block_height(summary_text, service_w - 24, size=10, leading=13, min_lines=5, chrome=48))
+        draw_multiline_block("Client", client_text, left_text_x, y, left_w, detailed_top_h)
+        draw_multiline_block("Payment details", payment_text, right_x, y, right_w, detailed_top_h, fill=cfg["header_fill"], stroke=0, text_color=colors.white)
+        y -= detailed_top_h + 14
+        draw_multiline_block("Service / payment summary", summary_text, left_text_x, y, service_w, detailed_summary_h)
+        footer_y = y - (detailed_summary_h + 16)
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(left_text_x, footer_y, page_w - margin, footer_y)
+        pdf.setFillColor(colors.HexColor("#425f8d"))
+        pdf.setFont("Helvetica-Bold", 9.5)
+        pdf.drawString(left_text_x, footer_y - 14, "Created with InvoiceRunner")
+        pdf.setFont("Helvetica", 8.5)
+        fy = footer_y - 28
+        for line in footer_lines:
+            pdf.drawString(left_text_x, fy, line)
+            fy -= 11
+
+    else:
+        header_h = 1.28 * inch
+        pdf.setFillColor(cfg["header_fill"])
+        pdf.roundRect(margin, y - header_h, content_w, header_h, 16, fill=1, stroke=0)
+        pdf.setFillColor(cfg["header_text"])
+        logo_offset_x = draw_logo(margin + 18, y - 6)
+        pdf.setFont("Helvetica-Bold", 20)
+        pdf.drawString(margin + 18 + logo_offset_x, y - 30, (shop.get("name") or "Repair Shop Receipt").strip())
+        pdf.setFont("Helvetica", 10)
+        info_y = y - 48
+        for line in field_lines(shop, ["address", "phone", "email"])[:3]:
+            pdf.drawString(margin + 18 + logo_offset_x, info_y, line)
+            info_y -= 12
+        pdf.setFont("Helvetica-Bold", 23)
+        title_w = stringWidth("RECEIPT", "Helvetica-Bold", 23)
+        pdf.drawString(page_w - margin - title_w - 18, y - 33, "RECEIPT")
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(page_w - margin - 18, y - 54, f"Receipt #: {receipt_number}")
+        pdf.drawRightString(page_w - margin - 18, y - 69, f"Receipt date: {receipt_date}")
+        pdf.setFillColor(colors.HexColor("#15803d"))
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawRightString(page_w - margin - 18, y - 84, status_text)
+        y -= header_h + 18
+
+        col_gap = 14
+        col_w = (content_w - col_gap) / 2
+        draw_multiline_block("Client", client_text, margin, y, col_w, top_block_h)
+        draw_multiline_block("Payment details", payment_text, margin + col_w + col_gap, y, col_w, top_block_h)
+        y -= top_block_h + 16
+        draw_multiline_block("Vehicle", vehicle_summary, margin, y, content_w, vehicle_block_h)
+        y -= vehicle_block_h + 16
+        draw_multiline_block("Service / payment summary", summary_text, margin, y, content_w, summary_block_h)
+        draw_footer(y - (summary_block_h + 16))
 
     pdf.showPage()
     pdf.save()

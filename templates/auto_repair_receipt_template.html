@@ -1,0 +1,1036 @@
+{% extends "base.html" %}
+
+{% block head_extra %}
+<script type="application/ld+json">{{ faq_schema|safe }}</script>
+<style>
+  .free-invoice-shell {
+    max-width: 1320px;
+  }
+  .free-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    gap: 1.25rem;
+    align-items: stretch;
+  }
+  .free-card {
+    background: linear-gradient(180deg, #ffffff 0%, #eef4ff 100%);
+    border: 1px solid #b9cdea;
+    border-radius: 18px;
+    box-shadow: var(--app-shadow);
+    padding: 1.4rem;
+  }
+  .free-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    padding: .32rem .72rem;
+    border-radius: 999px;
+    border: 1px solid #98b7e4;
+    background: #e8f1ff;
+    color: #173d74;
+    font-size: .82rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+    margin-bottom: .85rem;
+  }
+  .free-hero h1,
+  .free-section h2 {
+    font-family: "Fraunces", Georgia, serif;
+  }
+  .free-hero h1 {
+    font-size: clamp(2rem, 4vw, 3.2rem);
+    line-height: 1.02;
+    margin: 0 0 .85rem;
+    color: #0f315f;
+  }
+  .free-hero p {
+    color: #335076;
+    font-size: 1rem;
+    margin: 0 0 1rem;
+    max-width: 64ch;
+  }
+  .free-trust {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .75rem;
+    margin-top: 1rem;
+  }
+  .free-trust div {
+    padding: .8rem .9rem;
+    border-radius: 14px;
+    font-weight: 600;
+    font-size: .92rem;
+    color: #234164;
+    border: 1px solid #b6cdeb;
+    background: #f8fbff;
+  }
+  .free-crosslink {
+    margin: .9rem 0 0;
+    color: #3e5677;
+    font-size: .95rem;
+  }
+  .free-crosslink a {
+    color: #1a4688;
+    font-weight: 700;
+  }
+  .free-hero-audience {
+    margin-top: 1rem;
+  }
+  .free-subsection-title {
+    color: #163b6c;
+    margin: 0 0 .7rem;
+    font-size: 1.08rem;
+    font-weight: 800;
+  }
+  .free-side-panel {
+    display: grid;
+    gap: .85rem;
+  }
+  .free-hero-visual {
+    overflow: hidden;
+  }
+  .free-hero-visual iframe,
+  .free-example-visual iframe {
+    width: 100%;
+    aspect-ratio: 0.82 / 1;
+    border: 1px solid #b9cdea;
+    border-radius: 14px;
+    background: #fff;
+  }
+  .free-hero-visual img,
+  .free-example-visual img {
+    display: block;
+    width: 85%;
+    height: auto;
+    margin: 0 auto;
+    border-radius: 16px;
+    box-shadow: 0 24px 50px rgba(15, 23, 42, 0.14);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: white;
+  }
+  .free-hero-visual figcaption,
+  .free-example-visual figcaption {
+    color: #557094;
+    font-size: .9rem;
+    margin-top: .55rem;
+  }
+  .free-mini-panel {
+    border: 1px solid #a8c2e7;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #edf4ff 0%, #deebff 100%);
+    padding: 1rem;
+  }
+  .free-mini-panel h3 {
+    font-size: 1rem;
+    color: #183f76;
+    margin: 0 0 .55rem;
+  }
+  .free-mini-panel ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: #37537b;
+  }
+  .free-benefits {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .75rem;
+    margin-top: 1rem;
+  }
+  .free-benefits .benefit {
+    padding: .95rem 1rem;
+    border: 1px solid #b8cae4;
+    border-radius: 16px;
+    background: #fff;
+  }
+  .free-benefits strong {
+    display: block;
+    color: #133967;
+    margin-bottom: .2rem;
+  }
+  .free-tool-grid {
+    display: grid;
+    grid-template-columns: minmax(0, .98fr) minmax(0, 1.02fr);
+    gap: 1rem;
+    align-items: start;
+  }
+  .free-form-card,
+  .free-preview-card,
+  .free-section {
+    background: #fff;
+    border: 1px solid #b9cdea;
+    border-radius: 18px;
+    box-shadow: var(--app-shadow);
+    padding: 1.2rem;
+  }
+  .free-form-card h2,
+  .free-preview-card h2,
+  .free-section h2 {
+    color: #102f5b;
+    margin: 0 0 .35rem;
+    font-size: 1.6rem;
+  }
+  .free-lead {
+    color: #4b6285;
+    margin: 0 0 1rem;
+  }
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .8rem;
+  }
+  .field-grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .8rem;
+  }
+  .tool-section {
+    padding-top: 1rem;
+    border-top: 1px solid #d7e3f6;
+    margin-top: 1rem;
+  }
+  .tool-section:first-of-type {
+    border-top: 0;
+    padding-top: 0;
+    margin-top: 0;
+  }
+  .tool-section h3 {
+    margin: 0 0 .75rem;
+    color: #163b6c;
+    font-size: 1.05rem;
+  }
+  .template-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .75rem;
+  }
+  .template-choice {
+    position: relative;
+    display: block;
+    cursor: pointer;
+  }
+  .template-choice input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .template-choice-body {
+    border: 1px solid #b9cdea;
+    border-radius: 16px;
+    overflow: hidden;
+    background: #fff;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+  }
+  .template-choice:hover .template-choice-body {
+    transform: translateY(-1px);
+  }
+  .template-choice input:checked + .template-choice-body {
+    border-color: #1f58ab;
+    box-shadow: 0 0 0 2px rgba(31, 88, 171, 0.14);
+  }
+  .template-thumb {
+    aspect-ratio: 1.35 / 1;
+    background: linear-gradient(180deg, #f4f8ff 0%, #e6eefb 100%);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  .template-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .template-meta {
+    padding: .75rem;
+  }
+  .template-meta strong {
+    display: block;
+    color: #173b6f;
+  }
+  .template-meta span {
+    display: block;
+    color: #557094;
+    font-size: .9rem;
+    margin-top: .15rem;
+  }
+  .free-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .7rem;
+    margin-top: 1rem;
+    align-items: center;
+  }
+  .free-note {
+    color: #4b6285;
+    font-size: .92rem;
+  }
+  .free-note.prominent {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .3rem;
+    padding: .72rem .9rem;
+    border-radius: 14px;
+    border: 1px solid #c8d8ef;
+    background: #f7fbff;
+    color: #27456f;
+    font-size: .93rem;
+    line-height: 1.45;
+  }
+  .free-note a {
+    font-weight: 700;
+    color: #1f58ab;
+    text-decoration: none;
+  }
+  .preview-frame {
+    border: 1px solid #c3d4ea;
+    border-radius: 18px;
+    overflow: hidden;
+    background: linear-gradient(180deg, #eff4ff 0%, #f9fbff 100%);
+    min-height: 760px;
+  }
+  .preview-surface {
+    width: 100%;
+    height: 820px;
+    border: 0;
+    background: #fff;
+  }
+  .free-error {
+    color: #b42318;
+    font-size: .85rem;
+    margin-top: .3rem;
+    display: none;
+  }
+  .free-error.visible {
+    display: block;
+  }
+  .free-toc {
+    display: grid;
+    gap: .45rem;
+    padding: .95rem 1rem;
+    border-radius: 14px;
+    background: #f8fbff;
+    border: 1px solid #cfddf0;
+    margin-bottom: 1rem;
+  }
+  .free-toc ul {
+    margin: 0;
+    padding-left: 1rem;
+    color: #2f4f78;
+  }
+  .free-toc a {
+    color: #1f58ab;
+    text-decoration: none;
+  }
+  .free-audience-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .8rem;
+  }
+  .free-audience-card {
+    border: 1px solid #c6d6ee;
+    border-radius: 16px;
+    background: #fff;
+    padding: 1rem;
+    display: grid;
+    gap: .35rem;
+  }
+  .free-audience-card strong {
+    color: #163b6c;
+  }
+  .free-audience-card span {
+    color: #4b6285;
+    font-size: .95rem;
+  }
+  .compare-grid,
+  .faq-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .compare-box,
+  .faq-item {
+    border: 1px solid #ccdaee;
+    border-radius: 16px;
+    background: #f8fbff;
+    padding: 1rem;
+  }
+  .compare-box h3,
+  .faq-item h3 {
+    margin: 0 0 .55rem;
+    color: #183f76;
+    font-size: 1.05rem;
+  }
+  .compare-box ul,
+  .faq-item p {
+    margin: 0;
+    color: #3e5a81;
+  }
+  .final-cta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 1rem;
+    align-items: center;
+    padding: 1.1rem;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #103261 0%, #1a4f93 100%);
+    color: #fff;
+  }
+  .final-cta h2,
+  .final-cta p {
+    color: #fff;
+  }
+  @media (max-width: 991px) {
+    .free-hero,
+    .free-tool-grid,
+    .compare-grid,
+    .faq-grid,
+    .final-cta {
+      grid-template-columns: 1fr;
+    }
+    .free-benefits,
+    .template-choice-grid,
+    .free-trust,
+    .field-grid,
+    .field-grid-3,
+    .free-audience-grid {
+      grid-template-columns: 1fr;
+    }
+    .preview-frame {
+      min-height: 620px;
+    }
+    .preview-surface,
+    .free-hero-visual iframe,
+    .free-example-visual iframe {
+      height: 620px;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4 free-invoice-shell">
+  <section class="free-card free-hero">
+    <div>
+      <div class="free-eyebrow"><i class="bi bi-receipt"></i> Free tool for repair shops</div>
+      <h1>Free Auto Repair Receipt Template Generator</h1>
+      <p>This free auto repair receipt template generator helps repair shops, mobile mechanics, and service businesses create professional payment receipts in minutes. Enter customer, vehicle, invoice, and payment details, preview the receipt live, and download a clean PDF instantly with no signup required.</p>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-primary" href="#generator">Start Free Receipt</a>
+        <a class="btn btn-outline-primary" href="#receipt-faq">See FAQ</a>
+      </div>
+      <div class="free-trust">
+        <div>No signup required</div>
+        <div>Download PDF instantly</div>
+        <div>Built for repair shops</div>
+      </div>
+      <p class="free-crosslink">Need to create the final bill before marking it paid? Use our <a href="{{ url_for('free_invoice') }}">free mechanic invoice generator</a>.</p>
+      <div class="free-hero-audience">
+        <h2 class="free-subsection-title">Who this tool is for</h2>
+        <div class="free-audience-grid hero-audience-grid">
+          <article class="free-audience-card">
+            <strong>Small auto repair shops</strong>
+            <span>Create clean proof-of-payment documents without building a full invoice workflow for one-off jobs.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>Mobile mechanics</strong>
+            <span>Give customers a polished receipt after payment with vehicle, service, and payment details in one PDF.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>Independent technicians</strong>
+            <span>Useful when you need a one-off payment receipt that still looks professional and complete.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>Service writers / front desks</strong>
+            <span>Helpful for shops that want a clean paid receipt and customer copy after a completed repair.</span>
+          </article>
+        </div>
+      </div>
+    </div>
+    <div class="free-side-panel">
+      <figure class="free-mini-panel free-hero-visual mb-0">
+        <img src="{{ url_for('static', filename='images/SampleFreeReciept.png') }}" alt="Example auto repair payment receipt PDF generated with InvoiceRunner" loading="lazy">
+        <figcaption>Example auto repair payment receipt PDF generated with InvoiceRunner.</figcaption>
+      </figure>
+      <div class="free-mini-panel">
+        <h3>Why this page can outrank a plain template</h3>
+        <ul>
+          <li>Vehicle-specific receipt fields that generic payment templates usually miss</li>
+          <li>Clear payment method, amount paid, and balance sections built for service businesses</li>
+          <li>Instant PDF receipt download with no account friction</li>
+        </ul>
+      </div>
+      <div class="free-mini-panel">
+        <h3>Best fit</h3>
+        <ul>
+          <li>Small auto repair shops</li>
+          <li>Mobile mechanics</li>
+          <li>Independent technicians</li>
+          <li>Shops that need a clean payment receipt</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="free-benefits">
+    <div class="benefit"><strong>Free to use</strong><span>No paywall or trial gate just to generate a receipt PDF.</span></div>
+    <div class="benefit"><strong>No account needed</strong><span>Enter the receipt details and download immediately.</span></div>
+    <div class="benefit"><strong>Professional layouts</strong><span>Choose from three distinct receipt styles for customer payment confirmation.</span></div>
+    <div class="benefit"><strong>Powered by InvoiceRunner</strong><span>Built by a full repair shop invoicing platform.</span></div>
+  </section>
+
+  <section class="free-tool-grid mt-3" id="generator">
+    <div class="free-form-card">
+      <h2>Build your payment receipt</h2>
+      <p class="free-lead">Enter your shop, client, vehicle, and payment details. Nothing is saved to an account or database. The data stays in your browser until you download the PDF.</p>
+
+      <form id="repairReceiptForm" novalidate>
+        <div class="tool-section">
+          <h3>Choose a layout</h3>
+          <div class="template-choice-grid">
+            {% for card in template_cards %}
+            <label class="template-choice">
+              <input type="radio" name="template_key" value="{{ card.key }}" {% if loop.first %}checked{% endif %}>
+              <span class="template-choice-body">
+                <span class="template-thumb">
+                  <img src="{{ url_for('static', filename=card.preview) }}" alt="{{ card.name }} preview">
+                </span>
+                <span class="template-meta">
+                  <strong>{{ card.name }}</strong>
+                  <span>{{ card.desc }}</span>
+                </span>
+              </span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Shop information</h3>
+          <div class="field-grid">
+            <div>
+              <label class="form-label">Shop / business name</label>
+              <input class="form-control" name="shop_name" placeholder="Westside Auto Repair">
+              <div class="free-error" data-error-for="shop_name"></div>
+            </div>
+            <div>
+              <label class="form-label">Phone</label>
+              <input class="form-control" name="shop_phone" placeholder="(406) 555-0198">
+            </div>
+            <div>
+              <label class="form-label">Address</label>
+              <textarea class="form-control" name="shop_address" rows="3" placeholder="123 Garage Lane&#10;Bozeman, MT 59715"></textarea>
+            </div>
+            <div>
+              <label class="form-label">Email (optional)</label>
+              <input class="form-control" name="shop_email" placeholder="service@yourshop.com">
+            </div>
+            <div>
+              <label class="form-label">Logo (optional)</label>
+              <input class="form-control" name="shop_logo" type="file" accept="image/png,image/jpeg,image/webp">
+              <div class="form-text">Used only for this browser session. Not saved to InvoiceRunner.</div>
+              <div class="free-error" data-error-for="shop_logo"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Customer information</h3>
+          <div class="field-grid">
+            <div>
+              <label class="form-label">Customer name</label>
+              <input class="form-control" name="client_name" placeholder="Jordan Smith">
+              <div class="free-error" data-error-for="client_name"></div>
+            </div>
+            <div>
+              <label class="form-label">Customer phone (optional)</label>
+              <input class="form-control" name="client_phone" placeholder="(406) 555-0174">
+            </div>
+            <div>
+              <label class="form-label">Customer address</label>
+              <textarea class="form-control" name="client_address" rows="3" placeholder="88 Cottonwood Dr&#10;Belgrade, MT 59714"></textarea>
+            </div>
+            <div>
+              <label class="form-label">Customer email (optional)</label>
+              <input class="form-control" name="client_email" placeholder="client@example.com">
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Vehicle information</h3>
+          <div class="field-grid-3">
+            <div>
+              <label class="form-label">Receipt number</label>
+              <input class="form-control" name="receipt_number" placeholder="RCPT-2208">
+              <div class="free-error" data-error-for="receipt_number"></div>
+            </div>
+            <div>
+              <label class="form-label">Receipt date</label>
+              <input class="form-control" type="date" name="receipt_date">
+              <div class="free-error" data-error-for="receipt_date"></div>
+            </div>
+            <div>
+              <label class="form-label">Payment date</label>
+              <input class="form-control" type="date" name="payment_date">
+              <div class="free-error" data-error-for="payment_date"></div>
+            </div>
+            <div>
+              <label class="form-label">Year</label>
+              <input class="form-control" name="vehicle_year" placeholder="2018">
+            </div>
+            <div>
+              <label class="form-label">Make</label>
+              <input class="form-control" name="vehicle_make" placeholder="Subaru">
+            </div>
+            <div>
+              <label class="form-label">Model</label>
+              <input class="form-control" name="vehicle_model" placeholder="Outback">
+            </div>
+            <div>
+              <label class="form-label">VIN (optional)</label>
+              <input class="form-control" name="vehicle_vin" placeholder="4S4BSANC0J3294411">
+            </div>
+            <div>
+              <label class="form-label">Mileage (optional)</label>
+              <input class="form-control" name="vehicle_mileage" placeholder="126,220">
+            </div>
+            <div>
+              <label class="form-label">License plate (optional)</label>
+              <input class="form-control" name="vehicle_plate" placeholder="MT 6-54R2">
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Receipt and payment details</h3>
+          <div class="field-grid-3">
+            <div>
+              <label class="form-label">Related invoice number (optional)</label>
+              <input class="form-control" name="invoice_reference" placeholder="INV-2048">
+            </div>
+            <div>
+              <label class="form-label">Payment method</label>
+              <select class="form-select" name="payment_method">
+                <option>Cash</option>
+                <option selected>Credit card</option>
+                <option>Debit card</option>
+                <option>Check</option>
+                <option>ACH / bank transfer</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">Amount paid</label>
+              <input class="form-control" name="amount_paid" type="number" min="0" step="0.01" placeholder="429.79">
+              <div class="free-error" data-error-for="amount_paid"></div>
+            </div>
+            <div>
+              <label class="form-label">Tax included (optional)</label>
+              <input class="form-control" name="tax_included" type="number" min="0" step="0.01" placeholder="31.84">
+            </div>
+            <div>
+              <label class="form-label">Remaining balance</label>
+              <input class="form-control" name="remaining_balance" type="number" min="0" step="0.01" placeholder="0.00">
+            </div>
+            <div class="d-flex align-items-end">
+              <div class="form-check pb-2">
+                <input class="form-check-input" type="checkbox" name="paid_in_full" id="paidInFull">
+                <label class="form-check-label" for="paidInFull">Paid in full</label>
+              </div>
+            </div>
+            <div class="field-grid" style="grid-column: 1 / -1;">
+              <div>
+                <label class="form-label">Service description or brief work summary</label>
+                <textarea class="form-control" name="service_summary" rows="4" placeholder="Describe the work that was completed and paid for."></textarea>
+                <div class="free-error" data-error-for="service_summary"></div>
+              </div>
+              <div>
+                <label class="form-label">Optional labor / parts summary</label>
+                <textarea class="form-control" name="labor_parts_summary" rows="4" placeholder="Summarize labor, parts, or major services included in the payment."></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Notes and customer copy details</h3>
+          <div class="field-grid">
+            <div>
+              <label class="form-label">Warranty / service note (optional)</label>
+              <textarea class="form-control" name="warranty_note" rows="3" placeholder="Labor warranty, parts note, or service disclaimer."></textarea>
+            </div>
+            <div>
+              <label class="form-label">Thank-you note (optional)</label>
+              <textarea class="form-control" name="thank_you_note" rows="3" placeholder="Thank the customer or reinforce that payment was received."></textarea>
+            </div>
+            <div style="grid-column: 1 / -1;">
+              <label class="form-label">Notes / memo (optional)</label>
+              <textarea class="form-control" name="memo" rows="3" placeholder="Add a short memo, payment confirmation note, or customer-facing message."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="free-inline-actions">
+          <button class="btn btn-primary" type="submit" id="downloadBtn"><i class="bi bi-file-earmark-pdf"></i>&nbsp;Download PDF</button>
+          <button class="btn btn-outline-primary" type="button" id="sampleBtn">Load sample data</button>
+          <button class="btn btn-outline-secondary" type="button" id="clearBtn">Clear form</button>
+          <span class="free-note prominent">Need to save receipts, invoices, estimates, and customer payment history? <a href="{{ url_for('register') }}">Create a free InvoiceRunner account</a>.</span>
+        </div>
+      </form>
+    </div>
+
+    <div class="free-preview-card">
+      <h2>Live receipt preview</h2>
+      <p class="free-lead">The preview updates as you work so you can verify the customer, vehicle, payment method, amount paid, and paid status before downloading the PDF.</p>
+      <div class="preview-frame">
+        <iframe class="preview-surface" id="previewFrame" title="PDF receipt preview"></iframe>
+      </div>
+    </div>
+  </section>
+
+  <section class="free-section">
+    <div class="free-toc" aria-labelledby="receipt-toc-title">
+      <h2 class="free-subsection-title mb-0" id="receipt-toc-title">On this page</h2>
+      <ul>
+        <li><a href="#what-is-receipt">What is an auto repair receipt?</a></li>
+        <li><a href="#receipt-includes">What should a repair receipt include?</a></li>
+        <li><a href="#receipt-vs-invoice">Receipt vs invoice: what is the difference?</a></li>
+        <li><a href="#how-to-use-receipt">How to use this free receipt generator</a></li>
+        <li><a href="#receipt-faq">Auto repair receipt template FAQ</a></li>
+      </ul>
+    </div>
+
+    <h2 id="what-is-receipt">What is an auto repair receipt?</h2>
+    <p>An auto repair receipt is the proof-of-payment document a shop gives the customer after payment has already been received. It confirms the amount paid, payment date, payment method, and often serves as the customer’s service and warranty record.</p>
+
+    <h3 id="receipt-includes">What should a repair receipt include?</h3>
+    <p>A professional repair receipt should include the shop name and contact information, customer information, vehicle details, receipt number, payment date, payment method, amount paid, any related invoice number, remaining balance if one exists, and a short work summary.</p>
+
+    <h3 id="receipt-vs-invoice">Receipt vs invoice: what is the difference?</h3>
+    <p>An invoice is the bill showing what is owed. A receipt is the document showing that payment was received. A receipt should clearly confirm the payment date, amount paid, and payment method, while an invoice focuses on the amount due.</p>
+    <p>Need to create the job intake document first? Use our <a href="{{ url_for('repair_order_template') }}">free repair order generator</a>. Need to quote the work before payment? Use our <a href="{{ url_for('free_estimate') }}">free auto repair estimate generator</a>. Need to send the final bill before marking it paid? Use our <a href="{{ url_for('free_invoice') }}">free mechanic invoice generator</a>.</p>
+
+    <h3 id="how-to-use-receipt">How to use this free receipt generator</h3>
+    <ol>
+      <li>Enter your shop, client, and vehicle details.</li>
+      <li>Add the receipt number, payment date, and payment method.</li>
+      <li>Enter the amount paid and any remaining balance.</li>
+      <li>Add a short service summary and optional warranty or thank-you note.</li>
+      <li>Choose a layout, preview the receipt, and download the PDF instantly.</li>
+    </ol>
+  </section>
+
+  <section class="free-section">
+    <h2>Free repair receipt template vs full repair shop software</h2>
+    <p>A free repair receipt template is useful when you need a quick one-off payment confirmation. Once you need saved receipts, payment tracking, repeat customer and vehicle history, estimates, invoices, and organized records, full repair shop software becomes the better option.</p>
+    <div class="compare-grid">
+      <div class="compare-box">
+        <h3>Free PDF generator</h3>
+        <ul>
+          <li>Fast, no-login receipt creation</li>
+          <li>Useful for one-off payment confirmations</li>
+          <li>Download and print manually</li>
+          <li>No saved records or workflow tracking</li>
+        </ul>
+      </div>
+      <div class="compare-box">
+        <h3>Full InvoiceRunner account</h3>
+        <ul>
+          <li>Save receipts, invoices, estimates, and repair orders</li>
+          <li>Keep repeat customer and vehicle history</li>
+          <li>Track payments and balances</li>
+          <li>Manage schedules and workflow</li>
+          <li>Keep records organized and run the shop more efficiently</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="free-section">
+    <h2>Auto repair payment receipt PDF example</h2>
+    <p>This sample shows the kind of professional payment receipt example and downloadable proof-of-payment PDF this tool creates. It is built for repair shops that need a clear receipt with customer, vehicle, payment, and work-summary details in one place.</p>
+    <figure class="free-example-visual mt-3">
+      <img src="{{ url_for('static', filename='images/SampleFreeReciept.png') }}" alt="Auto repair payment receipt PDF example generated with InvoiceRunner" loading="lazy">
+      <figcaption>Example auto repair payment receipt PDF generated with InvoiceRunner.</figcaption>
+    </figure>
+  </section>
+
+  <section class="free-section" id="receipt-faq">
+    <h2>Auto repair receipt template FAQ</h2>
+    <div class="faq-grid">
+      {% for item in faq_items %}
+      <article class="faq-item">
+        <h3>{{ item.q }}</h3>
+        <p>{{ item.a }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="free-section">
+    <div class="final-cta">
+      <div>
+        <h2>Need more than a one-off receipt PDF?</h2>
+        <p class="mb-0">InvoiceRunner helps repair shops save receipts, invoices, estimates, and repair orders, keep repeat customer and vehicle history organized, and track payments more cleanly.</p>
+      </div>
+      <div class="d-flex flex-wrap gap-2 justify-content-end">
+        <a class="btn btn-primary" href="{{ url_for('register') }}">Create free InvoiceRunner account</a>
+        <a class="btn btn-outline-primary" href="#generator">Use the free receipt tool</a>
+      </div>
+    </div>
+    <div class="mt-3">
+      <h3 class="free-subsection-title">Related free tools</h3>
+      <p class="mb-1"><a href="{{ url_for('repair_order_template') }}">Free repair order generator</a></p>
+      <p class="mb-1"><a href="{{ url_for('free_estimate') }}">Free auto repair estimate generator</a></p>
+      <p class="mb-0"><a href="{{ url_for('free_invoice') }}">Free mechanic invoice generator</a></p>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const samplePayload = {{ sample_payload|tojson }};
+  const storageKey = 'invoiceRunnerFreeRepairReceiptDraft';
+  const form = document.getElementById('repairReceiptForm');
+  const previewFrame = document.getElementById('previewFrame');
+  const downloadBtn = document.getElementById('downloadBtn');
+  let previewUrl = null;
+  let previewTimer = null;
+
+  function clearErrors() {
+    document.querySelectorAll('.free-error').forEach((el) => {
+      el.textContent = '';
+      el.classList.remove('visible');
+    });
+  }
+
+  function showErrors(errors) {
+    clearErrors();
+    Object.entries(errors || {}).forEach(([key, message]) => {
+      const target = document.querySelector(`.free-error[data-error-for="${key}"]`);
+      if (target) {
+        target.textContent = message;
+        target.classList.add('visible');
+      }
+    });
+  }
+
+  function setFormValue(name, value) {
+    const field = form.elements[name];
+    if (!field) return;
+    if (field.type === 'checkbox') {
+      field.checked = !!value;
+    } else {
+      field.value = value ?? '';
+    }
+  }
+
+  function collectData() {
+    const fd = new FormData(form);
+    return {
+      template_key: fd.get('template_key') || 'classic_shop',
+      shop: {
+        name: fd.get('shop_name') || '',
+        address: fd.get('shop_address') || '',
+        phone: fd.get('shop_phone') || '',
+        email: fd.get('shop_email') || '',
+      },
+      client: {
+        name: fd.get('client_name') || '',
+        address: fd.get('client_address') || '',
+        phone: fd.get('client_phone') || '',
+        email: fd.get('client_email') || '',
+      },
+      vehicle: {
+        receipt_number: fd.get('receipt_number') || '',
+        receipt_date: fd.get('receipt_date') || '',
+        payment_date: fd.get('payment_date') || '',
+        year: fd.get('vehicle_year') || '',
+        make: fd.get('vehicle_make') || '',
+        model: fd.get('vehicle_model') || '',
+        vin: fd.get('vehicle_vin') || '',
+        mileage: fd.get('vehicle_mileage') || '',
+        plate: fd.get('vehicle_plate') || '',
+      },
+      payment: {
+        invoice_reference: fd.get('invoice_reference') || '',
+        payment_method: fd.get('payment_method') || '',
+        amount_paid: fd.get('amount_paid') || '',
+        tax_included: fd.get('tax_included') || '',
+        remaining_balance: fd.get('remaining_balance') || '',
+        paid_in_full: !!fd.get('paid_in_full'),
+        memo: fd.get('memo') || '',
+        service_summary: fd.get('service_summary') || '',
+        labor_parts_summary: fd.get('labor_parts_summary') || '',
+        warranty_note: fd.get('warranty_note') || '',
+        thank_you_note: fd.get('thank_you_note') || '',
+      },
+    };
+  }
+
+  function saveDraft() {
+    const data = collectData();
+    localStorage.setItem(storageKey, JSON.stringify(data));
+  }
+
+  function loadDraft() {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return false;
+      const draft = JSON.parse(raw);
+      if (!draft || typeof draft !== 'object') return false;
+      setFormValue('shop_name', draft.shop?.name || '');
+      setFormValue('shop_address', draft.shop?.address || '');
+      setFormValue('shop_phone', draft.shop?.phone || '');
+      setFormValue('shop_email', draft.shop?.email || '');
+      setFormValue('client_name', draft.client?.name || '');
+      setFormValue('client_address', draft.client?.address || '');
+      setFormValue('client_phone', draft.client?.phone || '');
+      setFormValue('client_email', draft.client?.email || '');
+      setFormValue('receipt_number', draft.vehicle?.receipt_number || '');
+      setFormValue('receipt_date', draft.vehicle?.receipt_date || '');
+      setFormValue('payment_date', draft.vehicle?.payment_date || '');
+      setFormValue('vehicle_year', draft.vehicle?.year || '');
+      setFormValue('vehicle_make', draft.vehicle?.make || '');
+      setFormValue('vehicle_model', draft.vehicle?.model || '');
+      setFormValue('vehicle_vin', draft.vehicle?.vin || '');
+      setFormValue('vehicle_mileage', draft.vehicle?.mileage || '');
+      setFormValue('vehicle_plate', draft.vehicle?.plate || '');
+      setFormValue('invoice_reference', draft.payment?.invoice_reference || '');
+      setFormValue('payment_method', draft.payment?.payment_method || 'Credit card');
+      setFormValue('amount_paid', draft.payment?.amount_paid || '');
+      setFormValue('tax_included', draft.payment?.tax_included || '');
+      setFormValue('remaining_balance', draft.payment?.remaining_balance || '');
+      setFormValue('paid_in_full', !!draft.payment?.paid_in_full);
+      setFormValue('memo', draft.payment?.memo || '');
+      setFormValue('service_summary', draft.payment?.service_summary || '');
+      setFormValue('labor_parts_summary', draft.payment?.labor_parts_summary || '');
+      setFormValue('warranty_note', draft.payment?.warranty_note || '');
+      setFormValue('thank_you_note', draft.payment?.thank_you_note || '');
+      if (draft.template_key) {
+        const radio = form.querySelector(`[name="template_key"][value="${draft.template_key}"]`);
+        if (radio) radio.checked = true;
+      }
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function loadSampleData() {
+    setFormValue('shop_name', samplePayload.shop?.name || '');
+    setFormValue('shop_address', samplePayload.shop?.address || '');
+    setFormValue('shop_phone', samplePayload.shop?.phone || '');
+    setFormValue('shop_email', samplePayload.shop?.email || '');
+    setFormValue('client_name', samplePayload.client?.name || '');
+    setFormValue('client_address', samplePayload.client?.address || '');
+    setFormValue('client_phone', samplePayload.client?.phone || '');
+    setFormValue('client_email', samplePayload.client?.email || '');
+    setFormValue('receipt_number', samplePayload.vehicle?.receipt_number || '');
+    setFormValue('receipt_date', samplePayload.vehicle?.receipt_date || '');
+    setFormValue('payment_date', samplePayload.vehicle?.payment_date || '');
+    setFormValue('vehicle_year', samplePayload.vehicle?.year || '');
+    setFormValue('vehicle_make', samplePayload.vehicle?.make || '');
+    setFormValue('vehicle_model', samplePayload.vehicle?.model || '');
+    setFormValue('vehicle_vin', samplePayload.vehicle?.vin || '');
+    setFormValue('vehicle_mileage', samplePayload.vehicle?.mileage || '');
+    setFormValue('vehicle_plate', samplePayload.vehicle?.plate || '');
+    setFormValue('invoice_reference', samplePayload.payment?.invoice_reference || '');
+    setFormValue('payment_method', samplePayload.payment?.payment_method || 'Credit card');
+    setFormValue('amount_paid', samplePayload.payment?.amount_paid || '');
+    setFormValue('tax_included', samplePayload.payment?.tax_included || '');
+    setFormValue('remaining_balance', samplePayload.payment?.remaining_balance || '');
+    setFormValue('paid_in_full', !!samplePayload.payment?.paid_in_full);
+    setFormValue('memo', samplePayload.payment?.memo || '');
+    setFormValue('service_summary', samplePayload.payment?.service_summary || '');
+    setFormValue('labor_parts_summary', samplePayload.payment?.labor_parts_summary || '');
+    setFormValue('warranty_note', samplePayload.payment?.warranty_note || '');
+    setFormValue('thank_you_note', samplePayload.payment?.thank_you_note || '');
+    if (samplePayload.template_key) {
+      const radio = form.querySelector(`[name="template_key"][value="${samplePayload.template_key}"]`);
+      if (radio) radio.checked = true;
+    }
+    saveDraft();
+    queuePreview();
+  }
+
+  function clearForm() {
+    form.reset();
+    localStorage.removeItem(storageKey);
+    clearErrors();
+    queuePreview();
+  }
+
+  async function updatePreview() {
+    clearErrors();
+    const fd = new FormData(form);
+    try {
+      const resp = await fetch('{{ url_for("auto_repair_receipt_template_preview") }}', {
+        method: 'POST',
+        body: fd,
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        showErrors(data.errors || {});
+        return;
+      }
+      const blob = await resp.blob();
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(blob);
+      previewFrame.src = previewUrl;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function queuePreview() {
+    saveDraft();
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = setTimeout(updatePreview, 260);
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearErrors();
+    downloadBtn.disabled = true;
+    const originalText = downloadBtn.innerHTML;
+    downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Preparing PDF';
+    try {
+      const resp = await fetch('{{ url_for("auto_repair_receipt_template_pdf") }}', {
+        method: 'POST',
+        body: new FormData(form),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        showErrors(data.errors || {});
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'repair-receipt.pdf';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      downloadBtn.disabled = false;
+      downloadBtn.innerHTML = originalText;
+    }
+  });
+
+  form.addEventListener('input', queuePreview);
+  form.addEventListener('change', queuePreview);
+
+  document.getElementById('sampleBtn').addEventListener('click', loadSampleData);
+  document.getElementById('clearBtn').addEventListener('click', clearForm);
+
+  if (!loadDraft()) {
+    loadSampleData();
+  } else {
+    queuePreview();
+  }
+})();
+</script>
+{% endblock %}

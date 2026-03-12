@@ -50,7 +50,15 @@ from models import (
     MarketingCampaign, MarketingCampaignRecipient, EmailSuppression,
     SiteActivity,
 )
-from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf, generate_free_invoice_pdf, FREE_INVOICE_TEMPLATES
+from pdf_service import (
+    generate_and_store_pdf,
+    generate_profit_loss_pdf,
+    generate_free_invoice_pdf,
+    generate_free_estimate_pdf,
+    generate_free_repair_order_pdf,
+    generate_free_receipt_pdf,
+    FREE_INVOICE_TEMPLATES,
+)
 
 login_manager = LoginManager()
 login_manager.login_view = "login"
@@ -229,6 +237,42 @@ def _free_invoice_sample_payload() -> dict:
     }
 
 
+def _free_estimate_sample_payload() -> dict:
+    return {
+        "template_key": "classic_shop",
+        "shop": {
+            "name": "Summit Auto Service",
+            "address": "123 Garage Lane\nBozeman, MT 59715",
+            "phone": "(406) 555-0198",
+            "email": "service@summitautoservice.com",
+        },
+        "client": {
+            "name": "Megan Foster",
+            "address": "88 Cottonwood Dr\nBelgrade, MT 59714",
+            "phone": "(406) 555-0174",
+            "email": "meganfoster@example.com",
+        },
+        "vehicle": {
+            "estimate_number": "EST-2041",
+            "estimate_date": date.today().strftime("%Y-%m-%d"),
+            "year": "2018",
+            "make": "Subaru",
+            "model": "Outback",
+            "vin": "4S4BSANC0J3294411",
+            "mileage": "126,220",
+            "plate": "MT 6-54R2",
+        },
+        "tax_rate": "8.0",
+        "notes": "Estimate valid for 7 days.\nAdditional repairs may be required after inspection. Final charges may vary if hidden damage or extra parts are found.",
+        "line_items": [
+            {"type": "labor", "description": "Front brake pad replacement labor", "quantity": "1.5", "unit_price": "110.00"},
+            {"type": "labor", "description": "Brake system inspection and road test", "quantity": "1", "unit_price": "55.00"},
+            {"type": "parts", "description": "Premium ceramic brake pads", "quantity": "1", "unit_price": "129.95"},
+            {"type": "fees", "description": "Shop supplies and disposal", "quantity": "1", "unit_price": "18.00"},
+        ],
+    }
+
+
 def _free_invoice_template_cards() -> list[dict]:
     return [
         {
@@ -252,7 +296,166 @@ def _free_invoice_template_cards() -> list[dict]:
     ]
 
 
-def _free_invoice_parse_payload(form, files=None) -> tuple[dict, dict]:
+def _free_estimate_template_cards() -> list[dict]:
+    return [
+        {
+            "key": "classic_shop",
+            "name": "Classic Estimate",
+            "desc": "Traditional repair-shop estimate with clear sections.",
+            "preview": "images/pdf_template_classic.svg",
+        },
+        {
+            "key": "modern_clean",
+            "name": "Modern Clean",
+            "desc": "Clean modern estimate for mobile mechanics and service bays.",
+            "preview": "images/pdf_template_modern.svg",
+        },
+        {
+            "key": "detailed_service",
+            "name": "Detailed Service",
+            "desc": "Service-focused estimate with extra room for vehicle details and notes.",
+            "preview": "images/pdf_template_split.svg",
+        },
+    ]
+
+
+def _free_repair_order_sample_payload() -> dict:
+    return {
+        "document_kind": "repair_order",
+        "template_key": "classic_shop",
+        "shop": {
+            "name": "Summit Auto Service",
+            "address": "123 Garage Lane\nBozeman, MT 59715",
+            "phone": "(406) 555-0198",
+            "email": "service@summitautoservice.com",
+        },
+        "client": {
+            "name": "Megan Foster",
+            "address": "88 Cottonwood Dr\nBelgrade, MT 59714",
+            "phone": "(406) 555-0174",
+            "email": "meganfoster@example.com",
+        },
+        "vehicle": {
+            "repair_order_number": "RO-1184",
+            "received_date": date.today().strftime("%Y-%m-%d"),
+            "promised_completion_date": (date.today() + timedelta(days=2)).strftime("%Y-%m-%d"),
+            "year": "2018",
+            "make": "Subaru",
+            "model": "Outback",
+            "vin": "4S4BSANC0J3294411",
+            "mileage": "126,220",
+            "plate": "MT 6-54R2",
+            "color": "Silver",
+        },
+        "intake": {
+            "complaint": "Brake warning light on. Customer reports grinding noise from front wheels during stops and longer stopping distance over the last week.",
+            "requested_service": "Inspect front braking system, confirm source of noise, and recommend needed repairs.",
+            "technician_notes": "Initial walkaround complete. Front pads appear low through wheel opening. Road test pending customer approval for diagnostic inspection.",
+            "inspection_notes": "Check rotor thickness, caliper slide movement, fluid condition, and look for any stored ABS or brake-related fault codes.",
+            "technician_name": "Alex Turner",
+            "service_advisor": "Jamie Reed",
+            "dropped_off_by": "Megan Foster",
+            "keys_received": "1 key fob",
+            "authorization_name": "Megan Foster",
+            "authorization_date": date.today().strftime("%Y-%m-%d"),
+            "diagnosis_acknowledged": True,
+        },
+        "notes": "Customer authorizes diagnostic inspection and understands additional repairs may be recommended after diagnosis.",
+        "logo_bytes": None,
+    }
+
+
+def _free_repair_order_template_cards() -> list[dict]:
+    return [
+        {
+            "key": "classic_shop",
+            "name": "Classic Work Order",
+            "desc": "Traditional service-writer layout with clear intake and authorization sections.",
+            "preview": "images/pdf_template_classic.svg",
+        },
+        {
+            "key": "modern_clean",
+            "name": "Modern Clean",
+            "desc": "Simple modern intake form for mobile mechanics and front desks.",
+            "preview": "images/pdf_template_modern.svg",
+        },
+        {
+            "key": "detailed_service",
+            "name": "Detailed Service",
+            "desc": "Service-focused work order with room for complaint, requested work, and notes.",
+            "preview": "images/pdf_template_split.svg",
+        },
+    ]
+
+
+def _free_receipt_sample_payload() -> dict:
+    return {
+        "document_kind": "receipt",
+        "template_key": "classic_shop",
+        "shop": {
+            "name": "Summit Auto Service",
+            "address": "123 Garage Lane\nBozeman, MT 59715",
+            "phone": "(406) 555-0198",
+            "email": "service@summitautoservice.com",
+        },
+        "client": {
+            "name": "Megan Foster",
+            "address": "88 Cottonwood Dr\nBelgrade, MT 59714",
+            "phone": "(406) 555-0174",
+            "email": "meganfoster@example.com",
+        },
+        "vehicle": {
+            "receipt_number": "RCPT-2208",
+            "receipt_date": date.today().strftime("%Y-%m-%d"),
+            "payment_date": date.today().strftime("%Y-%m-%d"),
+            "year": "2018",
+            "make": "Subaru",
+            "model": "Outback",
+            "vin": "4S4BSANC0J3294411",
+            "mileage": "126,220",
+            "plate": "MT 6-54R2",
+        },
+        "payment": {
+            "invoice_reference": "INV-2048",
+            "payment_method": "Credit card",
+            "amount_paid": "429.79",
+            "tax_included": "31.84",
+            "remaining_balance": "0.00",
+            "paid_in_full": True,
+            "memo": "Paid at pickup after brake service and inspection.",
+            "service_summary": "Front brake pad replacement, brake inspection, and road test completed.",
+            "labor_parts_summary": "Labor, brake pads, and shop supplies included in this payment.",
+            "warranty_note": "Labor carries a 12-month / 12,000-mile workmanship warranty unless otherwise noted.",
+            "thank_you_note": "Thank you for choosing Summit Auto Service.",
+        },
+        "logo_bytes": None,
+    }
+
+
+def _free_receipt_template_cards() -> list[dict]:
+    return [
+        {
+            "key": "classic_shop",
+            "name": "Classic Receipt",
+            "desc": "Traditional paid-receipt layout with clear payment confirmation.",
+            "preview": "images/pdf_template_classic.svg",
+        },
+        {
+            "key": "modern_clean",
+            "name": "Modern Clean",
+            "desc": "Clean modern receipt for shops that want a simple proof-of-payment PDF.",
+            "preview": "images/pdf_template_modern.svg",
+        },
+        {
+            "key": "detailed_service",
+            "name": "Detailed Service",
+            "desc": "Service-focused receipt with more room for work summary and payment details.",
+            "preview": "images/pdf_template_split.svg",
+        },
+    ]
+
+
+def _free_repair_doc_parse_payload(form, files=None, *, number_field: str, date_field: str, document_kind: str) -> tuple[dict, dict]:
     shop = {
         "name": _free_invoice_clean_text(form.get("shop_name"), max_len=120),
         "address": _free_invoice_clean_multiline(form.get("shop_address"), max_len=300),
@@ -266,8 +469,8 @@ def _free_invoice_parse_payload(form, files=None) -> tuple[dict, dict]:
         "email": _free_invoice_clean_text(form.get("client_email"), max_len=120),
     }
     vehicle = {
-        "invoice_number": _free_invoice_clean_text(form.get("invoice_number"), max_len=40),
-        "invoice_date": _free_invoice_clean_text(form.get("invoice_date"), max_len=24),
+        number_field: _free_invoice_clean_text(form.get(number_field), max_len=40),
+        date_field: _free_invoice_clean_text(form.get(date_field), max_len=24),
         "year": _free_invoice_clean_text(form.get("vehicle_year"), max_len=8),
         "make": _free_invoice_clean_text(form.get("vehicle_make"), max_len=40),
         "model": _free_invoice_clean_text(form.get("vehicle_model"), max_len=50),
@@ -326,19 +529,20 @@ def _free_invoice_parse_payload(form, files=None) -> tuple[dict, dict]:
         errors["shop_name"] = "Shop name is required."
     if not client["name"]:
         errors["client_name"] = "Client name is required."
-    if not vehicle["invoice_number"]:
-        errors["invoice_number"] = "Invoice number is required."
-    if not vehicle["invoice_date"]:
-        errors["invoice_date"] = "Invoice date is required."
+    if not vehicle[number_field]:
+        errors[number_field] = f"{'Estimate' if document_kind == 'estimate' else 'Invoice'} number is required."
+    if not vehicle[date_field]:
+        errors[date_field] = f"{'Estimate' if document_kind == 'estimate' else 'Invoice'} date is required."
     if not line_items:
         errors["line_items"] = "Add at least one labor, parts, or service line item."
     payload = {
+        "document_kind": document_kind,
         "template_key": (form.get("template_key") or "classic_shop").strip().lower(),
         "shop": shop,
         "client": client,
         "vehicle": vehicle,
-        "invoice_number": vehicle["invoice_number"],
-        "invoice_date": vehicle["invoice_date"],
+        "invoice_number": vehicle[number_field],
+        "invoice_date": vehicle[date_field],
         "tax_rate": round(tax_rate, 2),
         "line_items": line_items,
         "notes": _free_invoice_clean_multiline(form.get("notes"), max_len=1200),
@@ -349,6 +553,211 @@ def _free_invoice_parse_payload(form, files=None) -> tuple[dict, dict]:
             "tax_amount": tax_amount,
             "total": total,
         },
+    }
+    if payload["template_key"] not in FREE_INVOICE_TEMPLATES:
+        payload["template_key"] = "classic_shop"
+    return payload, errors
+
+
+def _free_invoice_parse_payload(form, files=None) -> tuple[dict, dict]:
+    return _free_repair_doc_parse_payload(
+        form,
+        files,
+        number_field="invoice_number",
+        date_field="invoice_date",
+        document_kind="invoice",
+    )
+
+
+def _free_estimate_parse_payload(form, files=None) -> tuple[dict, dict]:
+    return _free_repair_doc_parse_payload(
+        form,
+        files,
+        number_field="estimate_number",
+        date_field="estimate_date",
+        document_kind="estimate",
+    )
+
+
+def _free_repair_order_parse_payload(form, files=None) -> tuple[dict, dict]:
+    shop = {
+        "name": _free_invoice_clean_text(form.get("shop_name"), max_len=120),
+        "address": _free_invoice_clean_multiline(form.get("shop_address"), max_len=300),
+        "phone": _free_invoice_clean_text(form.get("shop_phone"), max_len=40),
+        "email": _free_invoice_clean_text(form.get("shop_email"), max_len=120),
+    }
+    client = {
+        "name": _free_invoice_clean_text(form.get("client_name"), max_len=120),
+        "address": _free_invoice_clean_multiline(form.get("client_address"), max_len=300),
+        "phone": _free_invoice_clean_text(form.get("client_phone"), max_len=40),
+        "email": _free_invoice_clean_text(form.get("client_email"), max_len=120),
+    }
+    vehicle = {
+        "repair_order_number": _free_invoice_clean_text(form.get("repair_order_number"), max_len=40),
+        "received_date": _free_invoice_clean_text(form.get("received_date"), max_len=24),
+        "promised_completion_date": _free_invoice_clean_text(form.get("promised_completion_date"), max_len=24),
+        "year": _free_invoice_clean_text(form.get("vehicle_year"), max_len=8),
+        "make": _free_invoice_clean_text(form.get("vehicle_make"), max_len=40),
+        "model": _free_invoice_clean_text(form.get("vehicle_model"), max_len=50),
+        "vin": _free_invoice_clean_text(form.get("vehicle_vin"), max_len=40),
+        "mileage": _free_invoice_clean_text(form.get("vehicle_mileage"), max_len=24),
+        "plate": _free_invoice_clean_text(form.get("vehicle_plate"), max_len=24),
+        "color": _free_invoice_clean_text(form.get("vehicle_color"), max_len=24),
+    }
+    intake = {
+        "complaint": _free_invoice_clean_multiline(form.get("complaint"), max_len=1200),
+        "requested_service": _free_invoice_clean_multiline(form.get("requested_service"), max_len=1200),
+        "technician_notes": _free_invoice_clean_multiline(form.get("technician_notes"), max_len=1200),
+        "inspection_notes": _free_invoice_clean_multiline(form.get("inspection_notes"), max_len=1200),
+        "technician_name": _free_invoice_clean_text(form.get("technician_name"), max_len=80),
+        "service_advisor": _free_invoice_clean_text(form.get("service_advisor"), max_len=80),
+        "dropped_off_by": _free_invoice_clean_text(form.get("dropped_off_by"), max_len=80),
+        "keys_received": _free_invoice_clean_text(form.get("keys_received"), max_len=80),
+        "authorization_name": _free_invoice_clean_text(form.get("authorization_name"), max_len=120),
+        "authorization_date": _free_invoice_clean_text(form.get("authorization_date"), max_len=24),
+        "diagnosis_acknowledged": str(form.get("diagnosis_acknowledged") or "").strip().lower() in {"1", "true", "on", "yes"},
+    }
+    errors = {}
+    logo_bytes = None
+    logo_file = None
+    if files is not None:
+        try:
+            logo_file = files.get("shop_logo")
+        except Exception:
+            logo_file = None
+    if logo_file and getattr(logo_file, "filename", ""):
+        try:
+            raw = logo_file.read()
+            if raw:
+                if len(raw) > 2 * 1024 * 1024:
+                    errors["shop_logo"] = "Logo file must be 2MB or smaller."
+                else:
+                    img = Image.open(io.BytesIO(raw))
+                    img.verify()
+                    logo_bytes = raw
+        except UnidentifiedImageError:
+            errors["shop_logo"] = "Upload a valid PNG, JPG, or WEBP logo."
+        except Exception:
+            errors["shop_logo"] = "We could not read that logo file."
+    if not shop["name"]:
+        errors["shop_name"] = "Shop name is required."
+    if not client["name"]:
+        errors["client_name"] = "Client name is required."
+    if not vehicle["repair_order_number"]:
+        errors["repair_order_number"] = "Repair order number is required."
+    if not vehicle["received_date"]:
+        errors["received_date"] = "Date received is required."
+    if not intake["complaint"]:
+        errors["complaint"] = "Customer complaint or concern is required."
+    if not intake["requested_service"]:
+        errors["requested_service"] = "Requested service is required."
+    payload = {
+        "document_kind": "repair_order",
+        "template_key": (form.get("template_key") or "classic_shop").strip().lower(),
+        "shop": shop,
+        "client": client,
+        "vehicle": vehicle,
+        "repair_order_number": vehicle["repair_order_number"],
+        "received_date": vehicle["received_date"],
+        "invoice_number": vehicle["repair_order_number"],
+        "invoice_date": vehicle["received_date"],
+        "intake": intake,
+        "notes": _free_invoice_clean_multiline(form.get("notes"), max_len=1200),
+        "logo_bytes": logo_bytes,
+    }
+    if payload["template_key"] not in FREE_INVOICE_TEMPLATES:
+        payload["template_key"] = "classic_shop"
+    return payload, errors
+
+
+def _free_receipt_parse_payload(form, files=None) -> tuple[dict, dict]:
+    shop = {
+        "name": _free_invoice_clean_text(form.get("shop_name"), max_len=120),
+        "address": _free_invoice_clean_multiline(form.get("shop_address"), max_len=300),
+        "phone": _free_invoice_clean_text(form.get("shop_phone"), max_len=40),
+        "email": _free_invoice_clean_text(form.get("shop_email"), max_len=120),
+    }
+    client = {
+        "name": _free_invoice_clean_text(form.get("client_name"), max_len=120),
+        "address": _free_invoice_clean_multiline(form.get("client_address"), max_len=300),
+        "phone": _free_invoice_clean_text(form.get("client_phone"), max_len=40),
+        "email": _free_invoice_clean_text(form.get("client_email"), max_len=120),
+    }
+    vehicle = {
+        "receipt_number": _free_invoice_clean_text(form.get("receipt_number"), max_len=40),
+        "receipt_date": _free_invoice_clean_text(form.get("receipt_date"), max_len=24),
+        "payment_date": _free_invoice_clean_text(form.get("payment_date"), max_len=24),
+        "year": _free_invoice_clean_text(form.get("vehicle_year"), max_len=8),
+        "make": _free_invoice_clean_text(form.get("vehicle_make"), max_len=40),
+        "model": _free_invoice_clean_text(form.get("vehicle_model"), max_len=50),
+        "vin": _free_invoice_clean_text(form.get("vehicle_vin"), max_len=40),
+        "mileage": _free_invoice_clean_text(form.get("vehicle_mileage"), max_len=24),
+        "plate": _free_invoice_clean_text(form.get("vehicle_plate"), max_len=24),
+    }
+    payment_method = _free_invoice_clean_text(form.get("payment_method"), max_len=40)
+    if payment_method not in {"Cash", "Credit card", "Debit card", "Check", "ACH / bank transfer", "Other"}:
+        payment_method = "Credit card"
+    payment = {
+        "invoice_reference": _free_invoice_clean_text(form.get("invoice_reference"), max_len=40),
+        "payment_method": payment_method,
+        "amount_paid": round(max(0.0, min(1000000.0, _to_float(form.get("amount_paid"), 0.0))), 2),
+        "tax_included": round(max(0.0, min(1000000.0, _to_float(form.get("tax_included"), 0.0))), 2),
+        "remaining_balance": round(max(0.0, min(1000000.0, _to_float(form.get("remaining_balance"), 0.0))), 2),
+        "paid_in_full": str(form.get("paid_in_full") or "").strip().lower() in {"1", "true", "on", "yes"},
+        "memo": _free_invoice_clean_multiline(form.get("memo"), max_len=600),
+        "service_summary": _free_invoice_clean_multiline(form.get("service_summary"), max_len=1200),
+        "labor_parts_summary": _free_invoice_clean_multiline(form.get("labor_parts_summary"), max_len=800),
+        "warranty_note": _free_invoice_clean_multiline(form.get("warranty_note"), max_len=800),
+        "thank_you_note": _free_invoice_clean_multiline(form.get("thank_you_note"), max_len=400),
+    }
+    errors = {}
+    logo_bytes = None
+    logo_file = None
+    if files is not None:
+        try:
+            logo_file = files.get("shop_logo")
+        except Exception:
+            logo_file = None
+    if logo_file and getattr(logo_file, "filename", ""):
+        try:
+            raw = logo_file.read()
+            if raw:
+                if len(raw) > 2 * 1024 * 1024:
+                    errors["shop_logo"] = "Logo file must be 2MB or smaller."
+                else:
+                    img = Image.open(io.BytesIO(raw))
+                    img.verify()
+                    logo_bytes = raw
+        except UnidentifiedImageError:
+            errors["shop_logo"] = "Upload a valid PNG, JPG, or WEBP logo."
+        except Exception:
+            errors["shop_logo"] = "We could not read that logo file."
+    if not shop["name"]:
+        errors["shop_name"] = "Shop name is required."
+    if not client["name"]:
+        errors["client_name"] = "Client name is required."
+    if not vehicle["receipt_number"]:
+        errors["receipt_number"] = "Receipt number is required."
+    if not vehicle["receipt_date"]:
+        errors["receipt_date"] = "Receipt date is required."
+    if not vehicle["payment_date"]:
+        errors["payment_date"] = "Payment date is required."
+    if payment["amount_paid"] <= 0:
+        errors["amount_paid"] = "Amount paid must be greater than zero."
+    if not payment["service_summary"]:
+        errors["service_summary"] = "Service summary is required."
+    payload = {
+        "document_kind": "receipt",
+        "template_key": (form.get("template_key") or "classic_shop").strip().lower(),
+        "shop": shop,
+        "client": client,
+        "vehicle": vehicle,
+        "payment": payment,
+        "receipt_number": vehicle["receipt_number"],
+        "receipt_date": vehicle["receipt_date"],
+        "payment_date": vehicle["payment_date"],
+        "notes": _free_invoice_clean_multiline(form.get("memo"), max_len=600),
+        "logo_bytes": logo_bytes,
     }
     if payload["template_key"] not in FREE_INVOICE_TEMPLATES:
         payload["template_key"] = "classic_shop"
@@ -9922,6 +10331,165 @@ def create_app():
             faq_schema=json.dumps(faq_schema),
         )
 
+    @app.route("/free-estimate")
+    def free_estimate():
+        faq_items = [
+            {
+                "q": "What should an auto repair estimate include?",
+                "a": "An auto repair estimate should include shop information, customer information, vehicle details, the proposed labor and parts, taxes, the estimated total, and notes or disclaimers about possible changes after inspection.",
+            },
+            {
+                "q": "Can I create a repair estimate for free?",
+                "a": "Yes. This free auto repair estimate template generator lets you build a professional repair estimate and download it instantly with no signup required.",
+            },
+            {
+                "q": "Can I download an auto repair estimate as a PDF?",
+                "a": "Yes. Enter your estimate details, choose a layout, preview the estimate in the browser, and download a PDF immediately.",
+            },
+            {
+                "q": "What is the difference between an estimate and an invoice?",
+                "a": "An estimate shows the projected cost of proposed repairs before the work is completed. An invoice is the final bill for completed work and actual charges.",
+            },
+            {
+                "q": "Can I include vehicle information and parts?",
+                "a": "Yes. The tool includes fields for year, make, model, VIN, mileage, plate number, and multiple labor, parts, diagnostics, and shop-supplies line items.",
+            },
+            {
+                "q": "Is this free estimate tool part of InvoiceRunner?",
+                "a": "Yes. InvoiceRunner built this free estimate generator for repair shops, mobile mechanics, and service businesses that need a quick PDF estimate without creating an account.",
+            },
+        ]
+        faq_schema = {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+                {
+                    "@type": "Question",
+                    "name": item["q"],
+                    "acceptedAnswer": {"@type": "Answer", "text": item["a"]},
+                }
+                for item in faq_items
+            ],
+        }
+        return render_template(
+            "free_estimate.html",
+            title="Free Auto Repair Estimate Template Generator | PDF Estimate | InvoiceRunner",
+            meta_description="Create a professional auto repair estimate in minutes with this free estimate template generator. Enter vehicle details, parts, labor, and service notes, preview the estimate live, and download a PDF instantly with no signup required.",
+            canonical_url=url_for("free_estimate", _external=True),
+            og_title="Free Auto Repair Estimate Template Generator | PDF Estimate | InvoiceRunner",
+            og_description="Create a professional repair estimate with labor, parts, vehicle details, live PDF preview, and instant download. No signup required.",
+            template_cards=_free_estimate_template_cards(),
+            sample_payload=_free_estimate_sample_payload(),
+            faq_items=faq_items,
+            faq_schema=json.dumps(faq_schema),
+        )
+
+    @app.route("/repair-order-template")
+    def repair_order_template():
+        faq_items = [
+            {
+                "q": "What should a repair order include?",
+                "a": "A repair order should include shop information, customer information, vehicle details, the customer complaint, requested service, technician or advisor notes, and a customer authorization section.",
+            },
+            {
+                "q": "Can I create a repair order for free?",
+                "a": "Yes. This free repair order template generator lets you build a professional auto repair work order and download it instantly with no signup required.",
+            },
+            {
+                "q": "Can I download an auto repair work order as a PDF?",
+                "a": "Yes. Enter your shop, client, and vehicle intake details, preview the repair order in the browser, and download a PDF immediately.",
+            },
+            {
+                "q": "What is the difference between a repair order and an estimate?",
+                "a": "A repair order is the intake and work-authorization document used when a vehicle first arrives. An estimate shows projected pricing before final approval, and an invoice is the final bill after work is completed.",
+            },
+            {
+                "q": "Can I include vehicle information and customer complaints?",
+                "a": "Yes. The tool includes fields for year, make, model, VIN, mileage, plate number, color, customer complaint, requested service, technician notes, and authorization details.",
+            },
+            {
+                "q": "Is this free repair order tool part of InvoiceRunner?",
+                "a": "Yes. InvoiceRunner built this free repair order generator for repair shops, mobile mechanics, and service businesses that need a clean work-order PDF without creating an account.",
+            },
+        ]
+        faq_schema = {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+                {
+                    "@type": "Question",
+                    "name": item["q"],
+                    "acceptedAnswer": {"@type": "Answer", "text": item["a"]},
+                }
+                for item in faq_items
+            ],
+        }
+        return render_template(
+            "repair_order_template.html",
+            title="Free Repair Order Template Generator | Auto Repair Work Order PDF | InvoiceRunner",
+            meta_description="Create a professional auto repair work order in minutes with this free repair order template generator. Enter customer, vehicle, complaint, and service details, preview the repair order live, and download a PDF instantly with no signup required.",
+            canonical_url=url_for("repair_order_template", _external=True),
+            og_title="Free Repair Order Template Generator | Auto Repair Work Order PDF | InvoiceRunner",
+            og_description="Create a professional repair order with customer intake, vehicle details, complaint capture, live PDF preview, and instant download. No signup required.",
+            template_cards=_free_repair_order_template_cards(),
+            sample_payload=_free_repair_order_sample_payload(),
+            faq_items=faq_items,
+            faq_schema=json.dumps(faq_schema),
+        )
+
+    @app.route("/auto-repair-receipt-template")
+    def auto_repair_receipt_template():
+        faq_items = [
+            {
+                "q": "What should an auto repair receipt include?",
+                "a": "An auto repair receipt should include shop information, customer information, vehicle details, receipt number, payment date, payment method, amount paid, any related invoice number, and the remaining balance if one exists.",
+            },
+            {
+                "q": "Can I create a repair receipt for free?",
+                "a": "Yes. This free auto repair receipt template generator lets you build a professional payment receipt and download it instantly with no signup required.",
+            },
+            {
+                "q": "Can I download an auto repair receipt as a PDF?",
+                "a": "Yes. Enter your shop, client, vehicle, and payment details, preview the receipt in the browser, and download a PDF immediately.",
+            },
+            {
+                "q": "What is the difference between a receipt and an invoice?",
+                "a": "An invoice is the bill showing what is owed. A receipt is the document showing payment was received, including the amount paid, payment date, and payment method.",
+            },
+            {
+                "q": "Can I include vehicle information and payment method?",
+                "a": "Yes. The tool includes fields for year, make, model, VIN, mileage, plate number, payment method, invoice reference, amount paid, and balance remaining.",
+            },
+            {
+                "q": "Is this free receipt tool part of InvoiceRunner?",
+                "a": "Yes. InvoiceRunner built this free receipt generator for repair shops, mobile mechanics, and service businesses that need a clean proof-of-payment PDF without creating an account.",
+            },
+        ]
+        faq_schema = {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+                {
+                    "@type": "Question",
+                    "name": item["q"],
+                    "acceptedAnswer": {"@type": "Answer", "text": item["a"]},
+                }
+                for item in faq_items
+            ],
+        }
+        return render_template(
+            "auto_repair_receipt_template.html",
+            title="Free Auto Repair Receipt Template Generator | Payment Receipt PDF | InvoiceRunner",
+            meta_description="Create a professional auto repair receipt in minutes with this free receipt template generator. Enter customer, vehicle, invoice, and payment details, preview the receipt live, and download a PDF instantly with no signup required.",
+            canonical_url=url_for("auto_repair_receipt_template", _external=True),
+            og_title="Free Auto Repair Receipt Template Generator | Payment Receipt PDF | InvoiceRunner",
+            og_description="Create a professional auto repair payment receipt with customer, vehicle, payment details, live PDF preview, and instant download. No signup required.",
+            template_cards=_free_receipt_template_cards(),
+            sample_payload=_free_receipt_sample_payload(),
+            faq_items=faq_items,
+            faq_schema=json.dumps(faq_schema),
+        )
+
     @app.route("/free-invoice/pdf", methods=["POST"])
     def free_invoice_pdf():
         payload, errors = _free_invoice_parse_payload(request.form, request.files)
@@ -9961,6 +10529,129 @@ def create_app():
             mimetype="application/pdf",
             as_attachment=False,
             download_name="sample-preview.pdf",
+        )
+
+    @app.route("/free-estimate/pdf", methods=["POST"])
+    def free_estimate_pdf():
+        payload, errors = _free_estimate_parse_payload(request.form, request.files)
+        if errors:
+            return jsonify({"ok": False, "errors": errors}), 400
+        _track_site_activity("/free-estimate/pdf", event_type="free_estimate_download", method="POST")
+        pdf_bytes = generate_free_estimate_pdf(payload)
+        filename = secure_filename(payload.get("invoice_number") or "repair-estimate") or "repair-estimate"
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{filename}.pdf",
+        )
+
+    @app.route("/free-estimate/preview", methods=["POST"])
+    def free_estimate_preview():
+        payload, errors = _free_estimate_parse_payload(request.form, request.files)
+        if errors:
+            return jsonify({"ok": False, "errors": errors}), 400
+        _track_site_activity("/free-estimate/preview", event_type="free_estimate_preview", method="POST")
+        pdf_bytes = generate_free_estimate_pdf(payload)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="estimate-preview.pdf",
+        )
+
+    @app.route("/free-estimate/sample-preview")
+    def free_estimate_sample_preview():
+        payload = _free_estimate_sample_payload()
+        payload["template_key"] = "modern_clean"
+        pdf_bytes = generate_free_estimate_pdf(payload)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="sample-estimate-preview.pdf",
+        )
+
+    @app.route("/repair-order-template/pdf", methods=["POST"])
+    def repair_order_template_pdf():
+        payload, errors = _free_repair_order_parse_payload(request.form, request.files)
+        if errors:
+            return jsonify({"ok": False, "errors": errors}), 400
+        _track_site_activity("/repair-order-template/pdf", event_type="repair_order_download", method="POST")
+        pdf_bytes = generate_free_repair_order_pdf(payload)
+        filename = secure_filename(payload.get("repair_order_number") or "repair-order") or "repair-order"
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{filename}.pdf",
+        )
+
+    @app.route("/repair-order-template/preview", methods=["POST"])
+    def repair_order_template_preview():
+        payload, errors = _free_repair_order_parse_payload(request.form, request.files)
+        if errors:
+            return jsonify({"ok": False, "errors": errors}), 400
+        _track_site_activity("/repair-order-template/preview", event_type="repair_order_preview", method="POST")
+        pdf_bytes = generate_free_repair_order_pdf(payload)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="repair-order-preview.pdf",
+        )
+
+    @app.route("/repair-order-template/sample-preview")
+    def repair_order_template_sample_preview():
+        payload = _free_repair_order_sample_payload()
+        payload["template_key"] = "modern_clean"
+        pdf_bytes = generate_free_repair_order_pdf(payload)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="sample-repair-order-preview.pdf",
+        )
+
+    @app.route("/auto-repair-receipt-template/pdf", methods=["POST"])
+    def auto_repair_receipt_template_pdf():
+        payload, errors = _free_receipt_parse_payload(request.form, request.files)
+        if errors:
+            return jsonify({"ok": False, "errors": errors}), 400
+        _track_site_activity("/auto-repair-receipt-template/pdf", event_type="receipt_download", method="POST")
+        pdf_bytes = generate_free_receipt_pdf(payload)
+        filename = secure_filename(payload.get("receipt_number") or "repair-receipt") or "repair-receipt"
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{filename}.pdf",
+        )
+
+    @app.route("/auto-repair-receipt-template/preview", methods=["POST"])
+    def auto_repair_receipt_template_preview():
+        payload, errors = _free_receipt_parse_payload(request.form, request.files)
+        if errors:
+            return jsonify({"ok": False, "errors": errors}), 400
+        _track_site_activity("/auto-repair-receipt-template/preview", event_type="receipt_preview", method="POST")
+        pdf_bytes = generate_free_receipt_pdf(payload)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="repair-receipt-preview.pdf",
+        )
+
+    @app.route("/auto-repair-receipt-template/sample-preview")
+    def auto_repair_receipt_template_sample_preview():
+        payload = _free_receipt_sample_payload()
+        payload["template_key"] = "modern_clean"
+        pdf_bytes = generate_free_receipt_pdf(payload)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="sample-receipt-preview.pdf",
         )
 
     @app.get("/settings/analytics")

@@ -1,0 +1,1028 @@
+{% extends "base.html" %}
+
+{% block head_extra %}
+<script type="application/ld+json">{{ faq_schema|safe }}</script>
+<style>
+  .free-invoice-shell {
+    max-width: 1320px;
+  }
+  .free-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    gap: 1.25rem;
+    align-items: stretch;
+  }
+  .free-card {
+    background: linear-gradient(180deg, #ffffff 0%, #eef4ff 100%);
+    border: 1px solid #b9cdea;
+    border-radius: 18px;
+    box-shadow: var(--app-shadow);
+    padding: 1.4rem;
+  }
+  .free-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    padding: .32rem .72rem;
+    border-radius: 999px;
+    border: 1px solid #98b7e4;
+    background: #e8f1ff;
+    color: #173d74;
+    font-size: .82rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+    margin-bottom: .85rem;
+  }
+  .free-hero h1,
+  .free-section h2 {
+    font-family: "Fraunces", Georgia, serif;
+  }
+  .free-hero h1 {
+    font-size: clamp(2rem, 4vw, 3.2rem);
+    line-height: 1.02;
+    margin: 0 0 .85rem;
+    color: #0f315f;
+  }
+  .free-hero p {
+    color: #335076;
+    font-size: 1rem;
+    margin: 0 0 1rem;
+    max-width: 64ch;
+  }
+  .free-trust {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .75rem;
+    margin-top: 1rem;
+  }
+  .free-trust div {
+    padding: .8rem .9rem;
+    border-radius: 14px;
+    font-weight: 600;
+    font-size: .92rem;
+    color: #234164;
+    border: 1px solid #b6cdeb;
+    background: #f8fbff;
+  }
+  .free-crosslink {
+    margin: .9rem 0 0;
+    color: #3e5677;
+    font-size: .95rem;
+  }
+  .free-crosslink a {
+    color: #1a4688;
+    font-weight: 700;
+  }
+  .free-hero-audience {
+    margin-top: 1rem;
+  }
+  .free-subsection-title {
+    color: #163b6c;
+    margin: 0 0 .7rem;
+    font-size: 1.08rem;
+    font-weight: 800;
+  }
+  .free-side-panel {
+    display: grid;
+    gap: .85rem;
+  }
+  .free-hero-visual {
+    overflow: hidden;
+  }
+  .free-hero-visual img,
+  .free-example-visual img {
+    width: 85%;
+    margin: 0 auto;
+    display: block;
+    border: 1px solid #b9cdea;
+    border-radius: 14px;
+    background: #fff;
+  }
+  .free-hero-visual figcaption,
+  .free-example-visual figcaption {
+    color: #557094;
+    font-size: .9rem;
+    margin-top: .55rem;
+  }
+  .free-mini-panel {
+    border: 1px solid #a8c2e7;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #edf4ff 0%, #deebff 100%);
+    padding: 1rem;
+  }
+  .free-mini-panel h3 {
+    font-size: 1rem;
+    color: #183f76;
+    margin: 0 0 .55rem;
+  }
+  .free-mini-panel ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: #37537b;
+  }
+  .free-benefits {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .75rem;
+    margin-top: 1rem;
+  }
+  .free-benefits .benefit {
+    padding: .95rem 1rem;
+    border: 1px solid #b8cae4;
+    border-radius: 16px;
+    background: #fff;
+  }
+  .free-benefits strong {
+    display: block;
+    color: #133967;
+    margin-bottom: .2rem;
+  }
+  .free-tool-grid {
+    display: grid;
+    grid-template-columns: minmax(0, .98fr) minmax(0, 1.02fr);
+    gap: 1rem;
+    align-items: start;
+  }
+  .free-form-card,
+  .free-preview-card,
+  .free-section {
+    background: #fff;
+    border: 1px solid #b9cdea;
+    border-radius: 18px;
+    box-shadow: var(--app-shadow);
+    padding: 1.2rem;
+  }
+  .free-form-card h2,
+  .free-preview-card h2,
+  .free-section h2 {
+    color: #102f5b;
+    margin: 0 0 .35rem;
+    font-size: 1.6rem;
+  }
+  .free-lead {
+    color: #4b6285;
+    margin: 0 0 1rem;
+  }
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .8rem;
+  }
+  .field-grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .8rem;
+  }
+  .tool-section {
+    padding-top: 1rem;
+    border-top: 1px solid #d7e3f6;
+    margin-top: 1rem;
+  }
+  .tool-section:first-of-type {
+    border-top: 0;
+    padding-top: 0;
+    margin-top: 0;
+  }
+  .tool-section h3 {
+    margin: 0 0 .75rem;
+    color: #163b6c;
+    font-size: 1.05rem;
+  }
+  .template-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .75rem;
+  }
+  .template-choice {
+    position: relative;
+    display: block;
+    cursor: pointer;
+  }
+  .template-choice input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .template-choice-body {
+    border: 1px solid #b9cdea;
+    border-radius: 16px;
+    overflow: hidden;
+    background: #fff;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+  }
+  .template-choice:hover .template-choice-body {
+    transform: translateY(-1px);
+  }
+  .template-choice input:checked + .template-choice-body {
+    border-color: #1f58ab;
+    box-shadow: 0 0 0 2px rgba(31, 88, 171, 0.14);
+  }
+  .template-thumb {
+    aspect-ratio: 1.35 / 1;
+    background: linear-gradient(180deg, #f4f8ff 0%, #e6eefb 100%);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  .template-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .template-meta {
+    padding: .75rem;
+  }
+  .template-meta strong {
+    display: block;
+    color: #173b6f;
+  }
+  .template-meta span {
+    display: block;
+    color: #557094;
+    font-size: .9rem;
+    margin-top: .15rem;
+  }
+  .free-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .7rem;
+    margin-top: 1rem;
+    align-items: center;
+  }
+  .free-note {
+    color: #4b6285;
+    font-size: .92rem;
+  }
+  .free-note.prominent {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .3rem;
+    padding: .72rem .9rem;
+    border-radius: 14px;
+    border: 1px solid #c8d8ef;
+    background: #f7fbff;
+    color: #27456f;
+    font-size: .93rem;
+    line-height: 1.45;
+  }
+  .free-note a {
+    font-weight: 700;
+    color: #1f58ab;
+    text-decoration: none;
+  }
+  .preview-frame {
+    border: 1px solid #c3d4ea;
+    border-radius: 18px;
+    overflow: hidden;
+    background: linear-gradient(180deg, #eff4ff 0%, #f9fbff 100%);
+    min-height: 760px;
+  }
+  .preview-surface {
+    width: 100%;
+    height: 820px;
+    border: 0;
+    background: #fff;
+  }
+  .free-error {
+    color: #b42318;
+    font-size: .85rem;
+    margin-top: .3rem;
+    display: none;
+  }
+  .free-error.visible {
+    display: block;
+  }
+  .free-toc {
+    display: grid;
+    gap: .45rem;
+    padding: .95rem 1rem;
+    border-radius: 14px;
+    background: #f8fbff;
+    border: 1px solid #cfddf0;
+    margin-bottom: 1rem;
+  }
+  .free-toc ul {
+    margin: 0;
+    padding-left: 1rem;
+    color: #2f4f78;
+  }
+  .free-toc a {
+    color: #1f58ab;
+    text-decoration: none;
+  }
+  .free-audience-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .8rem;
+  }
+  .free-audience-card {
+    border: 1px solid #c6d6ee;
+    border-radius: 16px;
+    background: #fff;
+    padding: 1rem;
+    display: grid;
+    gap: .35rem;
+  }
+  .free-audience-card strong {
+    color: #163b6c;
+  }
+  .free-audience-card span {
+    color: #4b6285;
+    font-size: .95rem;
+  }
+  .compare-grid,
+  .faq-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .compare-box,
+  .faq-item {
+    border: 1px solid #ccdaee;
+    border-radius: 16px;
+    background: #f8fbff;
+    padding: 1rem;
+  }
+  .compare-box h3,
+  .faq-item h3 {
+    margin: 0 0 .55rem;
+    color: #183f76;
+    font-size: 1.05rem;
+  }
+  .compare-box ul,
+  .faq-item p {
+    margin: 0;
+    color: #3e5a81;
+  }
+  .final-cta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 1rem;
+    align-items: center;
+    padding: 1.1rem;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #103261 0%, #1a4f93 100%);
+    color: #fff;
+  }
+  .final-cta h2,
+  .final-cta p {
+    color: #fff;
+  }
+  @media (max-width: 991px) {
+    .free-hero,
+    .free-tool-grid,
+    .compare-grid,
+    .faq-grid,
+    .final-cta {
+      grid-template-columns: 1fr;
+    }
+    .free-benefits,
+    .template-choice-grid,
+    .free-trust,
+    .field-grid,
+    .field-grid-3,
+    .free-audience-grid {
+      grid-template-columns: 1fr;
+    }
+    .preview-frame {
+      min-height: 620px;
+    }
+    .preview-surface {
+      height: 620px;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4 free-invoice-shell">
+  <section class="free-card free-hero">
+    <div>
+      <div class="free-eyebrow"><i class="bi bi-clipboard2-check"></i> Free tool for repair shops</div>
+      <h1>Free Repair Order Template Generator</h1>
+      <p>This free repair order template generator helps auto repair shops, mobile mechanics, and service businesses create professional work orders in minutes. Enter customer, vehicle, complaint, and service details, preview the repair order live, and download a clean PDF instantly with no signup required.</p>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-primary" href="#generator">Start Free Repair Order</a>
+        <a class="btn btn-outline-primary" href="#repair-order-faq">See FAQ</a>
+      </div>
+      <div class="free-trust">
+        <div>No signup required</div>
+        <div>Download PDF instantly</div>
+        <div>Built for repair shops</div>
+      </div>
+      <p class="free-crosslink">Need to quote the repair before work begins? Use our <a href="{{ url_for('free_estimate') }}">free auto repair estimate generator</a>.</p>
+      <div class="free-hero-audience">
+        <h2 class="free-subsection-title">Who this tool is for</h2>
+        <div class="free-audience-grid hero-audience-grid">
+          <article class="free-audience-card">
+            <strong>Small auto repair shops</strong>
+            <span>Create clean intake and authorization documents before diagnosis or repair work begins.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>Mobile mechanics</strong>
+            <span>Capture customer concerns, vehicle details, and work authorization on-site without needing a full office workflow.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>Independent technicians</strong>
+            <span>Useful when you need a one-off repair order that still looks professional and complete.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>Service writers / front desks</strong>
+            <span>Great for clean vehicle intake, complaint capture, and authorization paperwork at drop-off.</span>
+          </article>
+        </div>
+      </div>
+    </div>
+    <div class="free-side-panel">
+      <figure class="free-mini-panel free-hero-visual mb-0">
+        <img src="{{ url_for('static', filename='images/SampleFreeRepairOrder.png') }}" alt="Example auto repair work order PDF generated with InvoiceRunner">
+        <figcaption>Example auto repair work order PDF generated with InvoiceRunner.</figcaption>
+      </figure>
+      <div class="free-mini-panel">
+        <h3>Why this page can outrank a plain template</h3>
+        <ul>
+          <li>Vehicle-specific intake fields that generic work-order forms often miss</li>
+          <li>Customer complaint and requested-service sections built for real repair intake</li>
+          <li>Instant PDF repair order download with no account friction</li>
+        </ul>
+      </div>
+      <div class="free-mini-panel">
+        <h3>Best fit</h3>
+        <ul>
+          <li>Small auto repair shops</li>
+          <li>Mobile mechanics</li>
+          <li>Service writers and front desks</li>
+          <li>Shops that need a clean intake form</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="free-benefits">
+    <div class="benefit"><strong>Free to use</strong><span>No paywall or trial gate just to generate a work-order PDF.</span></div>
+    <div class="benefit"><strong>No account needed</strong><span>Enter the repair order details and download immediately.</span></div>
+    <div class="benefit"><strong>Professional layouts</strong><span>Choose from three distinct repair-order styles for intake and authorization.</span></div>
+    <div class="benefit"><strong>Powered by InvoiceRunner</strong><span>Built by a full repair shop invoicing platform.</span></div>
+  </section>
+
+  <section class="free-tool-grid mt-3" id="generator">
+    <div class="free-form-card">
+      <h2>Build your repair order</h2>
+      <p class="free-lead">Enter your shop, client, vehicle, complaint, and authorization details. Nothing is saved to an account or database. The data stays in your browser until you download the PDF.</p>
+
+      <form id="repairOrderForm" novalidate>
+        <div class="tool-section">
+          <h3>Choose a layout</h3>
+          <div class="template-choice-grid">
+            {% for card in template_cards %}
+            <label class="template-choice">
+              <input type="radio" name="template_key" value="{{ card.key }}" {% if loop.first %}checked{% endif %}>
+              <span class="template-choice-body">
+                <span class="template-thumb">
+                  <img src="{{ url_for('static', filename=card.preview) }}" alt="{{ card.name }} preview">
+                </span>
+                <span class="template-meta">
+                  <strong>{{ card.name }}</strong>
+                  <span>{{ card.desc }}</span>
+                </span>
+              </span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Shop information</h3>
+          <div class="field-grid">
+            <div>
+              <label class="form-label">Shop / business name</label>
+              <input class="form-control" name="shop_name" placeholder="Westside Auto Repair">
+              <div class="free-error" data-error-for="shop_name"></div>
+            </div>
+            <div>
+              <label class="form-label">Phone</label>
+              <input class="form-control" name="shop_phone" placeholder="(406) 555-0198">
+            </div>
+            <div>
+              <label class="form-label">Address</label>
+              <textarea class="form-control" name="shop_address" rows="3" placeholder="123 Garage Lane&#10;Bozeman, MT 59715"></textarea>
+            </div>
+            <div>
+              <label class="form-label">Email (optional)</label>
+              <input class="form-control" name="shop_email" placeholder="service@yourshop.com">
+            </div>
+            <div>
+              <label class="form-label">Logo (optional)</label>
+              <input class="form-control" name="shop_logo" type="file" accept="image/png,image/jpeg,image/webp">
+              <div class="form-text">Used only for this browser session. Not saved to InvoiceRunner.</div>
+              <div class="free-error" data-error-for="shop_logo"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Customer information</h3>
+          <div class="field-grid">
+            <div>
+              <label class="form-label">Customer name</label>
+              <input class="form-control" name="client_name" placeholder="Jordan Smith">
+              <div class="free-error" data-error-for="client_name"></div>
+            </div>
+            <div>
+              <label class="form-label">Customer phone</label>
+              <input class="form-control" name="client_phone" placeholder="(406) 555-0174">
+            </div>
+            <div>
+              <label class="form-label">Customer address</label>
+              <textarea class="form-control" name="client_address" rows="3" placeholder="88 Cottonwood Dr&#10;Belgrade, MT 59714"></textarea>
+            </div>
+            <div>
+              <label class="form-label">Customer email (optional)</label>
+              <input class="form-control" name="client_email" placeholder="client@example.com">
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Vehicle and intake details</h3>
+          <div class="field-grid-3">
+            <div>
+              <label class="form-label">Repair order number</label>
+              <input class="form-control" name="repair_order_number" placeholder="RO-1184">
+              <div class="free-error" data-error-for="repair_order_number"></div>
+            </div>
+            <div>
+              <label class="form-label">Date received</label>
+              <input class="form-control" type="date" name="received_date">
+              <div class="free-error" data-error-for="received_date"></div>
+            </div>
+            <div>
+              <label class="form-label">Promised completion date (optional)</label>
+              <input class="form-control" type="date" name="promised_completion_date">
+            </div>
+            <div>
+              <label class="form-label">Year</label>
+              <input class="form-control" name="vehicle_year" placeholder="2018">
+            </div>
+            <div>
+              <label class="form-label">Make</label>
+              <input class="form-control" name="vehicle_make" placeholder="Subaru">
+            </div>
+            <div>
+              <label class="form-label">Model</label>
+              <input class="form-control" name="vehicle_model" placeholder="Outback">
+            </div>
+            <div>
+              <label class="form-label">VIN (optional)</label>
+              <input class="form-control" name="vehicle_vin" placeholder="4S4BSANC0J3294411">
+            </div>
+            <div>
+              <label class="form-label">Mileage (optional)</label>
+              <input class="form-control" name="vehicle_mileage" placeholder="126,220">
+            </div>
+            <div>
+              <label class="form-label">License plate (optional)</label>
+              <input class="form-control" name="vehicle_plate" placeholder="MT 6-54R2">
+            </div>
+            <div>
+              <label class="form-label">Color (optional)</label>
+              <input class="form-control" name="vehicle_color" placeholder="Silver">
+            </div>
+            <div>
+              <label class="form-label">Technician name (optional)</label>
+              <input class="form-control" name="technician_name" placeholder="Alex Turner">
+            </div>
+            <div>
+              <label class="form-label">Service advisor (optional)</label>
+              <input class="form-control" name="service_advisor" placeholder="Jamie Reed">
+            </div>
+            <div>
+              <label class="form-label">Vehicle dropped off by (optional)</label>
+              <input class="form-control" name="dropped_off_by" placeholder="Megan Foster">
+            </div>
+            <div>
+              <label class="form-label">Keys received (optional)</label>
+              <input class="form-control" name="keys_received" placeholder="1 key fob">
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Complaint, requested work, and notes</h3>
+          <div class="field-grid">
+            <div>
+              <label class="form-label">Customer complaint / concern</label>
+              <textarea class="form-control" name="complaint" rows="5" placeholder="Describe the vehicle issue the customer reported."></textarea>
+              <div class="free-error" data-error-for="complaint"></div>
+            </div>
+            <div>
+              <label class="form-label">Requested service</label>
+              <textarea class="form-control" name="requested_service" rows="5" placeholder="Describe the work the customer wants performed."></textarea>
+              <div class="free-error" data-error-for="requested_service"></div>
+            </div>
+            <div>
+              <label class="form-label">Technician / advisor notes</label>
+              <textarea class="form-control" name="technician_notes" rows="4" placeholder="Initial observations, intake notes, or work authorization details."></textarea>
+            </div>
+            <div>
+              <label class="form-label">Recommended inspection notes (optional)</label>
+              <textarea class="form-control" name="inspection_notes" rows="4" placeholder="Suggested inspection points, likely causes, or follow-up diagnostics."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>Authorization</h3>
+          <div class="field-grid-3">
+            <div>
+              <label class="form-label">Customer authorization name</label>
+              <input class="form-control" name="authorization_name" placeholder="Megan Foster">
+            </div>
+            <div>
+              <label class="form-label">Authorization date</label>
+              <input class="form-control" type="date" name="authorization_date">
+            </div>
+            <div class="d-flex align-items-end">
+              <div class="form-check pb-2">
+                <input class="form-check-input" type="checkbox" name="diagnosis_acknowledged" id="diagnosisAck">
+                <label class="form-check-label" for="diagnosisAck">Customer understands diagnosis may reveal additional needed repairs</label>
+              </div>
+            </div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">Additional notes / acknowledgment (optional)</label>
+            <textarea class="form-control" name="notes" rows="3" placeholder="Add a short authorization note, vehicle condition note, or intake disclaimer if needed."></textarea>
+          </div>
+        </div>
+
+        <div class="free-inline-actions">
+          <button class="btn btn-primary" type="submit" id="downloadBtn"><i class="bi bi-file-earmark-pdf"></i>&nbsp;Download PDF</button>
+          <button class="btn btn-outline-primary" type="button" id="sampleBtn">Load sample data</button>
+          <button class="btn btn-outline-secondary" type="button" id="clearBtn">Clear form</button>
+          <span class="free-note prominent">Need to save repair orders, convert approved work into estimates or invoices, and keep customers and vehicles organized? <a href="{{ url_for('register') }}">Create a free InvoiceRunner account</a>.</span>
+        </div>
+      </form>
+    </div>
+
+    <div class="free-preview-card">
+      <h2>Live repair order preview</h2>
+      <p class="free-lead">The preview updates as you work so you can verify the intake details, vehicle information, customer concern, and authorization wording before downloading the PDF.</p>
+      <div class="preview-frame">
+        <iframe class="preview-surface" id="previewFrame" title="PDF repair order preview"></iframe>
+      </div>
+    </div>
+  </section>
+
+  <section class="free-section">
+    <div class="free-toc" aria-labelledby="repair-order-toc-title">
+      <h2 class="free-subsection-title mb-0" id="repair-order-toc-title">On this page</h2>
+      <ul>
+        <li><a href="#what-is-repair-order">What is a repair order?</a></li>
+        <li><a href="#repair-order-includes">What should an auto repair work order include?</a></li>
+        <li><a href="#repair-order-vs-others">Repair order vs estimate vs invoice</a></li>
+        <li><a href="#how-to-use-repair-order">How to use this free repair order generator</a></li>
+        <li><a href="#repair-order-faq">Repair order template FAQ</a></li>
+      </ul>
+    </div>
+
+    <h2 id="what-is-repair-order">What is a repair order?</h2>
+    <p>A repair order is the intake and work-authorization document used when a vehicle first arrives at the shop. It records the customer complaint, requested service, vehicle details, and technician or advisor notes before final pricing or billing is completed.</p>
+
+    <h3 id="repair-order-includes">What should an auto repair work order include?</h3>
+    <p>A professional repair order should include the shop name and contact information, the customer’s name, phone, and address, the vehicle year, make, model, VIN, mileage, the customer concern, requested service, technician notes, and a clear authorization section.</p>
+
+    <h3 id="repair-order-vs-others">Repair order vs estimate vs invoice</h3>
+    <p>A repair order is the intake and work-authorization document. An estimate shows the projected cost before work is approved. An invoice is the final bill after the repair is complete and actual charges are known.</p>
+    <p>Need to quote the work before starting? Use our <a href="{{ url_for('free_estimate') }}">free auto repair estimate generator</a>. Need to send the final bill after the work is finished? Use our <a href="{{ url_for('free_invoice') }}">free mechanic invoice generator</a>.</p>
+
+    <h3 id="how-to-use-repair-order">How to use this free repair order generator</h3>
+    <ol>
+      <li>Enter your shop and customer details.</li>
+      <li>Add the vehicle information and repair order number.</li>
+      <li>Describe the customer complaint and requested service.</li>
+      <li>Add technician, advisor, and authorization details.</li>
+      <li>Choose a layout, preview the repair order, and download the PDF instantly.</li>
+    </ol>
+  </section>
+
+  <section class="free-section">
+    <h2>Free repair order template vs full repair shop software</h2>
+    <p>A free repair order template is useful when you need a quick one-off intake or work-authorization form. Once you need saved repair orders, repeat customer and vehicle history, estimate-to-invoice workflow, scheduling, or organized records, full repair shop software becomes the better option.</p>
+    <div class="compare-grid">
+      <div class="compare-box">
+        <h3>Free PDF generator</h3>
+        <ul>
+          <li>Fast, no-login work-order creation</li>
+          <li>Useful for one-off jobs or intake forms</li>
+          <li>Download and print manually</li>
+          <li>No saved records or workflow tracking</li>
+        </ul>
+      </div>
+      <div class="compare-box">
+        <h3>Full InvoiceRunner account</h3>
+        <ul>
+          <li>Save repair orders, estimates, and invoices</li>
+          <li>Keep repeat customer and vehicle history</li>
+          <li>Convert approved jobs into estimates and invoices</li>
+          <li>Manage schedules and workflow</li>
+          <li>Keep records organized and run the shop more efficiently</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="free-section">
+    <h2>Auto repair work order PDF example</h2>
+    <p>This sample shows the kind of professional repair order example and intake/work-order PDF this tool creates. It is built for repair shops that need a clean work order with customer details, vehicle information, complaint capture, and technician notes.</p>
+    <figure class="free-example-visual mt-3">
+      <img src="{{ url_for('static', filename='images/SampleFreeRepairOrder.png') }}" alt="Auto repair work order PDF example generated with InvoiceRunner">
+      <figcaption>Example auto repair work order PDF generated with InvoiceRunner.</figcaption>
+    </figure>
+  </section>
+
+  <section class="free-section" id="repair-order-faq">
+    <h2>Repair order template FAQ</h2>
+    <div class="faq-grid">
+      {% for item in faq_items %}
+      <article class="faq-item">
+        <h3>{{ item.q }}</h3>
+        <p>{{ item.a }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="free-section">
+    <div class="final-cta">
+      <div>
+        <h2>Need more than a one-off repair order PDF?</h2>
+        <p class="mb-0">InvoiceRunner helps repair shops save repair orders, estimates, and invoices, keep repeat customer and vehicle history organized, and run the front-office side of the shop more efficiently.</p>
+      </div>
+      <div class="d-flex flex-wrap gap-2 justify-content-end">
+        <a class="btn btn-primary" href="{{ url_for('register') }}">Create free InvoiceRunner account</a>
+        <a class="btn btn-outline-primary" href="#generator">Use the free repair order tool</a>
+      </div>
+    </div>
+    <div class="mt-3">
+      <h3 class="free-subsection-title">Related free tools</h3>
+      <p class="mb-1"><a href="{{ url_for('free_estimate') }}">Free auto repair estimate generator</a></p>
+      <p class="mb-1"><a href="{{ url_for('free_invoice') }}">Free mechanic invoice generator</a></p>
+      <p class="mb-0"><a href="{{ url_for('auto_repair_receipt_template') }}">Free auto repair receipt template generator</a></p>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const samplePayload = {{ sample_payload|tojson }};
+  const storageKey = 'invoiceRunnerFreeRepairOrderDraft';
+  const form = document.getElementById('repairOrderForm');
+  const previewFrame = document.getElementById('previewFrame');
+  const downloadBtn = document.getElementById('downloadBtn');
+  let previewUrl = null;
+  let previewTimer = null;
+
+  function clearErrors() {
+    document.querySelectorAll('.free-error').forEach((el) => {
+      el.textContent = '';
+      el.classList.remove('visible');
+    });
+  }
+
+  function showErrors(errors) {
+    clearErrors();
+    Object.entries(errors || {}).forEach(([key, message]) => {
+      const target = document.querySelector(`.free-error[data-error-for="${key}"]`);
+      if (target) {
+        target.textContent = message;
+        target.classList.add('visible');
+      }
+    });
+  }
+
+  function setFormValue(name, value) {
+    const field = form.elements[name];
+    if (!field) return;
+    if (field.type === 'checkbox') {
+      field.checked = !!value;
+    } else {
+      field.value = value ?? '';
+    }
+  }
+
+  function collectData() {
+    const fd = new FormData(form);
+    return {
+      template_key: fd.get('template_key') || 'classic_shop',
+      shop: {
+        name: fd.get('shop_name') || '',
+        address: fd.get('shop_address') || '',
+        phone: fd.get('shop_phone') || '',
+        email: fd.get('shop_email') || '',
+      },
+      client: {
+        name: fd.get('client_name') || '',
+        address: fd.get('client_address') || '',
+        phone: fd.get('client_phone') || '',
+        email: fd.get('client_email') || '',
+      },
+      vehicle: {
+        repair_order_number: fd.get('repair_order_number') || '',
+        received_date: fd.get('received_date') || '',
+        promised_completion_date: fd.get('promised_completion_date') || '',
+        year: fd.get('vehicle_year') || '',
+        make: fd.get('vehicle_make') || '',
+        model: fd.get('vehicle_model') || '',
+        vin: fd.get('vehicle_vin') || '',
+        mileage: fd.get('vehicle_mileage') || '',
+        plate: fd.get('vehicle_plate') || '',
+        color: fd.get('vehicle_color') || '',
+      },
+      intake: {
+        complaint: fd.get('complaint') || '',
+        requested_service: fd.get('requested_service') || '',
+        technician_notes: fd.get('technician_notes') || '',
+        inspection_notes: fd.get('inspection_notes') || '',
+        technician_name: fd.get('technician_name') || '',
+        service_advisor: fd.get('service_advisor') || '',
+        dropped_off_by: fd.get('dropped_off_by') || '',
+        keys_received: fd.get('keys_received') || '',
+        authorization_name: fd.get('authorization_name') || '',
+        authorization_date: fd.get('authorization_date') || '',
+        diagnosis_acknowledged: !!fd.get('diagnosis_acknowledged'),
+      },
+      notes: fd.get('notes') || '',
+    };
+  }
+
+  function saveDraft() {
+    const data = collectData();
+    localStorage.setItem(storageKey, JSON.stringify(data));
+  }
+
+  function loadDraft() {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return false;
+      const draft = JSON.parse(raw);
+      if (!draft || typeof draft !== 'object') return false;
+      setFormValue('shop_name', draft.shop?.name || '');
+      setFormValue('shop_address', draft.shop?.address || '');
+      setFormValue('shop_phone', draft.shop?.phone || '');
+      setFormValue('shop_email', draft.shop?.email || '');
+      setFormValue('client_name', draft.client?.name || '');
+      setFormValue('client_address', draft.client?.address || '');
+      setFormValue('client_phone', draft.client?.phone || '');
+      setFormValue('client_email', draft.client?.email || '');
+      setFormValue('repair_order_number', draft.vehicle?.repair_order_number || '');
+      setFormValue('received_date', draft.vehicle?.received_date || '');
+      setFormValue('promised_completion_date', draft.vehicle?.promised_completion_date || '');
+      setFormValue('vehicle_year', draft.vehicle?.year || '');
+      setFormValue('vehicle_make', draft.vehicle?.make || '');
+      setFormValue('vehicle_model', draft.vehicle?.model || '');
+      setFormValue('vehicle_vin', draft.vehicle?.vin || '');
+      setFormValue('vehicle_mileage', draft.vehicle?.mileage || '');
+      setFormValue('vehicle_plate', draft.vehicle?.plate || '');
+      setFormValue('vehicle_color', draft.vehicle?.color || '');
+      setFormValue('complaint', draft.intake?.complaint || '');
+      setFormValue('requested_service', draft.intake?.requested_service || '');
+      setFormValue('technician_notes', draft.intake?.technician_notes || '');
+      setFormValue('inspection_notes', draft.intake?.inspection_notes || '');
+      setFormValue('technician_name', draft.intake?.technician_name || '');
+      setFormValue('service_advisor', draft.intake?.service_advisor || '');
+      setFormValue('dropped_off_by', draft.intake?.dropped_off_by || '');
+      setFormValue('keys_received', draft.intake?.keys_received || '');
+      setFormValue('authorization_name', draft.intake?.authorization_name || '');
+      setFormValue('authorization_date', draft.intake?.authorization_date || '');
+      setFormValue('diagnosis_acknowledged', !!draft.intake?.diagnosis_acknowledged);
+      setFormValue('notes', draft.notes || '');
+      if (draft.template_key) {
+        const radio = form.querySelector(`[name="template_key"][value="${draft.template_key}"]`);
+        if (radio) radio.checked = true;
+      }
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function loadSampleData() {
+    setFormValue('shop_name', samplePayload.shop?.name || '');
+    setFormValue('shop_address', samplePayload.shop?.address || '');
+    setFormValue('shop_phone', samplePayload.shop?.phone || '');
+    setFormValue('shop_email', samplePayload.shop?.email || '');
+    setFormValue('client_name', samplePayload.client?.name || '');
+    setFormValue('client_address', samplePayload.client?.address || '');
+    setFormValue('client_phone', samplePayload.client?.phone || '');
+    setFormValue('client_email', samplePayload.client?.email || '');
+    setFormValue('repair_order_number', samplePayload.vehicle?.repair_order_number || '');
+    setFormValue('received_date', samplePayload.vehicle?.received_date || '');
+    setFormValue('promised_completion_date', samplePayload.vehicle?.promised_completion_date || '');
+    setFormValue('vehicle_year', samplePayload.vehicle?.year || '');
+    setFormValue('vehicle_make', samplePayload.vehicle?.make || '');
+    setFormValue('vehicle_model', samplePayload.vehicle?.model || '');
+    setFormValue('vehicle_vin', samplePayload.vehicle?.vin || '');
+    setFormValue('vehicle_mileage', samplePayload.vehicle?.mileage || '');
+    setFormValue('vehicle_plate', samplePayload.vehicle?.plate || '');
+    setFormValue('vehicle_color', samplePayload.vehicle?.color || '');
+    setFormValue('complaint', samplePayload.intake?.complaint || '');
+    setFormValue('requested_service', samplePayload.intake?.requested_service || '');
+    setFormValue('technician_notes', samplePayload.intake?.technician_notes || '');
+    setFormValue('inspection_notes', samplePayload.intake?.inspection_notes || '');
+    setFormValue('technician_name', samplePayload.intake?.technician_name || '');
+    setFormValue('service_advisor', samplePayload.intake?.service_advisor || '');
+    setFormValue('dropped_off_by', samplePayload.intake?.dropped_off_by || '');
+    setFormValue('keys_received', samplePayload.intake?.keys_received || '');
+    setFormValue('authorization_name', samplePayload.intake?.authorization_name || '');
+    setFormValue('authorization_date', samplePayload.intake?.authorization_date || '');
+    setFormValue('diagnosis_acknowledged', !!samplePayload.intake?.diagnosis_acknowledged);
+    setFormValue('notes', samplePayload.notes || '');
+    if (samplePayload.template_key) {
+      const radio = form.querySelector(`[name="template_key"][value="${samplePayload.template_key}"]`);
+      if (radio) radio.checked = true;
+    }
+    saveDraft();
+    queuePreview();
+  }
+
+  function clearForm() {
+    form.reset();
+    localStorage.removeItem(storageKey);
+    clearErrors();
+    queuePreview();
+  }
+
+  async function updatePreview() {
+    clearErrors();
+    const fd = new FormData(form);
+    try {
+      const resp = await fetch('{{ url_for("repair_order_template_preview") }}', {
+        method: 'POST',
+        body: fd,
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        showErrors(data.errors || {});
+        return;
+      }
+      const blob = await resp.blob();
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(blob);
+      previewFrame.src = previewUrl;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function queuePreview() {
+    saveDraft();
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = setTimeout(updatePreview, 260);
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearErrors();
+    downloadBtn.disabled = true;
+    const originalText = downloadBtn.innerHTML;
+    downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Preparing PDF';
+    try {
+      const resp = await fetch('{{ url_for("repair_order_template_pdf") }}', {
+        method: 'POST',
+        body: new FormData(form),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        showErrors(data.errors || {});
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'repair-order.pdf';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      downloadBtn.disabled = false;
+      downloadBtn.innerHTML = originalText;
+    }
+  });
+
+  form.addEventListener('input', queuePreview);
+  form.addEventListener('change', queuePreview);
+
+  document.getElementById('sampleBtn').addEventListener('click', loadSampleData);
+  document.getElementById('clearBtn').addEventListener('click', clearForm);
+
+  if (!loadDraft()) {
+    loadSampleData();
+  } else {
+    queuePreview();
+  }
+})();
+</script>
+{% endblock %}
