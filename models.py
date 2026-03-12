@@ -779,6 +779,26 @@ class EmailSuppression(Base):
     user: Mapped["User"] = relationship(back_populates="email_suppressions")
 
 
+class SiteActivity(Base):
+    __tablename__ = "site_activity"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    path: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False, default="page_view", index=True)
+    method: Mapped[str] = mapped_column(String(10), nullable=False, default="GET")
+    is_authenticated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    visitor_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    referrer_host: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    user: Mapped[Optional["User"]] = relationship()
+
+
 class BusinessExpense(Base):
     __tablename__ = "business_expenses"
 

@@ -3,6 +3,7 @@ import os
 import re
 import io
 import json
+import textwrap
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -117,6 +118,439 @@ def _business_header_info_lines(owner: User | None) -> list[str]:
         if email:
             lines.append(email)
     return lines
+
+
+FREE_INVOICE_TEMPLATES = {
+    "classic_shop": {
+        "label": "Classic Shop",
+        "desc": "Traditional repair shop invoice with clear sections and strong totals.",
+        "accent": colors.HexColor("#143763"),
+        "accent_soft": colors.HexColor("#e7effc"),
+        "header_fill": colors.HexColor("#143763"),
+        "header_text": colors.white,
+        "table_fill": colors.HexColor("#eef4ff"),
+    },
+    "modern_clean": {
+        "label": "Modern Clean",
+        "desc": "Minimal modern layout with lighter dividers and crisp grouping.",
+        "accent": colors.HexColor("#087a6b"),
+        "accent_soft": colors.HexColor("#e2f5f1"),
+        "header_fill": colors.HexColor("#f4f8fb"),
+        "header_text": colors.HexColor("#0b1429"),
+        "table_fill": colors.HexColor("#edf7f5"),
+    },
+    "detailed_service": {
+        "label": "Detailed Service",
+        "desc": "Service-focused layout with a dedicated vehicle box and detailed footer.",
+        "accent": colors.HexColor("#9a6818"),
+        "accent_soft": colors.HexColor("#fff3df"),
+        "header_fill": colors.HexColor("#1d2735"),
+        "header_text": colors.white,
+        "table_fill": colors.HexColor("#f5efe6"),
+    },
+}
+
+
+def _free_invoice_wrap(pdf: canvas.Canvas, text: str, x: float, y: float, width: float, *, font="Helvetica", size=10, leading=13, color=colors.black):
+    txt = (text or "").strip()
+    if not txt:
+        return y
+    pdf.setFont(font, size)
+    pdf.setFillColor(color)
+    style = ParagraphStyle(
+        "free_invoice_wrap",
+        fontName=font,
+        fontSize=size,
+        leading=leading,
+        textColor=color,
+        spaceAfter=0,
+        spaceBefore=0,
+    )
+    safe_lines = []
+    for line in txt.splitlines():
+        clean = line.strip()
+        if not clean:
+            continue
+        safe_lines.append(
+            clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
+    para = Paragraph("<br/>".join(safe_lines) or txt, style)
+    _, h = para.wrap(width, 500)
+    para.drawOn(pdf, x, y - h)
+    return y - h
+
+
+def _free_invoice_text_lines(text: str | None) -> list[str]:
+    return [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+
+
+def _free_invoice_money(value: float) -> str:
+    return _money(round(float(value or 0.0), 2))
+
+
+def _free_invoice_group_items(line_items: list[dict]) -> list[tuple[str, list[dict]]]:
+    labor = [item for item in line_items if (item.get("type") or "labor").strip().lower() == "labor"]
+    parts = [item for item in line_items if (item.get("type") or "").strip().lower() == "parts"]
+    fees = [item for item in line_items if (item.get("type") or "").strip().lower() == "fees"]
+    groups: list[tuple[str, list[dict]]] = []
+    if labor:
+        groups.append(("Labor / Services", labor))
+    combo = parts + fees
+    if combo:
+        groups.append(("Parts / Shop Supplies", combo))
+    return groups or [("Repair Line Items", line_items)]
+
+
+def generate_free_invoice_pdf(data: dict) -> bytes:
+    template_key = (data.get("template_key") or "classic_shop").strip().lower()
+    cfg = FREE_INVOICE_TEMPLATES.get(template_key, FREE_INVOICE_TEMPLATES["classic_shop"])
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=LETTER)
+    page_w, page_h = LETTER
+    margin = 0.65 * inch
+    content_w = page_w - (margin * 2)
+    y = page_h - margin
+
+    shop = data.get("shop", {})
+    client = data.get("client", {})
+    vehicle = data.get("vehicle", {})
+    totals = data.get("totals", {})
+    line_items = data.get("line_items", [])
+    notes = (data.get("notes") or "").strip()
+    today_label = (data.get("invoice_date") or "").strip()
+    invoice_number = (data.get("invoice_number") or "AUTO-1001").strip()
+    logo_bytes = data.get("logo_bytes")
+
+    def section_label(label: str, sx: float, sy: float, *, accent=None, size=11):
+        pdf.setFillColor(accent or cfg["accent"])
+        pdf.setFont("Helvetica-Bold", size)
+        pdf.drawString(sx, sy, label.upper())
+
+    def field_lines(block: dict, keys: list[str]) -> list[str]:
+        lines = []
+        for key in keys:
+            value = (block.get(key) or "").strip()
+            if value:
+                lines.extend(_free_invoice_text_lines(value))
+        return lines
+
+    def draw_logo(x: float, top_y: float, *, box_w=0.9 * inch, box_h=0.9 * inch) -> float:
+        if not logo_bytes:
+            return 0.0
+        try:
+            logo_reader = ImageReader(io.BytesIO(logo_bytes))
+            pdf.drawImage(logo_reader, x, top_y - box_h, width=box_w, height=box_h, preserveAspectRatio=True, mask="auto")
+            return box_w + 12
+        except Exception:
+            return 0.0
+
+    def draw_footer(base_y: float):
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(margin, base_y, margin + content_w, base_y)
+        pdf.setFillColor(colors.HexColor("#425f8d"))
+        pdf.setFont("Helvetica-Bold", 9.5)
+        pdf.drawString(margin, base_y - 14, "Created with InvoiceRunner")
+        pdf.setFont("Helvetica", 8.5)
+        footer_lines = [
+            "Free invoicing software for repair shops",
+            "Need to save invoices, email clients, and get paid online? Try InvoiceRunner",
+            "invoicerunner.com",
+        ]
+        fy = base_y - 28
+        for line in footer_lines:
+            pdf.drawString(margin, fy, line)
+            fy -= 11
+
+    vehicle_lines = []
+    vehicle_id = " ".join(p for p in [vehicle.get("year"), vehicle.get("make"), vehicle.get("model")] if (p or "").strip()).strip()
+    if vehicle_id:
+        vehicle_lines.append(vehicle_id)
+    for label, key in [("VIN", "vin"), ("Mileage", "mileage"), ("Plate", "plate")]:
+        value = (vehicle.get(key) or "").strip()
+        if value:
+            vehicle_lines.append(f"{label}: {value}")
+    client_lines = field_lines(client, ["name", "address", "phone", "email"])
+
+    def draw_grouped_tables(start_y: float, *, left_x: float, table_width: float, section_fill=None, section_text=colors.HexColor("#0b1429"), compact=False) -> float:
+        row_h = 0.33 * inch if compact else 0.36 * inch
+        desc_w = table_width * 0.52
+        qty_w = table_width * 0.14
+        unit_w = table_width * 0.16
+        cols = [left_x, left_x + desc_w, left_x + desc_w + qty_w, left_x + desc_w + qty_w + unit_w, left_x + table_width]
+        yy = start_y
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        groups = _free_invoice_group_items(line_items)
+        for idx, (group_label, items) in enumerate(groups):
+            section_label(group_label, left_x, yy)
+            yy -= 14
+            if section_fill:
+                pdf.setFillColor(section_fill)
+                pdf.roundRect(left_x, yy - row_h, table_width, row_h, 8, fill=1, stroke=0)
+                pdf.setFillColor(section_text)
+            else:
+                pdf.setFillColor(cfg["table_fill"])
+                pdf.rect(left_x, yy - row_h, table_width, row_h, fill=1, stroke=0)
+                pdf.setFillColor(colors.HexColor("#0b1429"))
+            pdf.setFont("Helvetica-Bold", 10)
+            pdf.drawString(cols[0] + 10, yy - 15, "Description")
+            pdf.drawRightString(cols[2] - 10, yy - 15, "Qty")
+            pdf.drawRightString(cols[3] - 10, yy - 15, "Unit Price")
+            pdf.drawRightString(cols[4] - 10, yy - 15, "Line Total")
+            yy -= row_h
+            pdf.setFont("Helvetica", 10)
+            pdf.setFillColor(colors.HexColor("#0b1429"))
+            min_rows = max(3, len(items))
+            for row_idx in range(min_rows):
+                item = items[row_idx] if row_idx < len(items) else None
+                yy -= row_h
+                pdf.line(left_x, yy, left_x + table_width, yy)
+                if not item:
+                    continue
+                desc = (item.get("description") or "").strip()
+                qty = float(item.get("quantity") or 0.0)
+                unit = float(item.get("unit_price") or 0.0)
+                line_total = float(item.get("line_total") or 0.0)
+                desc_lines = textwrap.wrap(desc, width=44 if table_width > 400 else 28)[:2] or [""]
+                pdf.drawString(cols[0] + 10, yy + 11, desc_lines[0])
+                if len(desc_lines) > 1:
+                    pdf.setFillColor(colors.HexColor("#5f6f86"))
+                    pdf.setFont("Helvetica", 8.5)
+                    pdf.drawString(cols[0] + 10, yy + 1.5, desc_lines[1])
+                    pdf.setFillColor(colors.HexColor("#0b1429"))
+                    pdf.setFont("Helvetica", 10)
+                pdf.drawRightString(cols[2] - 10, yy + 9, f"{qty:g}")
+                pdf.drawRightString(cols[3] - 10, yy + 9, _free_invoice_money(unit))
+                pdf.drawRightString(cols[4] - 10, yy + 9, _free_invoice_money(line_total))
+            if idx != len(groups) - 1:
+                yy -= 12
+        return yy
+
+    if template_key == "modern_clean":
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(margin, y - 72, page_w - margin, y - 72)
+        logo_offset_x = draw_logo(margin, y - 6)
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 24)
+        pdf.drawString(margin + logo_offset_x, y - 8, (shop.get("name") or "Repair Shop Invoice").strip())
+        pdf.setFont("Helvetica", 10.5)
+        info_y = y - 28
+        for line in field_lines(shop, ["address", "phone", "email"])[:4]:
+            pdf.drawString(margin + logo_offset_x, info_y, line)
+            info_y -= 13
+        pdf.setFillColor(cfg["accent"])
+        pdf.setFont("Helvetica-Bold", 30)
+        pdf.drawRightString(page_w - margin, y - 6, "INVOICE")
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica", 11)
+        pdf.drawRightString(page_w - margin, y - 32, f"Invoice #: {invoice_number}")
+        pdf.drawRightString(page_w - margin, y - 48, f"Date: {today_label}")
+        y -= 94
+
+        col_gap = 22
+        col_w = (content_w - col_gap) / 2
+        section_label("Client", margin, y)
+        section_label("Vehicle / Service", margin + col_w + col_gap, y)
+        pdf.setFillColor(colors.HexColor("#223b66"))
+        pdf.setFont("Helvetica", 10.5)
+        line_y = y - 18
+        for line in client_lines[:5]:
+            pdf.drawString(margin, line_y, line)
+            line_y -= 14
+        line_y = y - 18
+        for line in vehicle_lines[:5]:
+            pdf.drawString(margin + col_w + col_gap, line_y, line)
+            line_y -= 14
+        y -= 94
+
+        y = draw_grouped_tables(y, left_x=margin, table_width=content_w, section_fill=colors.HexColor("#f3f7fb"), section_text=colors.HexColor("#0b1429"))
+        y -= 16
+
+        notes_w = content_w * 0.56
+        totals_w = content_w - notes_w - 18
+        pdf.setStrokeColor(colors.HexColor("#d5dfef"))
+        pdf.roundRect(margin, y - 112, notes_w, 112, 10, fill=0, stroke=1)
+        pdf.roundRect(page_w - margin - totals_w, y - 112, totals_w, 112, 10, fill=0, stroke=1)
+        section_label("Notes", margin + 12, y - 18)
+        _free_invoice_wrap(pdf, notes or "Thank you for the opportunity to service your vehicle.", margin + 12, y - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
+        section_label("Amount due", page_w - margin - totals_w + 12, y - 18)
+        row_y = y - 44
+        for idx, (label, value) in enumerate([
+            ("Subtotal", _free_invoice_money(float(totals.get("subtotal") or 0.0))),
+            ("Tax", _free_invoice_money(float(totals.get("tax_amount") or 0.0))),
+            ("Total", _free_invoice_money(float(totals.get("total") or 0.0))),
+        ]):
+            is_final = idx == 2
+            pdf.setFont("Helvetica-Bold" if is_final else "Helvetica", 11 if is_final else 10.5)
+            pdf.drawString(page_w - margin - totals_w + 12, row_y, label)
+            pdf.drawRightString(page_w - margin - 12, row_y, value)
+            row_y -= 18
+        draw_footer(y - 128)
+
+    elif template_key == "detailed_service":
+        logo_offset_x = draw_logo(margin, y - 6, box_w=0.82 * inch, box_h=0.82 * inch)
+        left_text_x = margin + logo_offset_x
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 24)
+        pdf.drawString(left_text_x, y - 6, (shop.get("name") or "Repair Shop Invoice").strip())
+        pdf.setFont("Helvetica", 10.5)
+        info_y = y - 28
+        for line in field_lines(shop, ["address", "phone", "email"])[:4]:
+            pdf.drawString(left_text_x, info_y, line)
+            info_y -= 13
+        pdf.setFillColor(cfg["accent"])
+        pdf.setFont("Helvetica-Bold", 28)
+        pdf.drawRightString(page_w - margin, y - 6, "INVOICE")
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(page_w - margin, y - 28, f"Invoice #: {invoice_number}")
+        pdf.drawRightString(page_w - margin, y - 44, f"Date: {today_label}")
+        y -= 78
+
+        service_w = page_w - margin - left_text_x
+        pdf.setFillColor(cfg["accent_soft"])
+        pdf.roundRect(left_text_x, y - 58, service_w, 58, 14, fill=1, stroke=0)
+        section_label("Vehicle / Service", left_text_x + 14, y - 18)
+        pdf.setFillColor(colors.HexColor("#223b66"))
+        pdf.setFont("Helvetica", 10.5)
+        vehicle_text = "  •  ".join(vehicle_lines[:4]) if vehicle_lines else "Vehicle details"
+        pdf.drawString(left_text_x + 14, y - 38, vehicle_text[:145])
+        y -= 78
+
+        pdf.setStrokeColor(cfg["accent"])
+        pdf.setLineWidth(1.25)
+        pdf.roundRect(left_text_x, y - 102, service_w, 102, 12, fill=0, stroke=1)
+        section_label("Client", left_text_x + 12, y - 18)
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica", 10.5)
+        line_y = y - 38
+        for line in client_lines[:5]:
+            pdf.drawString(left_text_x + 12, line_y, line)
+            line_y -= 13
+        y -= 118
+
+        y = draw_grouped_tables(y, left_x=left_text_x, table_width=service_w, section_fill=cfg["header_fill"], section_text=colors.white, compact=True)
+        y -= 14
+        notes_w = service_w * 0.58
+        pdf.setStrokeColor(cfg["accent"])
+        pdf.roundRect(left_text_x, y - 112, notes_w, 112, 14, fill=0, stroke=1)
+        section_label("Notes", left_text_x + 12, y - 18)
+        _free_invoice_wrap(pdf, notes or "Detailed service notes, warranty language, and customer instructions.", left_text_x + 12, y - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
+        strip_x = left_text_x + notes_w + 16
+        strip_w = service_w - notes_w - 16
+        pdf.setFillColor(cfg["header_fill"])
+        pdf.roundRect(strip_x, y - 112, strip_w, 112, 16, fill=1, stroke=0)
+        pdf.setFillColor(colors.white)
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawString(strip_x + 14, y - 24, "TOTAL DUE")
+        pdf.setFont("Helvetica", 10.5)
+        row_y = y - 48
+        for idx, (label, value) in enumerate([
+            ("Subtotal", _free_invoice_money(float(totals.get("subtotal") or 0.0))),
+            ("Tax", _free_invoice_money(float(totals.get("tax_amount") or 0.0))),
+            ("Total", _free_invoice_money(float(totals.get("total") or 0.0))),
+        ]):
+            is_final = idx == 2
+            pdf.setFont("Helvetica-Bold" if is_final else "Helvetica", 13 if is_final else 10.5)
+            pdf.drawString(strip_x + 14, row_y, label)
+            pdf.drawRightString(strip_x + strip_w - 14, row_y, value)
+            row_y -= 20
+        footer_y = y - 128
+        pdf.setStrokeColor(colors.HexColor("#d7e0ee"))
+        pdf.line(left_text_x, footer_y, page_w - margin, footer_y)
+        pdf.setFillColor(colors.HexColor("#425f8d"))
+        pdf.setFont("Helvetica-Bold", 9.5)
+        pdf.drawString(left_text_x, footer_y - 14, "Created with InvoiceRunner")
+        pdf.setFont("Helvetica", 8.5)
+        footer_lines = [
+            "Free invoicing software for repair shops",
+            "Need to save invoices, email clients, and get paid online? Try InvoiceRunner",
+            "invoicerunner.com",
+        ]
+        fy = footer_y - 28
+        for line in footer_lines:
+            pdf.drawString(left_text_x, fy, line)
+            fy -= 11
+
+    else:
+        header_h = 1.2 * inch
+        pdf.setFillColor(cfg["header_fill"])
+        pdf.roundRect(margin, y - header_h, content_w, header_h, 16, fill=1, stroke=0)
+        pdf.setFillColor(cfg["header_text"])
+        logo_offset_x = draw_logo(margin + 18, y - 6)
+        pdf.setFont("Helvetica-Bold", 22)
+        pdf.drawString(margin + 18 + logo_offset_x, y - 30, (shop.get("name") or "Repair Shop Invoice").strip())
+        pdf.setFont("Helvetica", 10)
+        info_y = y - 48
+        for line in field_lines(shop, ["address", "phone", "email"])[:3]:
+            pdf.drawString(margin + 18 + logo_offset_x, info_y, line)
+            info_y -= 12
+        pdf.setFont("Helvetica-Bold", 26)
+        title_w = stringWidth("INVOICE", "Helvetica-Bold", 26)
+        pdf.drawString(page_w - margin - title_w - 18, y - 34, "INVOICE")
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(page_w - margin - 18, y - 54, f"Invoice #: {invoice_number}")
+        pdf.drawRightString(page_w - margin - 18, y - 69, f"Date: {today_label}")
+        y -= header_h + 18
+
+        col_gap = 14
+        col_w = (content_w - col_gap) / 2
+        box_h = 1.45 * inch
+        left_x = margin
+        right_x = margin + col_w + col_gap
+        for bx in (left_x, right_x):
+            pdf.setStrokeColor(cfg["accent"])
+            pdf.setLineWidth(1.4)
+            pdf.roundRect(bx, y - box_h, col_w, box_h, 14, fill=0, stroke=1)
+        section_label("Client", left_x + 12, y - 18)
+        section_label("Vehicle / Service", right_x + 12, y - 18)
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        pdf.setFont("Helvetica", 11)
+        line_y = y - 40
+        for line in client_lines[:5]:
+            pdf.drawString(left_x + 12, line_y, line)
+            line_y -= 14
+        line_y = y - 40
+        for line in vehicle_lines[:5]:
+            pdf.drawString(right_x + 12, line_y, line)
+            line_y -= 14
+        y -= box_h + 18
+
+        y = draw_grouped_tables(y, left_x=margin, table_width=content_w)
+        y -= 12
+        totals_w = content_w * 0.35
+        notes_w = content_w - totals_w - 16
+        notes_h = 1.35 * inch
+        totals_h = 1.35 * inch
+        notes_x = margin
+        totals_x = page_w - margin - totals_w
+        notes_y = y - notes_h
+        totals_y = y - totals_h
+        pdf.setStrokeColor(cfg["accent"])
+        pdf.roundRect(notes_x, notes_y, notes_w, notes_h, 14, fill=0, stroke=1)
+        pdf.roundRect(totals_x, totals_y, totals_w, totals_h, 14, fill=0, stroke=1)
+        section_label("Notes", notes_x + 12, notes_y + notes_h - 18)
+        _free_invoice_wrap(pdf, notes or "Thank you for trusting us with your repair work. Please retain this invoice for your records.", notes_x + 12, notes_y + notes_h - 38, notes_w - 24, font="Helvetica", size=10, leading=13, color=colors.HexColor("#223b66"))
+        section_label("Totals", totals_x + 12, totals_y + totals_h - 18)
+        pdf.setFont("Helvetica", 10.5)
+        pdf.setFillColor(colors.HexColor("#0b1429"))
+        row_y = totals_y + totals_h - 40
+        for idx, (label, value) in enumerate([
+            ("Subtotal", _free_invoice_money(float(totals.get("subtotal") or 0.0))),
+            ("Tax", _free_invoice_money(float(totals.get("tax_amount") or 0.0))),
+            ("Total", _free_invoice_money(float(totals.get("total") or 0.0))),
+        ]):
+            is_final = idx == 2
+            pdf.setFont("Helvetica-Bold" if is_final else "Helvetica", 11 if is_final else 10.5)
+            pdf.drawString(totals_x + 12, row_y, label)
+            pdf.drawRightString(totals_x + totals_w - 12, row_y, value)
+            row_y -= 18
+        draw_footer(min(notes_y, totals_y) - 16)
+
+    pdf.showPage()
+    pdf.save()
+    buf.seek(0)
+    return buf.getvalue()
 
 
 _PAYMENT_METHOD_META = {

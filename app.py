@@ -48,8 +48,9 @@ from models import (
     ScheduleEvent, AuditLog, BusinessExpense, BusinessExpenseEntry, BusinessExpenseEntrySplit,
     InvoiceDesignTemplate, EmailTemplate, CustomProfessionPreset, Contract, IncomeEntry,
     MarketingCampaign, MarketingCampaignRecipient, EmailSuppression,
+    SiteActivity,
 )
-from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf
+from pdf_service import generate_and_store_pdf, generate_profit_loss_pdf, generate_free_invoice_pdf, FREE_INVOICE_TEMPLATES
 
 login_manager = LoginManager()
 login_manager.login_view = "login"
@@ -178,6 +179,180 @@ def _invoice_due_with_late_fee(inv: Invoice, owner: User | None, *, as_of: datet
 def _portal_tip_amount(raw_value, *, max_amount: float = 10000.0) -> float:
     tip = round(max(0.0, _to_float(raw_value, 0.0)), 2)
     return min(tip, max_amount)
+
+
+def _free_invoice_clean_text(value, *, max_len: int = 240) -> str:
+    txt = (value or "").strip()
+    txt = re.sub(r"[^\S\r\n]+", " ", txt)
+    return txt[:max_len]
+
+
+def _free_invoice_clean_multiline(value, *, max_len: int = 1200) -> str:
+    txt = (value or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [_free_invoice_clean_text(line, max_len=180) for line in txt.split("\n")]
+    return "\n".join(line for line in lines if line).strip()[:max_len]
+
+
+def _free_invoice_sample_payload() -> dict:
+    return {
+        "template_key": "classic_shop",
+        "shop": {
+            "name": "Summit Auto Service",
+            "address": "123 Garage Lane\nBozeman, MT 59715",
+            "phone": "(406) 555-0198",
+            "email": "service@summitautoservice.com",
+        },
+        "client": {
+            "name": "Megan Foster",
+            "address": "88 Cottonwood Dr\nBelgrade, MT 59714",
+            "phone": "(406) 555-0174",
+            "email": "meganfoster@example.com",
+        },
+        "vehicle": {
+            "invoice_number": "MECH-1027",
+            "invoice_date": date.today().strftime("%Y-%m-%d"),
+            "year": "2018",
+            "make": "Subaru",
+            "model": "Outback",
+            "vin": "4S4BSANC0J3294411",
+            "mileage": "126,220",
+            "plate": "MT 6-54R2",
+        },
+        "tax_rate": "8.0",
+        "notes": "Thank you for choosing Summit Auto Service.\nPayment due on receipt. Labor carries a 12-month / 12,000-mile workmanship warranty unless otherwise noted.",
+        "line_items": [
+            {"type": "labor", "description": "Diagnostic inspection and battery / charging system test", "quantity": "1", "unit_price": "85.00"},
+            {"type": "labor", "description": "Front brake pad replacement labor", "quantity": "1.5", "unit_price": "110.00"},
+            {"type": "parts", "description": "Premium ceramic brake pads", "quantity": "1", "unit_price": "129.95"},
+            {"type": "fees", "description": "Shop supplies and disposal", "quantity": "1", "unit_price": "18.00"},
+        ],
+    }
+
+
+def _free_invoice_template_cards() -> list[dict]:
+    return [
+        {
+            "key": "classic_shop",
+            "name": "Classic Shop",
+            "desc": "Traditional repair-shop layout with strong sections.",
+            "preview": "images/pdf_template_classic.svg",
+        },
+        {
+            "key": "modern_clean",
+            "name": "Modern Clean",
+            "desc": "Clean modern invoice for mobile mechanics and service bays.",
+            "preview": "images/pdf_template_modern.svg",
+        },
+        {
+            "key": "detailed_service",
+            "name": "Detailed Service",
+            "desc": "Service-focused view with extra room for vehicle details and notes.",
+            "preview": "images/pdf_template_split.svg",
+        },
+    ]
+
+
+def _free_invoice_parse_payload(form, files=None) -> tuple[dict, dict]:
+    shop = {
+        "name": _free_invoice_clean_text(form.get("shop_name"), max_len=120),
+        "address": _free_invoice_clean_multiline(form.get("shop_address"), max_len=300),
+        "phone": _free_invoice_clean_text(form.get("shop_phone"), max_len=40),
+        "email": _free_invoice_clean_text(form.get("shop_email"), max_len=120),
+    }
+    client = {
+        "name": _free_invoice_clean_text(form.get("client_name"), max_len=120),
+        "address": _free_invoice_clean_multiline(form.get("client_address"), max_len=300),
+        "phone": _free_invoice_clean_text(form.get("client_phone"), max_len=40),
+        "email": _free_invoice_clean_text(form.get("client_email"), max_len=120),
+    }
+    vehicle = {
+        "invoice_number": _free_invoice_clean_text(form.get("invoice_number"), max_len=40),
+        "invoice_date": _free_invoice_clean_text(form.get("invoice_date"), max_len=24),
+        "year": _free_invoice_clean_text(form.get("vehicle_year"), max_len=8),
+        "make": _free_invoice_clean_text(form.get("vehicle_make"), max_len=40),
+        "model": _free_invoice_clean_text(form.get("vehicle_model"), max_len=50),
+        "vin": _free_invoice_clean_text(form.get("vehicle_vin"), max_len=40),
+        "mileage": _free_invoice_clean_text(form.get("vehicle_mileage"), max_len=24),
+        "plate": _free_invoice_clean_text(form.get("vehicle_plate"), max_len=24),
+    }
+    line_items = []
+    descriptions = form.getlist("line_description[]")
+    types = form.getlist("line_type[]")
+    quantities = form.getlist("line_quantity[]")
+    unit_prices = form.getlist("line_unit_price[]")
+    for item_type, desc, qty_raw, unit_raw in zip(types, descriptions, quantities, unit_prices):
+        desc_clean = _free_invoice_clean_text(desc, max_len=160)
+        qty = max(0.0, min(9999.0, _to_float(qty_raw, 0.0)))
+        unit_price = max(0.0, min(100000.0, _to_float(unit_raw, 0.0)))
+        if not desc_clean and qty <= 0 and unit_price <= 0:
+            continue
+        item_type = (item_type or "labor").strip().lower()
+        if item_type not in {"labor", "parts", "fees"}:
+            item_type = "labor"
+        line_items.append({
+            "type": item_type,
+            "description": desc_clean or "Service item",
+            "quantity": round(qty, 2),
+            "unit_price": round(unit_price, 2),
+            "line_total": round(qty * unit_price, 2),
+        })
+    tax_rate = max(0.0, min(25.0, _to_float(form.get("tax_rate"), 0.0)))
+    subtotal = round(sum(item["line_total"] for item in line_items), 2)
+    tax_amount = round(subtotal * (tax_rate / 100.0), 2)
+    total = round(subtotal + tax_amount, 2)
+    errors = {}
+    logo_bytes = None
+    logo_file = None
+    if files is not None:
+        try:
+            logo_file = files.get("shop_logo")
+        except Exception:
+            logo_file = None
+    if logo_file and getattr(logo_file, "filename", ""):
+        try:
+            raw = logo_file.read()
+            if raw:
+                if len(raw) > 2 * 1024 * 1024:
+                    errors["shop_logo"] = "Logo file must be 2MB or smaller."
+                else:
+                    img = Image.open(io.BytesIO(raw))
+                    img.verify()
+                    logo_bytes = raw
+        except UnidentifiedImageError:
+            errors["shop_logo"] = "Upload a valid PNG, JPG, or WEBP logo."
+        except Exception:
+            errors["shop_logo"] = "We could not read that logo file."
+    if not shop["name"]:
+        errors["shop_name"] = "Shop name is required."
+    if not client["name"]:
+        errors["client_name"] = "Client name is required."
+    if not vehicle["invoice_number"]:
+        errors["invoice_number"] = "Invoice number is required."
+    if not vehicle["invoice_date"]:
+        errors["invoice_date"] = "Invoice date is required."
+    if not line_items:
+        errors["line_items"] = "Add at least one labor, parts, or service line item."
+    payload = {
+        "template_key": (form.get("template_key") or "classic_shop").strip().lower(),
+        "shop": shop,
+        "client": client,
+        "vehicle": vehicle,
+        "invoice_number": vehicle["invoice_number"],
+        "invoice_date": vehicle["invoice_date"],
+        "tax_rate": round(tax_rate, 2),
+        "line_items": line_items,
+        "notes": _free_invoice_clean_multiline(form.get("notes"), max_len=1200),
+        "logo_bytes": logo_bytes,
+        "totals": {
+            "subtotal": subtotal,
+            "tax_rate": round(tax_rate, 2),
+            "tax_amount": tax_amount,
+            "total": total,
+        },
+    }
+    if payload["template_key"] not in FREE_INVOICE_TEMPLATES:
+        payload["template_key"] = "classic_shop"
+    return payload, errors
 
 
 def _sync_customer_payment_method(
@@ -4213,6 +4388,32 @@ def _migrate_business_expense_entry_date(engine):
             pass
 
 
+def _migrate_site_activity(engine):
+    if not _table_exists(engine, "site_activity"):
+        try:
+            Base.metadata.create_all(bind=engine, tables=[SiteActivity.__table__])
+        except Exception:
+            pass
+        return
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS site_activity_path_idx ON site_activity (path)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS site_activity_event_type_idx ON site_activity (event_type)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS site_activity_created_at_idx ON site_activity (created_at)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS site_activity_visitor_hash_idx ON site_activity (visitor_hash)"
+            ))
+        pass
+    except Exception:
+        pass
+
+
 # -----------------------------
 # App factory
 # -----------------------------
@@ -4278,6 +4479,7 @@ def create_app():
     _migrate_user_billing_fields(engine)
     _migrate_user_employee_fields(engine)
     _migrate_user_security_fields(engine)
+    _migrate_site_activity(engine)
     _migrate_user_referral_fields(engine)
     _migrate_customers(engine)
     _migrate_customers_unique_name_ci(engine)
@@ -4313,6 +4515,68 @@ def create_app():
         if not email:
             return False
         return email in _marketing_admin_email_set()
+
+    def _site_activity_visitor_hash() -> str:
+        secret = app.config.get("SECRET_KEY", "") or "invoicerunner-site-activity"
+        forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        remote = forwarded or (request.remote_addr or "")
+        ua = request.headers.get("User-Agent", "") or ""
+        basis = f"{remote}|{ua}|{secret}"
+        return hashlib.sha256(basis.encode("utf-8")).hexdigest()
+
+    def _track_site_activity(
+        path: str,
+        *,
+        event_type: str = "page_view",
+        method: str | None = None,
+        user_id: int | None = None,
+        is_authenticated: bool | None = None,
+    ) -> None:
+        path = (path or "").strip()[:255]
+        if not path or path.startswith("/static/"):
+            return
+        referrer_host = ""
+        try:
+            ref = (request.referrer or "").strip()
+            if ref:
+                referrer_host = urllib.parse.urlparse(ref).netloc[:255]
+        except Exception:
+            referrer_host = ""
+        try:
+            with db_session() as s:
+                s.add(
+                    SiteActivity(
+                        user_id=user_id,
+                        path=path,
+                        event_type=(event_type or "page_view")[:40],
+                        method=(method or request.method or "GET")[:10],
+                        is_authenticated=bool(current_user.is_authenticated) if is_authenticated is None else bool(is_authenticated),
+                        visitor_hash=_site_activity_visitor_hash(),
+                        referrer_host=referrer_host or None,
+                    )
+                )
+                s.commit()
+        except Exception as exc:
+            print(f"[SITE_ACTIVITY] track failed: {exc!r}", flush=True)
+
+    @app.after_request
+    def _capture_site_activity(response):
+        try:
+            path = (request.path or "").strip()
+            content_type = (response.content_type or "").lower()
+            if request.method == "GET" and response.status_code < 400 and "text/html" in content_type:
+                if path not in {"/favicon.ico"} and not path.startswith("/static/"):
+                    user_id = _current_actor_user_id_int() if current_user.is_authenticated else None
+                    _track_site_activity(
+                        path,
+                        event_type="page_view",
+                        method="GET",
+                        user_id=user_id,
+                        is_authenticated=bool(current_user.is_authenticated),
+                    )
+        except Exception:
+            pass
+        return response
 
     @app.context_processor
     def inject_billing():
@@ -9596,6 +9860,162 @@ def create_app():
         if current_user.is_authenticated:
             return redirect(url_for("customers_list"))
         return render_template("landing.html", title="InvoiceRunner")
+
+    @app.route("/free-invoice")
+    def free_invoice():
+        faq_items = [
+            {
+                "q": "What should a mechanic invoice include?",
+                "a": "A mechanic invoice should include shop information, client information, vehicle details, a clear list of labor and parts, taxes, the final total, and any service notes or warranty language.",
+            },
+            {
+                "q": "Can I create an auto repair invoice for free?",
+                "a": "Yes. This free mechanic invoice template generator lets you build a professional auto repair invoice and download it instantly with no signup required.",
+            },
+            {
+                "q": "Can I download a mechanic invoice as a PDF?",
+                "a": "Yes. Enter your invoice details, choose a layout, preview the invoice in the browser, and download a PDF immediately.",
+            },
+            {
+                "q": "Can I include vehicle information and parts?",
+                "a": "Yes. The tool includes fields for year, make, model, VIN, mileage, plate number, and multiple labor, parts, diagnostics, and shop-supplies line items.",
+            },
+            {
+                "q": "Do I need software or is a template enough?",
+                "a": "A free invoice template is useful for one-off jobs. If you need saved records, repeat client management, reminders, online payments, and workflow tools, invoicing software is the better option.",
+            },
+            {
+                "q": "Is this free tool part of InvoiceRunner?",
+                "a": "Yes. InvoiceRunner built this free invoice generator for repair shops, mobile mechanics, and service businesses that need a quick PDF invoice without creating an account.",
+            },
+        ]
+        faq_schema = {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+                {
+                    "@type": "Question",
+                    "name": item["q"],
+                    "acceptedAnswer": {"@type": "Answer", "text": item["a"]},
+                }
+                for item in faq_items
+            ],
+        }
+        return render_template(
+            "free_invoice.html",
+            title="Free Mechanic Invoice Template | Auto Repair PDF Generator | InvoiceRunner",
+            meta_description="Create a free mechanic invoice template, preview it live, and download an auto repair PDF instantly. Built for repair shops and mobile mechanics with no signup required.",
+            template_cards=_free_invoice_template_cards(),
+            sample_payload=_free_invoice_sample_payload(),
+            faq_items=faq_items,
+            faq_schema=json.dumps(faq_schema),
+        )
+
+    @app.route("/free-invoice/pdf", methods=["POST"])
+    def free_invoice_pdf():
+        payload, errors = _free_invoice_parse_payload(request.form, request.files)
+        if errors:
+            return jsonify({"ok": False, "errors": errors}), 400
+        _track_site_activity("/free-invoice/pdf", event_type="free_invoice_download", method="POST")
+        pdf_bytes = generate_free_invoice_pdf(payload)
+        filename = secure_filename(payload.get("invoice_number") or "mechanic-invoice") or "mechanic-invoice"
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{filename}.pdf",
+        )
+
+    @app.route("/free-invoice/preview", methods=["POST"])
+    def free_invoice_preview():
+        payload, errors = _free_invoice_parse_payload(request.form, request.files)
+        if errors:
+            return jsonify({"ok": False, "errors": errors}), 400
+        _track_site_activity("/free-invoice/preview", event_type="free_invoice_preview", method="POST")
+        pdf_bytes = generate_free_invoice_pdf(payload)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="preview.pdf",
+        )
+
+    @app.get("/settings/analytics")
+    @login_required
+    def site_analytics():
+        with db_session() as s:
+            actor = s.get(User, _current_actor_user_id_int())
+            if not actor or bool(getattr(actor, "is_employee", False)) or not _is_marketing_admin_user(actor):
+                abort(403)
+
+            now_utc = datetime.utcnow()
+            since_30 = now_utc - timedelta(days=30)
+            rows = (
+                s.query(SiteActivity)
+                .filter(SiteActivity.created_at >= since_30)
+                .order_by(SiteActivity.created_at.desc())
+                .all()
+            )
+
+        daily_counts: dict[str, int] = {}
+        page_counts: dict[str, int] = {}
+        event_counts: dict[str, int] = {}
+        referrer_counts: dict[str, int] = {}
+        free_invoice_counts = {
+            "page_views": 0,
+            "previews": 0,
+            "downloads": 0,
+            "unique_visitors": set(),
+        }
+        unique_visitors = set()
+        authenticated_visitors = set()
+
+        for row in rows:
+            day_key = row.created_at.strftime("%Y-%m-%d")
+            daily_counts[day_key] = daily_counts.get(day_key, 0) + 1
+            page_counts[row.path] = page_counts.get(row.path, 0) + 1
+            event_counts[row.event_type] = event_counts.get(row.event_type, 0) + 1
+            if row.referrer_host:
+                referrer_counts[row.referrer_host] = referrer_counts.get(row.referrer_host, 0) + 1
+            if row.visitor_hash:
+                unique_visitors.add(row.visitor_hash)
+                if row.is_authenticated:
+                    authenticated_visitors.add(row.visitor_hash)
+            if row.path.startswith("/free-invoice") or row.event_type.startswith("free_invoice_"):
+                if row.visitor_hash:
+                    free_invoice_counts["unique_visitors"].add(row.visitor_hash)
+                if row.event_type == "page_view" and row.path == "/free-invoice":
+                    free_invoice_counts["page_views"] += 1
+                elif row.event_type == "free_invoice_preview":
+                    free_invoice_counts["previews"] += 1
+                elif row.event_type == "free_invoice_download":
+                    free_invoice_counts["downloads"] += 1
+
+        trend = []
+        for offset in range(29, -1, -1):
+            day = (now_utc - timedelta(days=offset)).strftime("%Y-%m-%d")
+            trend.append({"day": day, "count": daily_counts.get(day, 0)})
+
+        top_pages = sorted(page_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:12]
+        top_referrers = sorted(referrer_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+        event_summary = sorted(event_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        return render_template(
+            "site_analytics.html",
+            title="Site Analytics",
+            total_events=len(rows),
+            unique_visitor_count=len(unique_visitors),
+            authenticated_visitor_count=len(authenticated_visitors),
+            top_pages=top_pages,
+            top_referrers=top_referrers,
+            trend=trend,
+            event_summary=event_summary,
+            free_invoice_summary={
+                "page_views": free_invoice_counts["page_views"],
+                "previews": free_invoice_counts["previews"],
+                "downloads": free_invoice_counts["downloads"],
+                "unique_visitors": len(free_invoice_counts["unique_visitors"]),
+            },
+        )
 
     @app.route("/privacy")
     def privacy():
