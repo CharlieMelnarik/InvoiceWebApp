@@ -9861,6 +9861,14 @@ def create_app():
             return redirect(url_for("customers_list"))
         return render_template("landing.html", title="InvoiceRunner")
 
+    @app.route("/favicon.ico")
+    def favicon():
+        return send_from_directory(
+            os.path.join(app.root_path, "static", "images"),
+            "favicon.ico",
+            mimetype="image/vnd.microsoft.icon",
+        )
+
     @app.route("/free-invoice")
     def free_invoice():
         faq_items = [
@@ -9903,8 +9911,11 @@ def create_app():
         }
         return render_template(
             "free_invoice.html",
-            title="Free Mechanic Invoice Template | Auto Repair PDF Generator | InvoiceRunner",
-            meta_description="Create a free mechanic invoice template, preview it live, and download an auto repair PDF instantly. Built for repair shops and mobile mechanics with no signup required.",
+            title="Free Mechanic Invoice Template Generator | Auto Repair PDF | InvoiceRunner",
+            meta_description="Create a professional auto repair invoice in seconds with this free mechanic invoice template generator. Enter vehicle details, labor, and parts, preview the invoice live, and download a PDF instantly. No signup required.",
+            canonical_url=url_for("free_invoice", _external=True),
+            og_title="Free Mechanic Invoice Template Generator | Auto Repair PDF | InvoiceRunner",
+            og_description="Create a professional mechanic invoice with labor, parts, vehicle details, live PDF preview, and instant download. No signup required.",
             template_cards=_free_invoice_template_cards(),
             sample_payload=_free_invoice_sample_payload(),
             faq_items=faq_items,
@@ -9938,6 +9949,18 @@ def create_app():
             mimetype="application/pdf",
             as_attachment=False,
             download_name="preview.pdf",
+        )
+
+    @app.route("/free-invoice/sample-preview")
+    def free_invoice_sample_preview():
+        payload = _free_invoice_sample_payload()
+        payload["template_key"] = "modern_clean"
+        pdf_bytes = generate_free_invoice_pdf(payload)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="sample-preview.pdf",
         )
 
     @app.get("/settings/analytics")

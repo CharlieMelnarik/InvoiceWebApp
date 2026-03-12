@@ -64,9 +64,33 @@
     border: 1px solid #b6cdeb;
     background: #f8fbff;
   }
+  .free-hero-audience {
+    margin-top: 1rem;
+  }
+  .free-subsection-title {
+    color: #163b6c;
+    margin: 0 0 .7rem;
+    font-size: 1.08rem;
+    font-weight: 800;
+  }
   .free-side-panel {
     display: grid;
     gap: .85rem;
+  }
+  .free-hero-visual {
+    overflow: hidden;
+  }
+  .free-hero-visual img {
+    width: 100%;
+    border-radius: 14px;
+    border: 1px solid #b9cdea;
+    display: block;
+    background: #fff;
+  }
+  .free-hero-visual figcaption {
+    color: #557094;
+    font-size: .9rem;
+    margin-top: .55rem;
   }
   .free-mini-panel {
     border: 1px solid #a8c2e7;
@@ -449,6 +473,32 @@
     padding-left: 1.15rem;
     margin: .5rem 0 0;
   }
+  .free-audience-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: .75rem;
+    margin-top: 1rem;
+  }
+  .free-audience-grid.hero-audience-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 0;
+  }
+  .free-audience-card {
+    border: 1px solid #d2deef;
+    border-radius: 15px;
+    padding: 1rem;
+    background: #fbfdff;
+  }
+  .free-audience-card strong {
+    display: block;
+    margin-bottom: .25rem;
+    color: #123763;
+  }
+  .free-audience-card span {
+    color: #4f678a;
+    line-height: 1.52;
+    font-size: .94rem;
+  }
   .compare-grid,
   .faq-grid {
     display: grid;
@@ -481,6 +531,7 @@
     .preview-bottom,
     .free-benefits,
     .free-trust,
+    .free-audience-grid,
     .compare-grid,
     .faq-grid,
     .template-choice-grid {
@@ -525,7 +576,7 @@
     <div>
       <div class="free-eyebrow"><i class="bi bi-tools"></i> Free tool for repair shops</div>
       <h1>Free Mechanic Invoice Template Generator</h1>
-      <p>Create a professional auto repair invoice, preview it live, and download a PDF instantly. This free mechanic invoice generator is built for repair shops, mobile mechanics, and service businesses that need a polished invoice without creating an account.</p>
+      <p>This free mechanic invoice template generator helps auto repair shops, mobile mechanics, and service businesses create a professional auto repair invoice in minutes. Add parts, labor, vehicle details, and service notes, preview the invoice live, and download a PDF instantly with no signup required.</p>
       <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-primary" href="#generator">Start Free Invoice</a>
         <a class="btn btn-outline-primary" href="#faq">See FAQ</a>
@@ -535,8 +586,33 @@
         <div>Download PDF instantly</div>
         <div>Built for repair shops</div>
       </div>
+      <div class="free-hero-audience">
+        <h2 class="free-subsection-title">Who this tool is for</h2>
+        <div class="free-audience-grid hero-audience-grid">
+          <article class="free-audience-card">
+            <strong>Small auto repair shops</strong>
+            <span>Create polished invoices for labor, parts, tax, and shop supplies without wasting time in a spreadsheet.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>Mobile mechanics</strong>
+            <span>Build a repair invoice on-site with vehicle details, service notes, and a clean downloadable PDF.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>Independent technicians</strong>
+            <span>Useful when you need a one-off invoice that still looks professional and complete.</span>
+          </article>
+          <article class="free-audience-card">
+            <strong>General repair businesses</strong>
+            <span>Works well for service shops that bill diagnostics, labor, parts, and miscellaneous repair charges.</span>
+          </article>
+        </div>
+      </div>
     </div>
     <div class="free-side-panel">
+      <figure class="free-mini-panel free-hero-visual mb-0">
+        <img src="{{ url_for('static', filename='images/SampleFreeAutoRepairInvoice.png') }}" alt="Example mechanic invoice template generated with InvoiceRunner">
+        <figcaption>Example mechanic invoice template generated with InvoiceRunner.</figcaption>
+      </figure>
       <div class="free-mini-panel">
         <h3>Why this page can outrank a plain template</h3>
         <ul>
@@ -718,7 +794,7 @@
 
     <div class="free-preview-card">
       <h2>Live invoice preview</h2>
-      <p class="free-lead">The preview updates as you work. It is an HTML version of the invoice so you can check totals and layout before downloading the PDF.</p>
+      <p class="free-lead">The preview updates as you work so you can verify the layout, line items, vehicle details, and totals before downloading the PDF.</p>
       <div class="preview-frame">
         <iframe class="preview-surface" id="previewFrame" title="PDF invoice preview"></iframe>
       </div>
@@ -744,7 +820,7 @@
 
   <section class="free-section">
     <h2>Free invoice template vs full invoicing software</h2>
-    <p>A free mechanic invoice template is useful when you need to create a one-off PDF quickly. But as soon as you need saved records, repeat client management, reminders, online payments, or a cleaner workflow, software starts paying for itself.</p>
+    <p>A free mechanic invoice template is useful when you need to create a one-off PDF quickly. Once you need saved invoices, repeat client history, automatic payment reminders, customer and vehicle records, or a smoother shop workflow, full invoicing software becomes the better long-term option.</p>
     <div class="compare-grid">
       <div class="compare-box">
         <h3>Free PDF generator</h3>
@@ -759,9 +835,10 @@
         <h3>Full InvoiceRunner account</h3>
         <ul>
           <li>Save invoices and estimates</li>
-          <li>Manage clients and vehicles</li>
+          <li>Keep repeat client history and vehicle records</li>
           <li>Accept online payments and saved cards</li>
-          <li>Send reminders, keep schedules, and run the shop more efficiently</li>
+          <li>Send automatic payment reminders</li>
+          <li>Manage schedules and run a cleaner shop workflow</li>
         </ul>
       </div>
     </div>
@@ -783,7 +860,7 @@
     <div class="final-cta">
       <div>
         <h2>Need more than a one-off PDF?</h2>
-        <p class="mb-0">InvoiceRunner gives repair shops a full workflow: save invoices, manage clients, send estimates, track scheduling, accept online payments, and keep records in one place.</p>
+        <p class="mb-0">InvoiceRunner helps repair shops send invoices, accept payments, save customer and vehicle history, keep estimates and records organized, and run the business side of the shop more efficiently.</p>
       </div>
       <div class="d-flex flex-wrap gap-2 justify-content-end">
         <a class="btn btn-primary" href="{{ url_for('register') }}">Create free InvoiceRunner account</a>
