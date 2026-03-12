@@ -1307,6 +1307,89 @@ def _create_invoice_receipt(
     return receipt
 
 
+def _portal_payment_method_label(checkout_session) -> str:
+    payment_method_types = checkout_session.get("payment_method_types") or []
+    normalized = {str(v or "").strip().lower() for v in payment_method_types}
+    if "card" in normalized:
+        return "Credit card"
+    if "cashapp" in normalized:
+        return "Cash App"
+    if "us_bank_account" in normalized:
+        return "ACH / bank transfer"
+    if "link" in normalized:
+        return "Link"
+    return "Online payment"
+
+
+def _create_and_send_invoice_receipt_for_payment(
+    session,
+    *,
+    inv: Invoice,
+    owner: User | None,
+    customer: Customer | None,
+    payment_method: str,
+    amount_paid: float,
+    payment_date: str,
+    tax_included: float = 0.0,
+    remaining_balance: float = 0.0,
+    memo: str = "",
+    service_summary: str = "",
+    labor_parts_summary: str = "",
+    warranty_note: str = "",
+    thank_you_note: str = "",
+    pdf_template: str | None = None,
+    subject_suffix: str = "",
+) -> Receipt:
+    latest_receipt = _latest_receipt_for_invoice(session, int(inv.id))
+    if latest_receipt is None:
+        receipt = _create_invoice_receipt(
+            session,
+            inv=inv,
+            owner=owner,
+            customer=customer,
+            payment_method=payment_method,
+            amount_paid=amount_paid,
+            payment_date=payment_date,
+            tax_included=tax_included,
+            remaining_balance=remaining_balance,
+            memo=memo,
+            service_summary=service_summary,
+            labor_parts_summary=labor_parts_summary,
+            warranty_note=warranty_note,
+            thank_you_note=thank_you_note,
+            pdf_template=pdf_template,
+        )
+    else:
+        receipt = latest_receipt
+        receipt.payment_method = (payment_method or receipt.payment_method or "Payment received").strip() or "Payment received"
+        receipt.amount_paid = round(float(amount_paid or receipt.amount_paid or 0.0), 2)
+        receipt.payment_date = (payment_date or receipt.payment_date or "").strip()
+        receipt.receipt_date = (payment_date or receipt.receipt_date or "").strip()
+        receipt.tax_included = round(float(tax_included or receipt.tax_included or 0.0), 2)
+        receipt.remaining_balance = round(float(remaining_balance or 0.0), 2)
+        receipt.paid_in_full = round(float(receipt.remaining_balance or 0.0), 2) <= 0.0
+        if memo:
+            receipt.memo = memo.strip()
+        if service_summary:
+            receipt.service_summary = service_summary.strip()
+        if labor_parts_summary:
+            receipt.labor_parts_summary = labor_parts_summary.strip()
+        if warranty_note:
+            receipt.warranty_note = warranty_note.strip()
+        if thank_you_note:
+            receipt.thank_you_note = thank_you_note.strip()
+        session.add(receipt)
+        session.flush()
+    _send_receipt_email(
+        session=session,
+        receipt=receipt,
+        owner=owner,
+        customer=customer,
+        subject_suffix=subject_suffix,
+    )
+    return receipt
+
+
 def _latest_receipt_for_invoice(session, invoice_id: int) -> Receipt | None:
     return (
         session.query(Receipt)
@@ -4221,7 +4304,19 @@ def _run_automatic_client_autopay(session, owner: User | None) -> None:
                 flush=True,
             )
             try:
-                _send_paid_invoice_receipt_email(session=session, inv=inv, owner=owner, customer=customer, subject_suffix="(Autopay)")
+                _create_and_send_invoice_receipt_for_payment(
+                    session,
+                    inv=inv,
+                    owner=owner,
+                    customer=customer,
+                    payment_method="Automatic card payment",
+                    amount_paid=round(base_due + paid_fee_amount, 2),
+                    payment_date=_user_local_now(owner).strftime("%Y-%m-%d"),
+                    tax_included=float(inv.tax_amount() or 0.0),
+                    remaining_balance=max(0.0, float(_invoice_due_with_late_fee(inv, owner) or 0.0)),
+                    memo="Payment received automatically on the invoice due date.",
+                    subject_suffix="(Autopay)",
+                )
             except Exception as exc:
                 print(f"[AUTOPAY] receipt email failed invoice={inv.id}: {exc!r}", flush=True)
         except Exception as exc:
@@ -16664,9 +16759,23 @@ def create_app():
                             s.commit()
                             s.refresh(inv)
                             try:
-                                _send_paid_invoice_receipt_email(session=s, inv=inv, owner=owner, customer=customer)
+                                payment_date = _user_local_now(owner).strftime("%Y-%m-%d") if owner else date.today().strftime("%Y-%m-%d")
+                                _create_and_send_invoice_receipt_for_payment(
+                                    s,
+                                    inv=inv,
+                                    owner=owner,
+                                    customer=customer,
+                                    payment_method=_portal_payment_method_label(cs),
+                                    amount_paid=paid_total,
+                                    payment_date=payment_date,
+                                    tax_included=float(inv.tax_amount() or 0.0),
+                                    remaining_balance=max(0.0, float(_invoice_due_with_late_fee(inv, owner) or 0.0)),
+                                    memo="Payment received through the client portal.",
+                                )
+                                s.commit()
                             except Exception as exc:
-                                print(f"[PORTAL] paid receipt email failed invoice={inv.id}: {exc!r}", flush=True)
+                                s.rollback()
+                                print(f"[PORTAL] receipt create/email failed invoice={inv.id}: {exc!r}", flush=True)
                         paid_tip = float(getattr(inv, "paid_tip", 0.0) or 0.0)
                         payment_message = "Payment received. Thank you."
                     else:
@@ -16752,9 +16861,10 @@ def create_app():
             paid_tip = float(getattr(inv, "paid_tip", 0.0) or 0.0)
             paid_display = round(float(inv.paid or 0.0) + paid_processing_fee + paid_tip, 2)
 
+            latest_receipt = _latest_receipt_for_invoice(s, inv.id)
             pdf_token = make_pdf_share_token(inv.user_id, inv.id)
             pdf_url_base = url_for("shared_pdf_download", token=pdf_token, include_processing_fee="0")
-            pdf_url_paid = url_for("shared_pdf_download", token=pdf_token, include_processing_fee="1")
+            receipt_pdf_url = url_for("shared_customer_receipt_download", token=token) if latest_receipt else ""
             pay_url = url_for("shared_customer_portal_pay", token=token)
             save_card_url = url_for("shared_customer_portal_save_card", token=token)
             can_pay_online = (
@@ -16817,7 +16927,7 @@ def create_app():
                 doc_number=doc_number,
                 client=customer,
                 pdf_url_base=pdf_url_base,
-                pdf_url_paid=pdf_url_paid,
+                receipt_pdf_url=receipt_pdf_url,
                 pay_url=pay_url,
                 save_card_url=save_card_url,
                 can_pay_online=can_pay_online,
@@ -16832,7 +16942,7 @@ def create_app():
                 due_with_late_fee=due_with_late_fee,
                 effective_amount_due=effective_amount_due,
                 paid_display=paid_display,
-                has_paid_online_receipt=(paid_processing_fee > 0.0 or paid_tip > 0.0),
+                has_paid_online_receipt=bool(latest_receipt),
                 fee_percent=fee_percent,
                 fee_fixed=fee_fixed,
                 fee_auto_enabled=fee_auto_enabled,
@@ -16841,6 +16951,7 @@ def create_app():
                 paid_tip=paid_tip,
                 saved_card_label=saved_card_label,
                 has_saved_card=has_saved_card,
+                latest_receipt=latest_receipt,
                 autopay_enabled=bool(getattr(customer, "autopay_enabled", False)) if customer else False,
                 autopay_last_error=(getattr(customer, "autopay_last_error", None) or "").strip() if customer else "",
             )

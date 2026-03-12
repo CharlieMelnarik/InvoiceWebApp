@@ -104,7 +104,7 @@
         <div class="d-flex flex-wrap gap-2 mb-4">
           <a class="btn btn-outline-secondary" href="{{ pdf_url_base }}">Download Invoice PDF</a>
           {% if has_paid_online_receipt %}
-            <a class="btn btn-outline-primary" href="{{ pdf_url_paid }}">Download Paid Receipt PDF (includes processing fee)</a>
+            <a class="btn btn-outline-primary" href="{{ receipt_pdf_url }}">Download Receipt PDF</a>
           {% endif %}
           {% if can_pay_online %}
             <form method="post" action="{{ pay_url }}" class="d-flex flex-column gap-2 flex-md-row align-items-md-end">
@@ -138,7 +138,7 @@
         {% endif %}
         {% if has_paid_online_receipt %}
           <div class="small-muted mb-2">
-            This paid invoice PDF includes the card processing fee paid at checkout.
+            Your payment receipt is ready to download here after checkout.
           </div>
         {% endif %}
         {% if not can_save_card and not is_estimate %}
