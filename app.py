@@ -1339,6 +1339,7 @@ def _create_and_send_invoice_receipt_for_payment(
     thank_you_note: str = "",
     pdf_template: str | None = None,
     subject_suffix: str = "",
+    send_email: bool = True,
 ) -> Receipt:
     latest_receipt = _latest_receipt_for_invoice(session, int(inv.id))
     if latest_receipt is None:
@@ -1380,13 +1381,14 @@ def _create_and_send_invoice_receipt_for_payment(
             receipt.thank_you_note = thank_you_note.strip()
         session.add(receipt)
         session.flush()
-    _send_receipt_email(
-        session=session,
-        receipt=receipt,
-        owner=owner,
-        customer=customer,
-        subject_suffix=subject_suffix,
-    )
+    if send_email:
+        _send_receipt_email(
+            session=session,
+            receipt=receipt,
+            owner=owner,
+            customer=customer,
+            subject_suffix=subject_suffix,
+        )
     return receipt
 
 
@@ -4304,7 +4306,7 @@ def _run_automatic_client_autopay(session, owner: User | None) -> None:
                 flush=True,
             )
             try:
-                _create_and_send_invoice_receipt_for_payment(
+                receipt = _create_and_send_invoice_receipt_for_payment(
                     session,
                     inv=inv,
                     owner=owner,
@@ -4316,9 +4318,21 @@ def _run_automatic_client_autopay(session, owner: User | None) -> None:
                     remaining_balance=max(0.0, float(_invoice_due_with_late_fee(inv, owner) or 0.0)),
                     memo="Payment received automatically on the invoice due date.",
                     subject_suffix="(Autopay)",
+                    send_email=False,
                 )
+                session.flush()
+                try:
+                    _send_receipt_email(
+                        session=session,
+                        receipt=receipt,
+                        owner=owner,
+                        customer=customer,
+                        subject_suffix="(Autopay)",
+                    )
+                except Exception as exc:
+                    print(f"[AUTOPAY] receipt email failed invoice={inv.id}: {exc!r}", flush=True)
             except Exception as exc:
-                print(f"[AUTOPAY] receipt email failed invoice={inv.id}: {exc!r}", flush=True)
+                print(f"[AUTOPAY] receipt creation failed invoice={inv.id}: {exc!r}", flush=True)
         except Exception as exc:
             error_message = _stripe_err_msg(exc)[:500]
             _record_invoice_payment(
@@ -16760,7 +16774,7 @@ def create_app():
                             s.refresh(inv)
                             try:
                                 payment_date = _user_local_now(owner).strftime("%Y-%m-%d") if owner else date.today().strftime("%Y-%m-%d")
-                                _create_and_send_invoice_receipt_for_payment(
+                                receipt = _create_and_send_invoice_receipt_for_payment(
                                     s,
                                     inv=inv,
                                     owner=owner,
@@ -16771,11 +16785,18 @@ def create_app():
                                     tax_included=float(inv.tax_amount() or 0.0),
                                     remaining_balance=max(0.0, float(_invoice_due_with_late_fee(inv, owner) or 0.0)),
                                     memo="Payment received through the client portal.",
+                                    send_email=False,
                                 )
                                 s.commit()
+                                try:
+                                    _send_receipt_email(session=s, receipt=receipt, owner=owner, customer=customer)
+                                    s.commit()
+                                except Exception as exc:
+                                    s.rollback()
+                                    print(f"[PORTAL] receipt email failed invoice={inv.id}: {exc!r}", flush=True)
                             except Exception as exc:
                                 s.rollback()
-                                print(f"[PORTAL] receipt create/email failed invoice={inv.id}: {exc!r}", flush=True)
+                                print(f"[PORTAL] receipt creation failed invoice={inv.id}: {exc!r}", flush=True)
                         paid_tip = float(getattr(inv, "paid_tip", 0.0) or 0.0)
                         payment_message = "Payment received. Thank you."
                     else:
